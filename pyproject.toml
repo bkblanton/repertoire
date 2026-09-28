@@ -1,0 +1,27 @@
+[project]
+name = "repertoire-score"
+version = "0.1.0"
+description = "Estimate repertoire scores with transpositions and Lichess population evidence"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "numpy>=2.5.3",
+    "python-chess>=1.999",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[project.scripts]
+repertoire-score = "repertoire_score.__main__:main"
+repertoire-report = "repertoire_score.render:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

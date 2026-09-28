@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local tooling and Explorer responses. Tokens are environment-only.
+.uv-cache/
+.uv-python/
+.cache/
+lichess_token.txt
