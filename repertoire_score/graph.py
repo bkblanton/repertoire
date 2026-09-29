@@ -148,3 +148,45 @@ def infer_entries(graph):
         entries[cid] = {"positions": sorted(frontier) if len(frontier) == 1 else [],
                         "candidates": sorted(frontier), "status": "inferred_unique_frontier" if len(frontier) == 1 else "configuration_required"}
     return entries
+
+
+def chapter_region(graph, chapter_id, anchors):
+    """Chapter-owned descendants of explicit subject anchors, including shared nodes.
+
+    Do not follow other chapters' continuations when defining membership. The
+    evaluator still follows the complete repertoire after entering the region.
+    """
+    if not anchors:
+        raise ValueError(f"Chapter region requires anchors: {chapter_id}")
+    for k in anchors:
+        if k not in graph.nodes or chapter_id not in graph.nodes[k].chapters:
+            raise ValueError(f"Region anchor does not belong to chapter {chapter_id}: {k}")
+    region, pending = set(), list(anchors)
+    while pending:
+        k = pending.pop()
+        if k in region:
+            continue
+        region.add(k)
+        node = graph.nodes[k]
+        pending.extend(target for move, target in node.edges.items()
+                       if chapter_id in node.provenance[move])
+    return region
+
+
+def region_entries(transitions, roots, region):
+    """All possible first arrivals, including later bypasses of earlier entries.
+
+    Walk from roots, stopping each path on entry. Merely pruning entries that
+    descend from another entry would incorrectly discard late transpositions.
+    """
+    frontier, visited, pending = set(), set(), list(roots)
+    while pending:
+        k = pending.pop()
+        if k in visited:
+            continue
+        visited.add(k)
+        if k in region:
+            frontier.add(k)
+        else:
+            pending.extend(target for target, _ in transitions[k].values())
+    return sorted(frontier)

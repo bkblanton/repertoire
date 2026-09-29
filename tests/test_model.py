@@ -207,7 +207,7 @@ def test_unlisted_opponent_move_reenters_known_theory(tmp_path):
 def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     from repertoire_score import __main__ as cli
     g = graph(tmp_path,'1. e4 e5 *')
-    evidence = {position(''):data(7,2,1), position('e4'):data(80,0,20,[('e7e5',80,0,20)]),position('e4 e5'):data(6,2,2)}
+    evidence = {position(''):data(7,2,1,[('e2e4',7,2,1)]), position('e4'):data(80,0,20,[('e7e5',80,0,20)]),position('e4 e5'):data(6,2,2)}
     class FakeExplorer:
         def __init__(self,*args):
             self.filters = {}; self.provenance = {}
@@ -233,14 +233,26 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     assert len(result['prior_sensitivity']) == 2
     assert 'Approx. 95% interval' in (tmp_path/'report.md').read_text()
     assert '| White | 80.000% |' in (tmp_path/'report.md').read_text()
+    assert '| Black |' not in (tmp_path/'report.md').read_text()
+    assert 'baseline: **-10.000 pp**' in (tmp_path/'report.md').read_text()
     assert '| Repertoire score |' in (tmp_path/'report.md').read_text()
     assert '| Posterior mean |' not in (tmp_path/'report.md').read_text()
     assert (tmp_path/'report.study-description.md').exists()
     assert (tmp_path/'summary.md').exists()
     saved_white = (tmp_path/'report.json').read_bytes()
+    config = tmp_path/'config.json'
+    config.write_text(json.dumps({'chapter_regions':{'1':{'anchors':[{'path':['e4']}], 'description':'Subject begins at e4'}}}))
+    args.config = str(config)
     args.color = 'black'
     args.output = str(tmp_path/'black')
     cli.analyze(args)
+    black = json.loads((tmp_path/'black.json').read_text())
+    assert set(black['chapters'][0]['region']['positions']) == {position('e4'), position('e4 e5')}
+    assert black['chapters'][0]['entries'][0]['position'] == position('e4')
+    assert black['chapters'][0]['entries'][0]['conditional_first_entry_weight'] == 1
+    assert '| Black | 20.000% |' in (tmp_path/'black.md').read_text()
+    assert '| White |' not in (tmp_path/'black.md').read_text()
+    assert 'baseline: **+10.000 pp**' in (tmp_path/'black.md').read_text()
     # A one-color rerun must retain its companion and regenerate their summary.
     assert (tmp_path/'report.json').read_bytes() == saved_white
     registry = json.loads((tmp_path/'.report-index.json').read_text())
@@ -248,8 +260,11 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     summary = (tmp_path/'summary.md').read_text()
     assert '## White chapters (1)' in summary and '## Black chapters (1)' in summary
     assert 'Posterior mean' not in summary and 'Empirical score' not in summary
+    assert '| White | 80.000% | 70.000% | -10.000 |' in summary
+    assert '| Black | 20.000% | 30.000% | +10.000 |' in summary
     description = (tmp_path/'black.study-description.md').read_text()
     assert 'Repertoire score:' in description and 'Starting-position reference:' in description
+    assert 'Overall delta: +10.00 pp.' in description
     assert 'Posterior' not in description and str(tmp_path) not in description
 
 

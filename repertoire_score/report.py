@@ -19,13 +19,12 @@ def starting_position_reference(data, color, provenance):
     }
 
 
-def reference_markdown(reference):
+def reference_markdown(reference, color):
     return [
         "Starting-position reference under the same database filters, before forcing any repertoire moves:", "",
         "| Perspective | Starting-position score |",
         "|---|---:|",
-        f"| White | {pct(reference['white_score'])} |",
-        f"| Black | {pct(reference['black_score'])} |", "",
+        f"| {color.title()} | {pct(reference['owner_score'])} |", "",
         f"Based on {reference['sample_count']:,} games, counting a draw as half a point. This is a population reference, not a causal estimate of improvement from the repertoire.", "",
     ]
 
@@ -75,9 +74,17 @@ def bounds(v):
     return f"{100*v[0]:.3f}% to {100*v[1]:.3f}%"
 
 
+def overall_delta(report, precision=3):
+    score = report['overall'].get('raw_empirical_score')
+    baseline = report.get('starting_position_reference', {}).get('owner_score')
+    if score is None or baseline is None:
+        return 'undefined'
+    return f'{100*(score-baseline):+.{precision}f}'
+
+
 def chapter_table(chapters, concise=False):
     lines = [
-        "Repertoire score is the modeled expected score after entering the chapter. Entry baseline is the database score at entry, weighted by first-entry probabilities when there are multiple entries. Delta is repertoire score minus entry baseline, in percentage points (pp). Chapters can overlap; their scores and entry probabilities are not additive.", "",
+        "Entry probability is chapter reach: the chance of first reaching any qualifying position, counting each modeled game once across all entry routes. Repertoire score is conditional on that entry. Entry baseline uses the same first-entry weights. Delta is repertoire score minus entry baseline, in percentage points (pp). Chapters can overlap; their scores and entry probabilities are not additive.", "",
         "| Chapter | Entry probability | Entry baseline | Repertoire score | Delta (pp) |" + ("" if concise else " Approx. 95% interval | Unresolved | Sparse sensitivity |"),
         "|---|---:|---:|---:|---:|" + ("" if concise else "---|---:|---|"),
     ]
@@ -102,6 +109,7 @@ def markdown(report):
              f"Population: rated {filters.get('speeds', 'configured speeds')} games in the Lichess Opening Explorer. Rating groups: {filters.get('ratings', 'configured ratings')}. Date filter: {filters.get('since', 'start')} through {filters.get('until', 'end')}.", "",
              "Scores are from the repertoire owner's perspective. Probabilities are modeled repertoire probabilities, not observed historical sequence frequencies.", "",
              f"Repertoire score: **{pct(overall['raw_empirical_score'])}**. Conditional bounds with unresolved evidence: **{bounds(overall['conditional_bounds'])}**.",
+             f"Overall delta versus the {report['color'].title()} starting-position baseline: **{overall_delta(report)} pp** (repertoire score minus baseline).",
              f"Approximate model-based 95% credible interval: **{bounds(overall['posterior']['credible_interval_95'])}**.",
              f"Posterior interpretation: {overall['posterior']['label']}.", "",
              "The posterior point estimate and interval explicitly complete missing scores using the configured prior. Missing opponent distributions stop unresolved, without uniform move assumptions. Conservative bounds retain all missing evidence. Intervals do not include unknown overlap among games at different positions, population mismatch, or repertoire-selection bias.", "",
@@ -111,11 +119,28 @@ def markdown(report):
              "## Chapters", "",
              "Entry probability is separate from score conditional on first entry. Complete merged theory applies after entry. Chapters may overlap; do not add or average these rows to derive the overall score.", "",
              *chapter_table(report["chapters"])]
-    lines += ["", "## Exact chapter entries", ""]
+    if report.get('chapter_transitions'):
+        lines += ['', '## Chapter transitions', '',
+                  'Conditional probability of reaching the destination at or after first entering the source chapter, before the model stops. Shared or simultaneous entry counts; this does not require a later move or imply that the source chapter has ended. Rows overlap and must not be added. Zero-probability and unresolved source rows remain in JSON.', '',
+                  '| Source chapter | Destination chapter | Conditional probability | Joint probability from repertoire root |',
+                  '|---|---|---:|---:|']
+        for row in report['chapter_transitions']:
+            probability = row['conditional_probability']
+            if probability is not None and probability > 0:
+                lines.append(f"| {row['source_name']} | {row['destination_name']} | {pct(probability)} | {pct(row['joint_probability'])} |")
+            elif row.get('status') == 'unresolved_destination_reach':
+                lines.append(f"| {row['source_name']} | {row['destination_name']} | unresolved ({bounds(row['conditional_bounds'])}) | undefined |")
+    lines += ["", "## Exact chapter entries", "",
+              'Paths below are representative move orders for exact positions, not an exhaustive route list. First-entry weights exclude paths that already entered the chapter; a later position can still be an entry through another route.', '']
     for c in report["chapters"]:
         lines += [f"### {c['name']}", "", f"Entry definition: {c['entry_status']}", ""]
+        if c.get('region'):
+            region = c['region']
+            lines += [f"Subject definition: {region['description']}. Region: {len(region['positions'])} exact positions. Anchors:", '']
+            lines += [f"- `{anchor}`" for anchor in region['anchors']]
+            lines += ['', 'Possible first-entry positions:', '']
         for e in c["entries"]:
-            lines.append(f"- {' '.join(e['path']) or '(PGN root)'}; canonical position `{e['position']}`")
+            lines.append(f"- {' '.join(e['path']) or '(PGN root)'}; first-entry weight {pct(e.get('conditional_first_entry_weight'))}; canonical position `{e['position']}`")
     lines += ["", "## Largest stopping contributions", "", "| Type | Representative SAN path | Probability | Contribution | Observations |", "|---|---|---:|---:|---:|"]
     for e in sorted(report["events"], key=lambda e:e["posterior_contribution_mean"], reverse=True)[:15]:
         lines.append(f"| {e['type']} | {' '.join(e['representative_path_san'])} | {pct(e['probability'])} | {pct(e['posterior_contribution_mean'])} | {e['sample_count']} |")
@@ -132,7 +157,7 @@ def markdown(report):
               "- Full stopping-event ledger, sample counts, prior influence, cache keys and retrieval timestamps are in the companion JSON.",
               "- Sanity checks: node and terminal probability conservation; weighted terminal contributions reproduce the root value.", ""]
     if "starting_position_reference" in report:
-        lines[6:6] = reference_markdown(report["starting_position_reference"])
+        lines[6:6] = reference_markdown(report["starting_position_reference"], report['color'])
     return "\n".join(lines)
 
 
@@ -159,7 +184,7 @@ def study_description(report):
     overall = report['overall']
     reference = report.get('starting_position_reference', {}).get('owner_score')
     lines = [f"{report['color'].title()} repertoire", '',
-             f"Repertoire score: {number(overall['raw_empirical_score'])}. Starting-position reference: {number(reference)}.",
+             f"Repertoire score: {number(overall['raw_empirical_score'])}. Starting-position reference: {number(reference)}. Overall delta: {overall_delta(report, 2)} pp.",
              population_text(report), f"Database snapshot: {evidence_date(report)}.", '',
              "Scores count wins as 1 and draws as 0.5. The model assumes I play my prepared moves and opponents follow database move frequencies, stopping at the end of preparation or the first deviation.", '',
              "Chapter results: entry probability / repertoire score / entry baseline / difference in percentage points (pp).", '']
@@ -169,7 +194,7 @@ def study_description(report):
         difference = 'unresolved' if delta is None else f'{delta:+.2f} pp'
         name = ' '.join(c['name'].split())
         lines.append(f"- {name}: {number(c['score'].get('entry_probability'))} / {number(c['score'].get('raw_empirical_score'))} / {number(baseline.get('raw_score'))} / {difference}")
-    lines += ['', 'Entry probability is the modeled chance of reaching a chapter while following the repertoire. Chapters may overlap, so entry probabilities are not additive. Each chapter is scored conditional on entering it. Multiple entries use first-entry probability weights. A positive difference means a higher modeled score than the entry baseline. These are population estimates, not personal forecasts or proof of improvement.']
+    lines += ['', 'Entry probability is the modeled chance of reaching any qualifying chapter position, including later transpositions, counting each game once per chapter. Chapters may overlap, so entry probabilities are not additive. Each chapter score and its baseline use the same first-entry weights. The model stops at a deviation or theory leaf. A positive difference means a higher modeled score than the entry baseline. These are population estimates, not personal forecasts or proof of improvement.']
     if overall.get('unresolved_mass', 0) > 0:
         lines += ['', f"Unresolved probability: {number(overall['unresolved_mass'])}. Overall score bounds: {bounds(overall['conditional_bounds'])}."]
     return '\n'.join(lines) + '\n'
@@ -179,10 +204,10 @@ def summary_markdown(reports, report_paths):
     """Combined summary built solely from current JSON results, without stale prose."""
     lines = ['# Repertoire summary', '',
              'Scores are from the repertoire owner\'s perspective, with a win worth 1 point and a draw worth half a point.', '',
-             '| Repertoire | Starting-position reference | Repertoire score |', '|---|---:|---:|']
+             '| Repertoire | Starting-position reference | Repertoire score | Delta (pp) |', '|---|---:|---:|---:|']
     for r in reports:
-        lines.append(f"| {r['color'].title()} | {pct(r.get('starting_position_reference', {}).get('owner_score'))} | {pct(r['overall']['raw_empirical_score'])} |")
-    lines += ['', 'The model follows the selected repertoire moves and uses database frequencies for opponent replies. Population differences and sparse evidence limit what these comparisons establish; detailed uncertainty remains in the full reports.', '']
+        lines.append(f"| {r['color'].title()} | {pct(r.get('starting_position_reference', {}).get('owner_score'))} | {pct(r['overall']['raw_empirical_score'])} | {overall_delta(r)} |")
+    lines += ['', 'Overall delta is repertoire score minus the starting-position baseline for the same color, in percentage points (pp). The model follows the selected repertoire moves and uses database frequencies for opponent replies. Population differences and sparse evidence limit what these comparisons establish; detailed uncertainty remains in the full reports.', '']
     for r, path in zip(reports, report_paths):
         lines += [f"## {r['color'].title()} chapters ({len(r['chapters'])})", '',
                   population_text(r), f"Database snapshot: {evidence_date(r)}.", '', *chapter_table(r['chapters'], concise=True), '',

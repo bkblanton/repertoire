@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 import chess
 import numpy as np
-from .graph import parse, conflicts, resolve, topology, infer_entries, key
+from .graph import parse, conflicts, resolve, topology, infer_entries, key, chapter_region, region_entries
 from .explorer import Explorer, DEFAULT_FILTERS
 from .model import prepare, outcome, empirical, draws
 from .evaluate import backward, forward, summarize, chapter_score, COMPLETED, KNOWN
 from .report import events, markdown, starting_position_reference
 from .baseline import chapter_entry_baseline
 from .render import update_report_outputs
+from .transitions import chapter_transitions
 
 
 def entry_positions(value, graph):
@@ -46,15 +47,6 @@ def analyze(args):
         print(f"{len(graph.chapters)} chapters; {len(graph.nodes)} positions; {len(inspection['conflicts'])} own-move conflicts")
         return
     transitions = resolve(graph, color, config.get("policy", {}))
-    entries, entry_status = {}, {}
-    for c in graph.chapters:
-        cid = c["id"]
-        if cid in config.get("entries", {}):
-            entries[cid] = entry_positions(config["entries"][cid], graph)
-            entry_status[cid] = config.get("entry_description", "explicit configuration")
-        else:
-            entries[cid] = inspection["entries"][cid]["positions"]
-            entry_status[cid] = inspection["entries"][cid]["status"]
     absolute_reach = "root_weights" in config or key(chess.Board()) in graph.roots
     if "root_weights" in config:
         root_weights = config["root_weights"]
@@ -66,6 +58,28 @@ def analyze(args):
         root_weights = {graph.roots[0]: 1.0}
     else:
         raise ValueError("Disconnected custom roots require explicit root_weights for an overall score")
+    entries, entry_status, regions = {}, {}, {}
+    known_chapters = {c['id'] for c in graph.chapters}
+    if set(config.get('chapter_regions', {})) - known_chapters:
+        raise ValueError('Chapter region configuration contains unknown chapter IDs')
+    for c in graph.chapters:
+        cid = c['id']
+        if cid in config.get('chapter_regions', {}):
+            if cid in config.get('entries', {}):
+                raise ValueError(f'Configure either chapter_regions or entries, not both: {cid}')
+            definition = config['chapter_regions'][cid]
+            anchors = entry_positions(definition['anchors'], graph)
+            members = chapter_region(graph, cid, anchors)
+            entries[cid] = region_entries(transitions, list(dict.fromkeys([*root_weights, *graph.roots])), members)
+            regions[cid] = {'anchors': anchors, 'positions': sorted(members),
+                            'description': definition.get('description', 'Chapter-owned continuations from the configured subject anchors')}
+            entry_status[cid] = 'First arrival anywhere in the chapter region, including shared positions and later transpositions'
+        elif cid in config.get('entries', {}):
+            entries[cid] = entry_positions(config['entries'][cid], graph)
+            entry_status[cid] = config.get('entry_description', 'explicit configuration')
+        else:
+            entries[cid] = inspection['entries'][cid]['positions']
+            entry_status[cid] = inspection['entries'][cid]['status']
     analysis_roots = list(root_weights) + [p for positions in entries.values() for p in positions]
     order = topology(transitions, analysis_roots)
     explorer = Explorer(args.cache, dict(DEFAULT_FILTERS, **config.get("filters", {})), args.offline, args.refresh)
@@ -115,8 +129,13 @@ def analyze(args):
             summary["entry_probability"] = None
             summary["posterior_entry_probability_mean"] = None
         chapters.append({"id": c["id"], "name": c["name"], "url": c["url"], "entry_status": entry_status[c["id"]],
-                         "entries": [{"position": p, "path": graph.nodes[p].path} for p in positions], "score": summary,
+                         "region": regions.get(c['id']),
+                         "entries": [{"position": p, "path": graph.nodes[p].path,
+                                      "conditional_first_entry_weight": summary.get('first_entry_weights', {}).get(p)} for p in positions], "score": summary,
                          "entry_baseline": chapter_entry_baseline(positions, summary, evidence, color, explorer.provenance)})
+    destination_sets = {cid: region['positions'] if (region := regions.get(cid)) else positions
+                        for cid, positions in entries.items()}
+    transition_rows = chapter_transitions(model, order, raw_sample, chapters, destination_sets)
     sensitivity = []
     # Symmetric weak and stronger priors expose changes from the default.
     for prior in ([0.1, 0.1, 0.1], [2., 2., 2.]):
@@ -128,6 +147,7 @@ def analyze(args):
             for c in graph.chapters if entries[c["id"]]}})
         del alt_samples, alt_values
     report = {"color": args.color, "overall": summarize(raw_root, post_root), "chapters": chapters,
+              "chapter_transitions": transition_rows,
               "starting_position_reference": starting_position_reference(evidence[starting_position], color, explorer.provenance[starting_position]),
               "events": ledger, "prior_sensitivity": sensitivity,
               "manifest": {"created_at": datetime.now(timezone.utc).isoformat(), "input_path": str(Path(args.pgn).resolve()),
