@@ -18,6 +18,7 @@ dev = [
 [project.scripts]
 repertoire-score = "repertoire_score.__main__:main"
 repertoire-report = "repertoire_score.render:main"
+repertoire-correlations = "repertoire_score.correlations:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -73,6 +73,10 @@ Each one-color report and study description includes only that color's standard 
 
 Each chapter also includes an empirical entry baseline and the repertoire score minus that baseline in percentage points. Multiple entries use their normalized first-entry probabilities, matching the chapter's empirical repertoire calculation. Database sample counts are not used as mixture weights. JSON retains the component weights, scores, counts and provenance; the table shows one weighted baseline per chapter. Missing entry evidence remains unresolved. A positive difference means higher modeled score, not demonstrated causal improvement or statistical significance.
 
+**Expected prepared depth** is the expected number of remaining repertoire-owner moves before leaving theory or reaching a theory leaf or terminal outcome. Each selected own move contributes one; opponent moves contribute no unit themselves and weight subsequent prepared moves by their empirical frequencies. An available own move at the starting position is included, but previous moves and entry itself earn no bonus. There is no cutoff, discount, or tunable coverage parameter. Overall depth starts at the repertoire root; chapter depth uses the same first-entry mixture as its score and baseline and follows the complete merged repertoire thereafter.
+
+The evaluator computes depth backward through the DAG: an own-move node has depth `1 + weighted child depth`, an opponent node has depth `sum(reply probability * child depth)`, and a deviation or leaf has depth zero. Shared prefixes, duplicate lines, and transpositions do not create additional per-game moves. Deeper or broader preparation earns credit according to its probability of being used. Missing leaf outcome counts do not affect depth; missing opponent distributions preserve lower/upper bounds using the finite remaining repertoire, and missing first-entry weights leave chapter depth unresolved. Bounds are conditional on the resolved frequencies, not confidence intervals. JSON stores `prepared_depth` under `overall` and each chapter's `score`; all current tables and study descriptions display depth in own moves. Historical JSON without the metric displays `not calculated` until reanalyzed.
+
 - `.json`: complete event ledger, overall and chapter scores, sensitivity, sample counts, prior influence, policy diagnostics, and manifest with input hash, filters, cache keys, and retrieval timestamps.
 - `.md`: overall score, chapter table, exact entries, largest contributions and uncertainty priorities.
 - `.study-description.md`: concise text to paste into a private Lichess study description, with the overall score, starting reference, population and all chapter reach/score/baseline/difference lines. It contains no local paths, technical run details or posterior means. Simple bullets keep it readable in the [Lichess description renderer](https://github.com/lichess-org/lila/blob/master/ui/analyse/src/study/description.ts).
@@ -87,7 +91,25 @@ uv run repertoire-report reports/white.json reports/black.json --summary reports
 
 This command regenerates both detailed reports, both study descriptions and the combined summary. It leaves JSON results unchanged, requires no token and makes no network requests. Normal `repertoire-score run` calls generate these outputs automatically after saving their results, so `run-repertoires.ps1` also refreshes them. Generation produces local files for copying into Lichess; it does not edit the live studies. Before-and-after comparisons and archived reports remain historical artifacts rather than current summary inputs.
 
-`graph.py` parses and resolves the shared graph and constructs chapter regions and their entry frontiers. `explorer.py` handles evidence and caching. `model.py` prepares evidence and samples posteriors. `evaluate.py` performs backward value and forward probability passes. `transitions.py` computes directed chapter transitions. `report.py` renders outputs. The evaluator has no network dependency.
+`graph.py` parses and resolves the shared graph and constructs chapter regions and their entry frontiers. `explorer.py` handles evidence and caching. `model.py` prepares evidence and samples posteriors. `evaluate.py` performs backward value and forward probability passes. `depth.py` computes expected prepared depth. `transitions.py` computes directed chapter transitions. `report.py` renders outputs. The evaluator has no network dependency.
+
+## Correlations and confidence intervals
+
+Analyze the saved chapter estimates, with approximate 95% cluster-bootstrap confidence intervals:
+
+```powershell
+uv run repertoire-correlations reports/white.json reports/black.json --output reports/depth-delta-correlation
+```
+
+This writes Markdown and JSON, including ordinary, rank, reach-weighted, baseline-adjusted and alternative correlations. Defaults are 20,000 bootstrap replicates and seed 20260929; `--bootstrap-samples` and `--seed` control reproducibility and numerical precision. To also regenerate the standalone interactive scatterplot, use `uv run --with plotly repertoire-correlations reports/white.json reports/black.json --plot`. Plotly is optional and is not added to the program's core dependencies.
+
+Clusters are connected components of chapters whose reachable post-entry theory shares canonical positions, using the selected policy and complete merged graph. Whole clusters are sampled with replacement, keeping each chapter's depth, score, baseline and reach together. Pooled resampling is stratified by color; regression adjustment and ranks are recalculated per replicate. The original number of clusters is retained per color, while the number of sampled chapter rows may vary. Each interval uses the 2.5th and 97.5th percentiles. Undefined replicates are counted, and an interval is withheld if more than 1% are undefined.
+
+These are exploratory confidence intervals across chapter groups, conditional on saved model estimates. They do not include finite Lichess evidence uncertainty, repertoire-selection bias or all cross-group dependence. With only 13 White and 15 Black groups in the current studies, nominal coverage is approximate. For a fixed set of saved chapter values, the correlation itself is an exact descriptive calculation; these intervals describe variation under sampling similar groups, not uncertainty in that arithmetic. Baseline adjustment is an optional sensitivity comparison, not a correction that invalidates ordinary delta. The generated report documents the assumptions and cluster membership and links the statistical references.
+
+No Lichess requests or token are needed. The PGN files are read only to reconstruct dependencies and must still match the saved input hashes. Correlation outputs are generated by this separate command; presentation-only `repertoire-report` does not recalculate them.
+
+## Validation
 
 Sanity checks enforce conservation at every evaluated node and reproduce the root value from weighted stopping contributions. Tests cover forced moves, beneficial and harmful deviations relative to an explicit leaf baseline, duplicate chapters, shared leaves, transpositions, own-move conflicts, sparse and missing evidence, residual buckets, inconsistent responses, first-entry weighting, cycles, color reversal and fixed-seed reproducibility.
 

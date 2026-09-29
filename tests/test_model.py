@@ -108,6 +108,7 @@ def test_duplicate_chapters_and_transposing_pgn(tmp_path):
 
 
 def test_transposition_incoming_mass_and_first_entry(tmp_path):
+    from repertoire_score.depth import prepared_depth_values, summarize_depth, chapter_prepared_depth
     g = graph(tmp_path,'1. Nf3 d5 2. g3 Nf6 3. Bg2 *\n\n1. g3 Nf6 2. Nf3 d5 3. Bg2 *')
     root = g.roots[0]
     policy = {root:{'g1f3':.5,'g2g3':.5}}
@@ -122,6 +123,14 @@ def test_transposition_incoming_mass_and_first_entry(tmp_path):
     assert chapter['entry_probability'] == pytest.approx(1)
     assert chapter['first_entry_weights'][leaf] == 0
     assert chapter['raw_empirical_score'] == pytest.approx(.4)
+    depths = prepared_depth_values(m,o,r)
+    assert summarize_depth(depths,{root:1})['expected_moves'] == pytest.approx(3)
+    assert chapter_prepared_depth(depths,[position('Nf3'),position('g3'),leaf],chapter)['expected_moves'] == pytest.approx(2)
+    with (tmp_path/'fixture.pgn').open('a') as stream:
+        stream.write('\n\n1. Nf3 d5 2. g3 Nf6 3. Bg2 *')
+    duplicate = parse(tmp_path/'fixture.pgn')
+    dm,do,dr,*_ = setup(duplicate,True,evidence,policy)
+    assert summarize_depth(prepared_depth_values(dm,do,dr),{root:1})['expected_moves'] == pytest.approx(3)
 
 
 def test_conflict_cycle_color_and_reproducibility(tmp_path):
@@ -221,6 +230,7 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     cli.analyze(args)
     result = json.loads((tmp_path/'report.json').read_text())
     assert result['overall']['raw_empirical_score'] == pytest.approx(.7)
+    assert result['overall']['prepared_depth']['expected_moves'] == 1
     reference = result['starting_position_reference']
     assert reference['white_score'] == pytest.approx(.8)
     assert reference['black_score'] == pytest.approx(.2)
@@ -250,6 +260,8 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     assert set(black['chapters'][0]['region']['positions']) == {position('e4'), position('e4 e5')}
     assert black['chapters'][0]['entries'][0]['position'] == position('e4')
     assert black['chapters'][0]['entries'][0]['conditional_first_entry_weight'] == 1
+    assert black['overall']['prepared_depth']['expected_moves'] == 1
+    assert black['chapters'][0]['score']['prepared_depth']['expected_moves'] == 1
     assert '| Black | 20.000% |' in (tmp_path/'black.md').read_text()
     assert '| White |' not in (tmp_path/'black.md').read_text()
     assert 'baseline: **+10.000 pp**' in (tmp_path/'black.md').read_text()

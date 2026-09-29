@@ -14,6 +14,7 @@ from .report import events, markdown, starting_position_reference
 from .baseline import chapter_entry_baseline
 from .render import update_report_outputs
 from .transitions import chapter_transitions
+from .depth import prepared_depth_values, summarize_depth, chapter_prepared_depth
 
 
 def entry_positions(value, graph):
@@ -99,6 +100,7 @@ def analyze(args):
         explorer.close()
     model = prepare(graph, transitions, order, color, evidence)
     raw_sample = empirical(model, color)
+    depth_values = prepared_depth_values(model, order, raw_sample)
     post_sample = draws(model, color, args.simulations, args.seed, args.prior)
     raw_values = backward(model, order, raw_sample, args.sparse_threshold)
     post_values = backward(model, order, post_sample, args.sparse_threshold, args.simulations)
@@ -128,6 +130,7 @@ def analyze(args):
             summary["probability_conditional_on_custom_root"] = summary.get("entry_probability")
             summary["entry_probability"] = None
             summary["posterior_entry_probability_mean"] = None
+        summary['prepared_depth'] = chapter_prepared_depth(depth_values, positions, summary)
         chapters.append({"id": c["id"], "name": c["name"], "url": c["url"], "entry_status": entry_status[c["id"]],
                          "region": regions.get(c['id']),
                          "entries": [{"position": p, "path": graph.nodes[p].path,
@@ -161,6 +164,12 @@ def analyze(args):
               "diagnostics": {"policy_conflicts": inspection["conflicts"], "entry_inspection": inspection["entries"],
                               "cycles": [], "sanity_checks_passed": True}}
     report["manifest"]["tolerance_met"] = np.ptp(np.quantile(post_root[COMPLETED], [0.025, 0.975]))*100 <= args.tolerance
+    report['overall']['prepared_depth'] = summarize_depth(depth_values, root_weights)
+    report['manifest']['prepared_depth_definition'] = (
+        'Expected remaining own prepared moves before a deviation, theory leaf, or terminal outcome; '
+        'includes an available own move at entry, uses the merged repertoire and empirical opponent probabilities, '
+        'and uses chapter first-entry weights. No depth cutoff, discount, or bonus for entry itself. '
+        'Missing move distributions or first-entry weights remain unresolved with conditional bounds.')
     report["manifest"]["tolerance_met"] = bool(report["manifest"]["tolerance_met"])
     output.with_suffix(".json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     update_report_outputs(output.with_suffix(".json"))

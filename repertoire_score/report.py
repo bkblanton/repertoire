@@ -82,11 +82,24 @@ def overall_delta(report, precision=3):
     return f'{100*(score-baseline):+.{precision}f}'
 
 
+def depth_text(summary):
+    depth = summary.get('prepared_depth')
+    if depth is None:
+        return 'not calculated'
+    if depth['expected_moves'] is not None:
+        return f"{depth['expected_moves']:.2f}"
+    if 'conditional_bounds' in depth:
+        low, high = depth['conditional_bounds']
+        return f'unresolved ({low:.2f} to {high:.2f})'
+    return 'undefined'
+
+
 def chapter_table(chapters, concise=False):
     lines = [
         "Entry probability is chapter reach: the chance of first reaching any qualifying position, counting each modeled game once across all entry routes. Repertoire score is conditional on that entry. Entry baseline uses the same first-entry weights. Delta is repertoire score minus entry baseline, in percentage points (pp). Chapters can overlap; their scores and entry probabilities are not additive.", "",
-        "| Chapter | Entry probability | Entry baseline | Repertoire score | Delta (pp) |" + ("" if concise else " Approx. 95% interval | Unresolved | Sparse sensitivity |"),
-        "|---|---:|---:|---:|---:|" + ("" if concise else "---|---:|---|"),
+        "Expected prepared depth is the number of your remaining prepared moves, averaged over first entries and opponent replies. It includes an available move at entry and preparation supplied by other chapters after transpositions; entry itself earns no extra move.", "",
+        "| Chapter | Entry probability | Entry baseline | Repertoire score | Delta (pp) | Expected prepared depth (moves) |" + ("" if concise else " Approx. 95% interval | Unresolved | Sparse sensitivity |"),
+        "|---|---:|---:|---:|---:|---:|" + ("" if concise else "---|---:|---|"),
     ]
     for c in chapters:
         s = c["score"]
@@ -94,7 +107,7 @@ def chapter_table(chapters, concise=False):
         difference = baseline.get("difference_pp")
         delta = "undefined" if difference is None else f"{difference:+.3f}"
         prefix = f"| {c['name']} | {pct(s.get('entry_probability'))} | {pct(baseline.get('raw_score'))} |"
-        row = f"{prefix} {pct(s.get('raw_empirical_score'))} | {delta} |"
+        row = f"{prefix} {pct(s.get('raw_empirical_score'))} | {delta} | {depth_text(s)} |"
         if not concise:
             row += (f" {bounds(s['posterior']['credible_interval_95'])} | {pct(s['unresolved_mass'])} | {bounds(s['sparse_sensitivity'])} |"
                     if "posterior" in s else " | | |")
@@ -110,6 +123,7 @@ def markdown(report):
              "Scores are from the repertoire owner's perspective. Probabilities are modeled repertoire probabilities, not observed historical sequence frequencies.", "",
              f"Repertoire score: **{pct(overall['raw_empirical_score'])}**. Conditional bounds with unresolved evidence: **{bounds(overall['conditional_bounds'])}**.",
              f"Overall delta versus the {report['color'].title()} starting-position baseline: **{overall_delta(report)} pp** (repertoire score minus baseline).",
+             f"Expected prepared depth from the repertoire root: **{depth_text(overall)} of your moves**. No depth cutoff or discount is used.",
              f"Approximate model-based 95% credible interval: **{bounds(overall['posterior']['credible_interval_95'])}**.",
              f"Posterior interpretation: {overall['posterior']['label']}.", "",
              "The posterior point estimate and interval explicitly complete missing scores using the configured prior. Missing opponent distributions stop unresolved, without uniform move assumptions. Conservative bounds retain all missing evidence. Intervals do not include unknown overlap among games at different positions, population mismatch, or repertoire-selection bias.", "",
@@ -185,16 +199,18 @@ def study_description(report):
     reference = report.get('starting_position_reference', {}).get('owner_score')
     lines = [f"{report['color'].title()} repertoire", '',
              f"Repertoire score: {number(overall['raw_empirical_score'])}. Starting-position reference: {number(reference)}. Overall delta: {overall_delta(report, 2)} pp.",
+             f"Expected prepared depth from the repertoire root: {depth_text(overall)} of my moves.",
              population_text(report), f"Database snapshot: {evidence_date(report)}.", '',
              "Scores count wins as 1 and draws as 0.5. The model assumes I play my prepared moves and opponents follow database move frequencies, stopping at the end of preparation or the first deviation.", '',
-             "Chapter results: entry probability / repertoire score / entry baseline / difference in percentage points (pp).", '']
+             "Chapter results: entry probability / repertoire score / entry baseline / difference in percentage points (pp) / expected prepared depth in my moves.", '']
     for c in report['chapters']:
         baseline = c.get('entry_baseline', {})
         delta = baseline.get('difference_pp')
         difference = 'unresolved' if delta is None else f'{delta:+.2f} pp'
         name = ' '.join(c['name'].split())
-        lines.append(f"- {name}: {number(c['score'].get('entry_probability'))} / {number(c['score'].get('raw_empirical_score'))} / {number(baseline.get('raw_score'))} / {difference}")
+        lines.append(f"- {name}: {number(c['score'].get('entry_probability'))} / {number(c['score'].get('raw_empirical_score'))} / {number(baseline.get('raw_score'))} / {difference} / {depth_text(c['score'])} moves")
     lines += ['', 'Entry probability is the modeled chance of reaching any qualifying chapter position, including later transpositions, counting each game once per chapter. Chapters may overlap, so entry probabilities are not additive. Each chapter score and its baseline use the same first-entry weights. The model stops at a deviation or theory leaf. A positive difference means a higher modeled score than the entry baseline. These are population estimates, not personal forecasts or proof of improvement.']
+    lines += ['', 'Expected prepared depth counts my remaining prepared moves from first entry, including an available move at entry and continuations in other chapters. Shared prefixes are counted once per modeled game. It uses no cutoff or discount and measures usable preparation, not difficulty.']
     if overall.get('unresolved_mass', 0) > 0:
         lines += ['', f"Unresolved probability: {number(overall['unresolved_mass'])}. Overall score bounds: {bounds(overall['conditional_bounds'])}."]
     return '\n'.join(lines) + '\n'
@@ -204,9 +220,9 @@ def summary_markdown(reports, report_paths):
     """Combined summary built solely from current JSON results, without stale prose."""
     lines = ['# Repertoire summary', '',
              'Scores are from the repertoire owner\'s perspective, with a win worth 1 point and a draw worth half a point.', '',
-             '| Repertoire | Starting-position reference | Repertoire score | Delta (pp) |', '|---|---:|---:|---:|']
+             '| Repertoire | Starting-position reference | Repertoire score | Delta (pp) | Expected prepared depth (moves) |', '|---|---:|---:|---:|---:|']
     for r in reports:
-        lines.append(f"| {r['color'].title()} | {pct(r.get('starting_position_reference', {}).get('owner_score'))} | {pct(r['overall']['raw_empirical_score'])} | {overall_delta(r)} |")
+        lines.append(f"| {r['color'].title()} | {pct(r.get('starting_position_reference', {}).get('owner_score'))} | {pct(r['overall']['raw_empirical_score'])} | {overall_delta(r)} | {depth_text(r['overall'])} |")
     lines += ['', 'Overall delta is repertoire score minus the starting-position baseline for the same color, in percentage points (pp). The model follows the selected repertoire moves and uses database frequencies for opponent replies. Population differences and sparse evidence limit what these comparisons establish; detailed uncertainty remains in the full reports.', '']
     for r, path in zip(reports, report_paths):
         lines += [f"## {r['color'].title()} chapters ({len(r['chapters'])})", '',
