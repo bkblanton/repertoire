@@ -47,7 +47,7 @@ Exclude move counters for ordinary opening transpositions.
 
 Merge identical positions and deduplicate edges. A position ending one chapter is not an overall theory leaf if another chapter supplies a continuation.
 
-At our turn, require one selected move. If multiple moves remain after merging, report a policy conflict requiring configuration. Optionally support explicit mixture weights summing to one. Never assign probability one to multiple alternatives.
+At our turn, select the first recorded move: main PGN variation before side variations, and earlier chapters before later chapters. Explicit configured moves or mixture weights summing to one override that default for the overall policy. Record resolved conflicts in diagnostics. Never assign probability one to multiple alternatives.
 
 All included PGN variations are assumed to represent repertoire content. Allow explicit exclusions for illustrative lines or annotated mistakes; do not infer exclusions from prose comments.
 
@@ -180,11 +180,11 @@ Keep three concepts distinct:
 
 A chapter’s score means:
 
-> Expected repertoire score conditional on first entering this chapter, using the complete merged repertoire thereafter.
+> Expected repertoire score conditional on first entering this chapter, preferring that chapter's first own moves and following the overall policy elsewhere in the merged repertoire.
 
 Do not assume the chapter’s PGN root is its meaningful opening entry. Many chapters repeat moves from the initial position.
 
-Support explicit entry positions or paths. Infer entries only when unambiguous; otherwise report that configuration is required.
+Support explicit entry positions or paths and chapter subject regions. Otherwise use all first chapter-unique positions as region anchors, including chapter-owned descendants. If none can be reached under the chapter policy, fall back to its first mainline opponent reply or PGN root. Find first arrival across all routes under the chapter comparison policy. Use that same policy for the score, entry weights, baseline, prepared depth, chapter transitions and vulnerabilities. Retain every chapter, including alternatives excluded by overall chapter order. Label alternative comparisons and report region reach under the overall policy separately. For comparisons of whole alternative systems, configure the same subject anchor for both. Compatible continuations split across chapters remain merged.
 
 For multiple entry routes, use first-entry probabilities and their conditional weights. Do not count a later return to the same chapter as another entry.
 

@@ -145,7 +145,15 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
     graph = parse(source, manifest['configuration'].get('exclude', []))
     transitions = resolve(graph, color, manifest['configuration'].get('policy', {}))
     roots = manifest['root_weights']
-    order = topology(transitions, [*roots, *[e['position'] for c in saved['chapters'] for e in c['entries']]])
+    analysis_roots = [*roots, *[e['position'] for c in saved['chapters'] for e in c['entries']]]
+    order = topology(transitions, analysis_roots)
+    contexts = {'{}': {'transitions': transitions, 'order': order}}
+    for chapter in saved['chapters']:
+        overrides = chapter.get('policy_overrides', {})
+        identity = json.dumps(overrides, sort_keys=True)
+        if identity not in contexts:
+            ct = resolve(graph, color, dict(manifest['configuration'].get('policy', {}), **overrides))
+            contexts[identity] = {'transitions': ct, 'order': topology(ct, analysis_roots)}
     evidence = {}
     # Saved evaluation evidence must be cached and identical to the original run.
     explorer = Explorer(cache, manifest['filters'], offline=True)
@@ -154,17 +162,20 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
             evidence[k] = explorer.get(k)
             if explorer.provenance[k] != original:
                 raise ValueError(f'Cached evaluation evidence changed; reanalyze scores first: {k}')
-        model = prepare(graph, transitions, order, color, evidence)
-        sampled = empirical(model, color)
-        values = backward(model, order, sampled, manifest['sparse_threshold'])
+        for context in contexts.values():
+            context['model'] = prepare(graph, context['transitions'], context['order'], color, evidence)
+            context['sampled'] = empirical(context['model'], color)
+            context['values'] = backward(context['model'], context['order'], context['sampled'], manifest['sparse_threshold'])
+        model, sampled, values = (contexts['{}'][k] for k in ('model', 'sampled', 'values'))
         overall = sum(w*values[k] for k, w in roots.items())
         if not np.allclose(overall[[KNOWN, UNKNOWN], 0],
                            [saved['overall']['resolved_contribution'], saved['overall']['unresolved_mass']],
                            atol=1e-12, rtol=0):
             raise AssertionError('Reconstructed model differs from saved scores')
         missing = []
-        for k in order:
-            if model[k].mode == 'own' and k not in evidence:
+        own_positions = sorted({k for context in contexts.values() for k,n in context['model'].items() if n.mode == 'own'})
+        for k in own_positions:
+            if k not in evidence:
                 try:
                     evidence[k] = explorer.get(k)
                 except ValueError as exc:
@@ -186,14 +197,19 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
             provenance.update(online.provenance)
         finally:
             online.close()
-    local = candidates(graph, model, sampled, values, evidence, color, manifest['sparse_threshold'])
+    for context in contexts.values():
+        context['local'] = candidates(graph, context['model'], context['sampled'], context['values'], evidence, color, manifest['sparse_threshold'])
+        context['lines'] = representative_lines(graph, context['model'], context['order'], context['sampled'], roots)
+    local = contexts['{}']['local']
     reach = reaches(model, order, sampled, roots)
     lines = representative_lines(graph, model, order, sampled, roots)
     overall_scope = rank_scope(local, reach, lines)
     chapters = []
     for chapter in saved['chapters']:
+        context = contexts[json.dumps(chapter.get('policy_overrides', {}), sort_keys=True)]
+        cm, co, cs, cv = (context[k] for k in ('model', 'order', 'sampled', 'values'))
         entries = [e['position'] for e in chapter['entries']]
-        _, entry_mass = forward(model, order, sampled, roots, stop_at=entries)
+        _, entry_mass = forward(cm, co, cs, roots, stop_at=entries)
         probability = sum(float(w[0]) for w in entry_mass.values())
         weights = {k: float(v[0])/probability for k, v in entry_mass.items() if v[0] > 0} if probability else {}
         reported_probability = chapter['score'].get('entry_probability')
@@ -205,15 +221,17 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
         if chapter['score'].get('status') == 'unresolved_first_entry_weights':
             weights = {}
         if weights:
-            conditional = sum(w*values[k] for k, w in weights.items())
+            conditional = sum(w*cv[k] for k, w in weights.items())
             expected = chapter['score'].get('raw_empirical_score')
             if expected is not None and not np.isclose(conditional[KNOWN, 0], expected, atol=1e-12, rtol=0):
                 raise AssertionError('Chapter conditional score changed')
-            scope_lines = representative_lines(graph, model, order, sampled, weights, lines)
-            scope = rank_scope(local, reaches(model, order, sampled, weights), scope_lines, reported_probability)
+            scope_lines = representative_lines(graph, cm, co, cs, weights, context['lines'])
+            scope = rank_scope(context['local'], reaches(cm, co, cs, weights), scope_lines, reported_probability)
         else:
             scope = dict(rankings={'opponent': [], 'own': []}, all_signed_rows=[], unresolved_rows=[], evaluated_rows=0)
         chapters.append(dict(id=chapter['id'], name=chapter['name'], url=chapter.get('url'),
+                             policy_overrides=chapter.get('policy_overrides', {}),
+                             overall_policy_entry_probability=chapter['score'].get('overall_policy_entry_probability', reported_probability),
                              entry_probability=reported_probability, first_entry_weights=weights,
                              repertoire_score=chapter['score'].get('raw_empirical_score'),
                              entry_baseline_score=chapter.get('entry_baseline', {}).get('raw_score'),
@@ -222,12 +240,14 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
                              status='evaluated' if weights else 'unresolved_entry_weights', **scope))
     # The signed deviations from each opponent mean must cancel, including residual stops.
     max_balance_error = 0.0
-    for k, node in model.items():
-        if node.mode != 'opponent' or values[k][UNKNOWN, 0] != 0:
-            continue
-        balance = sum(p*(values[k][KNOWN, 0]-(values[b.target][KNOWN, 0] if b.target else s))
-                      for b, (p, s) in zip(node.branches, sampled[k]) if p > 0)
-        max_balance_error = max(max_balance_error, abs(float(balance)))
+    for context in contexts.values():
+        cm, cs, cv = (context[k] for k in ('model', 'sampled', 'values'))
+        for k, node in cm.items():
+            if node.mode != 'opponent' or cv[k][UNKNOWN, 0] != 0:
+                continue
+            balance = sum(p*(cv[k][KNOWN, 0]-(cv[b.target][KNOWN, 0] if b.target else s))
+                          for b, (p, s) in zip(node.branches, cs[k]) if p > 0)
+            max_balance_error = max(max_balance_error, abs(float(balance)))
     if max_balance_error > 1e-10:
         raise AssertionError('Opponent signed deviations do not balance')
     used = {k: provenance[k] for k in evidence}
@@ -243,7 +263,7 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
                               candidate_child_queries=0, sparse_threshold=manifest['sparse_threshold']),
                 validation=dict(saved_scores_reproduced=True, chapter_scores_reproduced=True,
                                 probability_conservation=True, max_opponent_balance_error=max_balance_error,
-                                own_decision_positions=sum(n.mode == 'own' for n in model.values()),
+                                own_decision_positions=len(own_positions),
                                 own_parent_tables_complete=True))
 
 
@@ -263,7 +283,7 @@ def table(rows, limit, chapter=False, own=False):
     heading = f'| # | Representative line | Reach of move | {before_label} | {after_label} | Drop (pp) | Weighted drag (pp) |'
     divider = '|---:|---|---:|---:|---:|---:|---:|'
     if chapter:
-        heading += ' Study drag after entry (pp) |'
+        heading += ' Root drag under chapter policy (pp) |'
         divider += '---:|'
     heading += ' Games for move |'
     divider += '---:|'
@@ -313,10 +333,10 @@ def markdown(report, top=20, chapter_top=5):
             'Our move drag = probability of reaching the parent x selected policy weight x (ordinary parent database score - selected move-row score). '
             'Our move popularity is not a weight. The two benchmarks differ, so their rankings are separate.', '',
             'All scores use the repertoire owner\'s perspective. Weighted drag is in percentage points of the overall score, '
-            'or of the conditional chapter score in chapter tables. Chapter study drag is weighted again by chapter entry probability. '
+            'or of the conditional chapter score in chapter tables. Chapter root drag is weighted again by entry probability under the chapter comparison policy. '
             'These values overlap across depths and chapters and must not be added. They do not decompose the overall baseline delta.', '',
             'Reach aggregates all modeled transposition routes. The displayed line is one representative route, not its exclusive frequency. '
-            'Chapter rankings start at first entry, use the same weighted entry mixture as the score, and follow the complete merged repertoire thereafter. '
+            'Chapter rankings start at first entry, use the same weighted entry mixture and chapter comparison policy as the score, and retain compatible continuations from other chapters. '
             'A move that enters a chapter is shown in the overall or upstream chapter ranking, not charged again after entry.', '',
             'Own-move alternatives are the highest observed scores in the same parent table, with their game counts. '
             'Selecting the largest observed score exaggerates noisy small samples; it is not a recommendation to replace the move. '
@@ -327,6 +347,10 @@ def markdown(report, top=20, chapter_top=5):
     text += ['### Our selected moves', '']+table(report['overall']['rankings']['own'], top, own=True)
     for chapter in report['chapters']:
         text += [f"## {chapter['name']}", '', f"Chapter entry probability: **{pct(chapter['entry_probability'])}**. Rankings are conditional on first entry.", '']
+        if chapter.get('policy_overrides'):
+            text += ['Alternative chapter comparison: this chapter\'s first own moves take precedence, with the overall policy elsewhere. '
+                     f"Region reach under the overall policy: **{pct(chapter.get('overall_policy_entry_probability'))}**. "
+                     'Root drag uses the chapter comparison policy and is not an impact on the currently selected overall repertoire.', '']
         text += [f"Repertoire score: {pct(chapter['repertoire_score'])}; weighted entry baseline: {pct(chapter['entry_baseline_score'])}; "
                  f"difference: {delta(chapter['delta_vs_entry_baseline_pp'])}. "
                  'Expected prepared depth: '+('unresolved' if chapter['expected_prepared_depth'] is None

@@ -136,8 +136,7 @@ def test_transposition_incoming_mass_and_first_entry(tmp_path):
 def test_conflict_cycle_color_and_reproducibility(tmp_path):
     g = graph(tmp_path,'1. e4 (1. d4) *')
     assert len(conflicts(g,True)) == 1
-    with pytest.raises(ValueError,match='policy conflicts'):
-        resolve(g,True,{})
+    assert list(resolve(g,True,{})[g.roots[0]]) == ['e2e4']
     with pytest.raises(ValueError,match='Invalid policy'):
         resolve(g,True,{g.roots[0]:{'e2e4':1,'d2d4':1}})
     g = graph(tmp_path,'1. Nf3 Nf6 2. Ng1 Ng8 *')
@@ -192,7 +191,8 @@ def test_entry_ambiguity_and_explicit_exclusions(tmp_path):
     text = '[ChapterURL "https://lichess.org/study/test/a"]\n\n1. e4 e5 (1... c5) *\n\n[ChapterURL "https://lichess.org/study/test/b"]\n\n1. e4 e6 *'
     g = graph(tmp_path,text)
     entry = infer_entries(g)['a']
-    assert entry['status'] == 'configuration_required'
+    assert entry['status'] == 'inferred_multiple_frontiers'
+    assert entry['positions'] == entry['candidates']
     assert len(entry['candidates']) == 2
     assert len(parse(tmp_path/'fixture.pgn',exclusions=['a']).chapters) == 1
     removed = parse(tmp_path/'fixture.pgn',exclusions=[f'a:{position("e4")}:c7c5'])

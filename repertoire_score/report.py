@@ -95,18 +95,25 @@ def depth_text(summary):
 
 
 def chapter_table(chapters, concise=False):
+    alternatives = any(c.get('policy_overrides') for c in chapters)
     lines = [
         "Entry probability is chapter reach: the chance of first reaching any qualifying position, counting each modeled game once across all entry routes. Repertoire score is conditional on that entry. Entry baseline uses the same first-entry weights. Delta is repertoire score minus entry baseline, in percentage points (pp). Chapters can overlap; their scores and entry probabilities are not additive.", "",
         "Expected prepared depth is the number of your remaining prepared moves, averaged over first entries and opponent replies. It includes an available move at entry and preparation supplied by other chapters after transpositions; entry itself earns no extra move.", "",
-        "| Chapter | Entry probability | Entry baseline | Repertoire score | Delta (pp) | Expected prepared depth (moves) |" + ("" if concise else " Approx. 95% interval | Unresolved | Sparse sensitivity |"),
-        "|---|---:|---:|---:|---:|---:|" + ("" if concise else "---|---:|---|"),
+        "| Chapter | Entry probability |" + (" Overall-policy region reach |" if alternatives else "") + " Entry baseline | Repertoire score | Delta (pp) | Expected prepared depth (moves) |" + ("" if concise else " Approx. 95% interval | Unresolved | Sparse sensitivity |"),
+        "|---|---:|" + ("---:|" if alternatives else "") + "---:|---:|---:|---:|" + ("" if concise else "---|---:|---|"),
     ]
+    if alternatives:
+        lines[0:0] = ["Overall results prefer the first PGN move in the earliest chapter, unless explicitly overridden. Rows marked **alternative** prefer that chapter's first own moves and use the overall policy elsewhere, retaining compatible preparation from other chapters. Entry probability, score, baseline and depth all use that chapter comparison policy. Overall-policy region reach is shown separately; reaching a shared region does not mean the alternative move is selected.", ""]
     for c in chapters:
         s = c["score"]
         baseline = c.get("entry_baseline", {})
         difference = baseline.get("difference_pp")
         delta = "undefined" if difference is None else f"{difference:+.3f}"
-        prefix = f"| {c['name']} | {pct(s.get('entry_probability'))} | {pct(baseline.get('raw_score'))} |"
+        name = c['name'] + (' **(alternative)**' if c.get('policy_overrides') else '')
+        prefix = f"| {name} | {pct(s.get('entry_probability'))} |"
+        if alternatives:
+            prefix += f" {pct(s.get('overall_policy_entry_probability', s.get('entry_probability')))} |"
+        prefix += f" {pct(baseline.get('raw_score'))} |"
         row = f"{prefix} {pct(s.get('raw_empirical_score'))} | {delta} | {depth_text(s)} |"
         if not concise:
             row += (f" {bounds(s['posterior']['credible_interval_95'])} | {pct(s['unresolved_mass'])} | {bounds(s['sparse_sensitivity'])} |"
@@ -135,8 +142,8 @@ def markdown(report):
              *chapter_table(report["chapters"])]
     if report.get('chapter_transitions'):
         lines += ['', '## Chapter transitions', '',
-                  'Conditional probability of reaching the destination at or after first entering the source chapter, before the model stops. Shared or simultaneous entry counts; this does not require a later move or imply that the source chapter has ended. Rows overlap and must not be added. Zero-probability and unresolved source rows remain in JSON.', '',
-                  '| Source chapter | Destination chapter | Conditional probability | Joint probability from repertoire root |',
+                  'Conditional probability of reaching the destination at or after first entering the source chapter, before the model stops, using the source chapter comparison policy. Shared or simultaneous entry counts; this does not require a later move or imply that the source chapter has ended. Rows overlap and must not be added. Zero-probability and unresolved source rows remain in JSON.', '',
+                  '| Source chapter | Destination chapter | Conditional probability | Joint probability under source chapter policy |',
                   '|---|---|---:|---:|']
         for row in report['chapter_transitions']:
             probability = row['conditional_probability']
@@ -148,6 +155,10 @@ def markdown(report):
               'Paths below are representative move orders for exact positions, not an exhaustive route list. First-entry weights exclude paths that already entered the chapter; a later position can still be an entry through another route.', '']
     for c in report["chapters"]:
         lines += [f"### {c['name']}", "", f"Entry definition: {c['entry_status']}", ""]
+        if c.get('policy_overrides'):
+            lines += ['Comparison policy: this chapter takes precedence at these own-move conflicts; the overall policy applies elsewhere.', '']
+            lines += [f"- `{position}`: `{move}`" for position, move in c['policy_overrides'].items()]
+            lines += ['']
         if c.get('region'):
             region = c['region']
             lines += [f"Subject definition: {region['description']}. Region: {len(region['positions'])} exact positions. Anchors:", '']
@@ -166,7 +177,7 @@ def markdown(report):
         lines.append(f"- Prior {p['prior']}: posterior mean {pct(p['overall']['posterior']['mean'])}; interval {bounds(p['overall']['posterior']['credible_interval_95'])}.")
     lines += ["", "## Run details", "", f"- Input SHA-256: `{report['manifest']['input_sha256']}`",
               f"- Random seed: {report['manifest']['seed']}; simulations: {report['manifest']['simulations']}; prior owner W/D/L: {report['manifest']['prior']}.",
-              f"- Own-move policy: {report['manifest']['configuration'].get('policy_description', 'explicit configuration in the companion JSON' if report['manifest']['configuration'].get('policy') else 'unambiguous PGN moves')}.",
+              f"- Own-move policy: {report['manifest'].get('conflict_resolution', 'explicit configuration where supplied, otherwise first PGN move in first chapter order')}.",
               f"- Distinct graph positions: {report['manifest']['positions']}; evaluated positions: {report['manifest']['evaluated_positions']}.",
               "- Full stopping-event ledger, sample counts, prior influence, cache keys and retrieval timestamps are in the companion JSON.",
               "- Sanity checks: node and terminal probability conservation; weighted terminal contributions reproduce the root value.", ""]
@@ -208,7 +219,13 @@ def study_description(report):
         delta = baseline.get('difference_pp')
         difference = 'unresolved' if delta is None else f'{delta:+.2f} pp'
         name = ' '.join(c['name'].split())
+        if c.get('policy_overrides'):
+            name += ' (alternative)'
         lines.append(f"- {name}: {number(c['score'].get('entry_probability'))} / {number(c['score'].get('raw_empirical_score'))} / {number(baseline.get('raw_score'))} / {difference} / {depth_text(c['score'])} moves")
+        if c.get('policy_overrides'):
+            lines[-1] += f"; region reach under overall policy: {number(c['score'].get('overall_policy_entry_probability'))}"
+    if any(c.get('policy_overrides') for c in report['chapters']):
+        lines += ['', 'The overall repertoire prefers the first own move in the earliest chapter, unless explicitly overridden. Alternative chapter comparisons prefer that chapter\'s first own moves and use the overall policy elsewhere. Their entry probability, score, baseline and depth describe that alternative policy. Overall-policy region reach is separate; a shared region can be reached without selecting the alternative move.']
     lines += ['', 'Entry probability is the modeled chance of reaching any qualifying chapter position, including later transpositions, counting each game once per chapter. Chapters may overlap, so entry probabilities are not additive. Each chapter score and its baseline use the same first-entry weights. The model stops at a deviation or theory leaf. A positive difference means a higher modeled score than the entry baseline. These are population estimates, not personal forecasts or proof of improvement.']
     lines += ['', 'Expected prepared depth counts my remaining prepared moves from first entry, including an available move at entry and continuations in other chapters. Shared prefixes are counted once per modeled game. It uses no cutoff or discount and measures usable preparation, not difficulty.']
     if overall.get('unresolved_mass', 0) > 0:

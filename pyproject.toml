@@ -20,6 +20,8 @@ repertoire-score = "repertoire_score.__main__:main"
 repertoire-report = "repertoire_score.render:main"
 repertoire-correlations = "repertoire_score.correlations:main"
 repertoire-vulnerabilities = "repertoire_score.vulnerabilities:main"
+repertoire-preparation = "repertoire_score.preparation:main"
+repertoire-character = "repertoire_score.character:main"
 
 [build-system]
 requires = ["hatchling"]

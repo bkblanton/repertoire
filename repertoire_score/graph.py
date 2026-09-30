@@ -16,6 +16,7 @@ class Node:
     chapters: set[str] = field(default_factory=set)
     edges: dict[str, str] = field(default_factory=dict)
     provenance: dict[str, set[str]] = field(default_factory=dict)
+    chapter_moves: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -68,6 +69,9 @@ def parse(path, exclusions=()):
                     after.push(child.move)
                     node.edges[uci] = key(after)
                     node.provenance.setdefault(uci, set()).add(cid)
+                    recorded = node.chapter_moves.setdefault(cid, [])
+                    if uci not in recorded:
+                        recorded.append(uci)
                     pending.append((child, after, moves + [san]))
                 stack.extend(reversed(pending))
     if not chapters:
@@ -81,7 +85,8 @@ def conflicts(graph, color):
 
 
 def resolve(graph, color, policy):
-    transitions, unresolved = {}, []
+    """Explicit overrides, otherwise first PGN move in first chapter order."""
+    transitions = {}
     for k, n in graph.nodes.items():
         board = chess.Board(n.fen)
         if not n.edges:
@@ -89,9 +94,6 @@ def resolve(graph, color, policy):
         elif board.turn == color:
             chosen = policy.get(k)
             if chosen is None:
-                if len(n.edges) > 1:
-                    unresolved.append(k)
-                    continue
                 chosen = next(iter(n.edges))
             weights = {chosen: 1.0} if isinstance(chosen, str) else chosen
             if not weights or any(m not in n.edges or not 0 <= w <= 1 for m, w in weights.items()) or abs(sum(weights.values())-1) > 1e-10:
@@ -105,9 +107,23 @@ def resolve(graph, color, policy):
                 target = key(after)
                 if target in graph.nodes:
                     transitions[k][move.uci()] = (target, None)
-    if unresolved:
-        raise ValueError(f"{len(unresolved)} own-move policy conflicts. Configure policy by canonical position; run inspect for details.")
     return transitions
+
+
+def chapter_policy_overrides(graph, color, global_transitions, chapter_id):
+    """Prefer this chapter's first recorded own move; use the global policy elsewhere.
+
+    Keep chapter-local ordering separately: filtering global edge order would
+    incorrectly inherit an earlier chapter's variation order.
+    """
+    overrides = {}
+    for k, node in graph.nodes.items():
+        moves = node.chapter_moves.get(chapter_id, [])
+        if moves and chess.Board(node.fen).turn == color:
+            chosen = moves[0]
+            if global_transitions[k] != {chosen: (node.edges[chosen], 1.0)}:
+                overrides[k] = chosen
+    return overrides
 
 
 def topology(transitions, roots):
@@ -129,7 +145,7 @@ def topology(transitions, roots):
 
 
 def infer_entries(graph):
-    """Only infer a unique chapter-specific frontier across every variation."""
+    """Find all first chapter-unique positions across every variation."""
     entries = {}
     for c in graph.chapters:
         cid, frontier, visited = c["id"], set(), set()
@@ -145,8 +161,9 @@ def infer_entries(graph):
                 if cid in n.provenance[move]:
                     walk(target)
         walk(c["root"])
-        entries[cid] = {"positions": sorted(frontier) if len(frontier) == 1 else [],
-                        "candidates": sorted(frontier), "status": "inferred_unique_frontier" if len(frontier) == 1 else "configuration_required"}
+        entries[cid] = {"positions": sorted(frontier), "candidates": sorted(frontier),
+                        "status": "inferred_unique_frontier" if len(frontier) == 1 else
+                        "inferred_multiple_frontiers" if frontier else "automatic_fallback_needed"}
     return entries
 
 

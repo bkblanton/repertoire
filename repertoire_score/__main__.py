@@ -6,14 +6,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 import chess
 import numpy as np
-from .graph import parse, conflicts, resolve, topology, infer_entries, key, chapter_region, region_entries
+from .graph import parse, conflicts, resolve, topology, infer_entries, key, chapter_region, region_entries, chapter_policy_overrides
 from .explorer import Explorer, DEFAULT_FILTERS
 from .model import prepare, outcome, empirical, draws
 from .evaluate import backward, forward, summarize, chapter_score, COMPLETED, KNOWN
 from .report import events, markdown, starting_position_reference
 from .baseline import chapter_entry_baseline
 from .render import update_report_outputs
-from .transitions import chapter_transitions
+from .transitions import chapter_transitions, hitting_bounds
 from .depth import prepared_depth_values, summarize_depth, chapter_prepared_depth
 
 
@@ -48,6 +48,22 @@ def analyze(args):
         print(f"{len(graph.chapters)} chapters; {len(graph.nodes)} positions; {len(inspection['conflicts'])} own-move conflicts")
         return
     transitions = resolve(graph, color, config.get("policy", {}))
+    for conflict in inspection['conflicts']:
+        conflict['selected_moves'] = {move: weight for move, (_, weight) in transitions[conflict['position']].items()}
+        conflict['resolution'] = 'explicit configuration' if conflict['position'] in config.get('policy', {}) else 'first PGN move in first chapter order'
+    profiles = [{'overrides': {}, 'transitions': transitions, 'chapters': []}]
+    profile_ids = {'{}': 0}
+    chapter_profiles = {}
+    for c in graph.chapters:
+        overrides = chapter_policy_overrides(graph, color, transitions, c['id'])
+        identity = json.dumps(overrides, sort_keys=True)
+        if identity not in profile_ids:
+            profile_ids[identity] = len(profiles)
+            profiles.append({'overrides': overrides,
+                             'transitions': resolve(graph, color, dict(config.get('policy', {}), **overrides)), 'chapters': []})
+        index = profile_ids[identity]
+        profiles[index]['chapters'].append(c['id'])
+        chapter_profiles[c['id']] = index
     absolute_reach = "root_weights" in config or key(chess.Board()) in graph.roots
     if "root_weights" in config:
         root_weights = config["root_weights"]
@@ -65,13 +81,14 @@ def analyze(args):
         raise ValueError('Chapter region configuration contains unknown chapter IDs')
     for c in graph.chapters:
         cid = c['id']
+        chapter_transitions_map = profiles[chapter_profiles[cid]]['transitions']
         if cid in config.get('chapter_regions', {}):
             if cid in config.get('entries', {}):
                 raise ValueError(f'Configure either chapter_regions or entries, not both: {cid}')
             definition = config['chapter_regions'][cid]
             anchors = entry_positions(definition['anchors'], graph)
             members = chapter_region(graph, cid, anchors)
-            entries[cid] = region_entries(transitions, list(dict.fromkeys([*root_weights, *graph.roots])), members)
+            entries[cid] = region_entries(chapter_transitions_map, list(dict.fromkeys([*root_weights, *graph.roots])), members)
             regions[cid] = {'anchors': anchors, 'positions': sorted(members),
                             'description': definition.get('description', 'Chapter-owned continuations from the configured subject anchors')}
             entry_status[cid] = 'First arrival anywhere in the chapter region, including shared positions and later transpositions'
@@ -79,15 +96,29 @@ def analyze(args):
             entries[cid] = entry_positions(config['entries'][cid], graph)
             entry_status[cid] = config.get('entry_description', 'explicit configuration')
         else:
-            entries[cid] = inspection['entries'][cid]['positions']
-            entry_status[cid] = inspection['entries'][cid]['status']
+            anchors = inspection['entries'][cid]['candidates']
+            if not anchors:
+                anchors = [next((k for k in c['mainline'][1:] if k in graph.nodes and chess.Board(graph.nodes[k].fen).turn == color), c['root'])]
+            members = chapter_region(graph, cid, anchors)
+            entries[cid] = region_entries(chapter_transitions_map, list(dict.fromkeys([*root_weights, *graph.roots])), members)
+            if not entries[cid]:
+                # Unique positions may all belong to discarded own variations.
+                anchors = [next((k for k in c['mainline'][1:] if k in graph.nodes and chess.Board(graph.nodes[k].fen).turn == color), c['root'])]
+                members = chapter_region(graph, cid, anchors)
+                entries[cid] = region_entries(chapter_transitions_map, list(dict.fromkeys([*root_weights, *graph.roots])), members)
+            regions[cid] = {'anchors': anchors, 'positions': sorted(members),
+                            'description': 'All first chapter-unique positions and chapter-owned descendants; if none can be entered under the chapter policy, the first opponent reply or PGN root is used'}
+            entry_status[cid] = 'Automatic chapter region, evaluated under the chapter comparison policy'
     analysis_roots = list(root_weights) + [p for positions in entries.values() for p in positions]
-    order = topology(transitions, analysis_roots)
+    for profile in profiles:
+        profile['order'] = topology(profile['transitions'], analysis_roots)
+    order = profiles[0]['order']
     explorer = Explorer(args.cache, dict(DEFAULT_FILTERS, **config.get("filters", {})), args.offline, args.refresh)
     evidence = {}
     try:
-        required = [k for k in order if outcome(chess.Board(graph.nodes[k].fen), color) is None and
-                    (not transitions[k] or chess.Board(graph.nodes[k].fen).turn != color)]
+        required = [k for profile in profiles for k in profile['order']
+                    if outcome(chess.Board(graph.nodes[k].fen), color) is None and
+                    (not profile['transitions'][k] or chess.Board(graph.nodes[k].fen).turn != color)]
         starting_position = key(chess.Board())
         baseline_positions = [p for positions in entries.values() for p in positions
                               if outcome(chess.Board(p + " 0 1"), color) is None]
@@ -98,57 +129,91 @@ def analyze(args):
                 print(f"Evidence {i+1}/{len(required)}", flush=True)
     finally:
         explorer.close()
-    model = prepare(graph, transitions, order, color, evidence)
-    raw_sample = empirical(model, color)
-    depth_values = prepared_depth_values(model, order, raw_sample)
-    post_sample = draws(model, color, args.simulations, args.seed, args.prior)
-    raw_values = backward(model, order, raw_sample, args.sparse_threshold)
-    post_values = backward(model, order, post_sample, args.sparse_threshold, args.simulations)
-    raw_root = sum(w*raw_values[k] for k, w in root_weights.items())
-    post_root = sum(w*post_values[k] for k, w in root_weights.items())
-    raw_flow, _ = forward(model, order, raw_sample, root_weights)
-    post_flow, _ = forward(model, order, post_sample, root_weights, args.simulations)
-    ledger = events(graph, model, raw_sample, post_sample, raw_flow, post_flow, color, sum(args.prior))
-    if not np.isclose(sum(e["contribution"] or 0 for e in ledger), raw_root[KNOWN, 0], atol=1e-9):
-        raise AssertionError("Raw weighted stopping contributions differ from root value")
-    decomposition = sum((post_flow[k, j]*post_sample[k][j][1] for k, j in post_flow), np.zeros(args.simulations))
-    if not np.allclose(decomposition, post_root[COMPLETED], atol=1e-9):
-        raise AssertionError("Posterior weighted stopping contributions differ from root value")
-    chapters = []
-    reachable = set(topology(transitions, list(root_weights)))
-    for c in graph.chapters:
-        positions = entries[c["id"]]
+    for profile in profiles:
+        profile['model'] = prepare(graph, profile['transitions'], profile['order'], color, evidence)
+        profile['raw'] = empirical(profile['model'], color)
+        profile['values'] = backward(profile['model'], profile['order'], profile['raw'], args.sparse_threshold)
+        profile['depth'] = prepared_depth_values(profile['model'], profile['order'], profile['raw'])
+        profile['reachable'] = set(topology(profile['transitions'], list(root_weights)))
+
+    def conditional(profile, c, post_sample, post_values):
+        positions = entries[c['id']]
         if not positions:
-            summary = {"status": "entry_configuration_required"}
-        elif all(p not in reachable for p in positions) and c["root"] not in reachable and len(positions) == 1:
-            summary = summarize(raw_values[positions[0]], post_values[positions[0]])
-            summary["entry_probability"] = None
-            summary["conditional_basis"] = "disconnected custom-FEN chapter; no absolute root weight"
+            summary = {'status': 'entry_configuration_required'}
+        elif all(p not in profile['reachable'] for p in positions) and c['root'] not in profile['reachable'] and len(positions) == 1:
+            summary = summarize(profile['values'][positions[0]], post_values[positions[0]])
+            summary.update(entry_probability=None, conditional_basis='disconnected custom-FEN chapter; no absolute root weight')
         else:
-            summary = chapter_score(model, order, raw_sample, post_sample, raw_values, post_values, root_weights, positions, args.simulations)
+            summary = chapter_score(profile['model'], profile['order'], profile['raw'], post_sample,
+                                    profile['values'], post_values, root_weights, positions, args.simulations)
         if not absolute_reach:
-            summary["probability_conditional_on_custom_root"] = summary.get("entry_probability")
-            summary["entry_probability"] = None
-            summary["posterior_entry_probability_mean"] = None
-        summary['prepared_depth'] = chapter_prepared_depth(depth_values, positions, summary)
-        chapters.append({"id": c["id"], "name": c["name"], "url": c["url"], "entry_status": entry_status[c["id"]],
-                         "region": regions.get(c['id']),
-                         "entries": [{"position": p, "path": graph.nodes[p].path,
-                                      "conditional_first_entry_weight": summary.get('first_entry_weights', {}).get(p)} for p in positions], "score": summary,
-                         "entry_baseline": chapter_entry_baseline(positions, summary, evidence, color, explorer.provenance)})
+            summary['probability_conditional_on_custom_root'] = summary.get('entry_probability')
+            summary['entry_probability'] = None
+            summary['posterior_entry_probability_mean'] = None
+        return summary
+
+    chapter_results = {}
+    global_profile = profiles[0]
+    model, raw_sample, raw_values, depth_values = (global_profile[k] for k in ('model', 'raw', 'values', 'depth'))
+    raw_root = sum(w*raw_values[k] for k, w in root_weights.items())
+    for index, profile in enumerate(profiles):
+        # Evaluate one posterior profile at a time to bound memory use.
+        post_sample = draws(profile['model'], color, args.simulations, args.seed, args.prior)
+        post_values = backward(profile['model'], profile['order'], post_sample, args.sparse_threshold, args.simulations)
+        if index == 0:
+            post_root = sum(w*post_values[k] for k, w in root_weights.items())
+            raw_flow, _ = forward(model, order, raw_sample, root_weights)
+            post_flow, _ = forward(model, order, post_sample, root_weights, args.simulations)
+            ledger = events(graph, model, raw_sample, post_sample, raw_flow, post_flow, color, sum(args.prior))
+            if not np.isclose(sum(e['contribution'] or 0 for e in ledger), raw_root[KNOWN, 0], atol=1e-9):
+                raise AssertionError('Raw weighted stopping contributions differ from root value')
+            decomposition = sum((post_flow[k,j]*post_sample[k][j][1] for k,j in post_flow), np.zeros(args.simulations))
+            if not np.allclose(decomposition, post_root[COMPLETED], atol=1e-9):
+                raise AssertionError('Posterior weighted stopping contributions differ from root value')
+        for c in graph.chapters:
+            if c['id'] not in profile['chapters']:
+                continue
+            positions = entries[c['id']]
+            summary = conditional(profile, c, post_sample, post_values)
+            summary['prepared_depth'] = chapter_prepared_depth(profile['depth'], positions, summary)
+            destination = set(regions[c['id']]['positions']) if c['id'] in regions else set(positions)
+            actual_hits = hitting_bounds(model, order, raw_sample, destination)
+            low, high = (sum(w*actual_hits[k][i] for k,w in root_weights.items()) for i in (0,1))
+            summary['overall_policy_entry_probability'] = low if low == high and absolute_reach else None
+            summary['overall_policy_entry_probability_bounds'] = [low, high] if absolute_reach else None
+            summary['entry_probability_basis'] = 'chapter comparison policy from the repertoire roots'
+            chapter_results[c['id']] = {
+                'id': c['id'], 'name': c['name'], 'url': c['url'], 'entry_status': entry_status[c['id']],
+                'policy_overrides': profile['overrides'],
+                'policy_basis': 'chapter first choices, then overall policy' if profile['overrides'] else 'overall policy',
+                'region': regions.get(c['id']),
+                'entries': [{'position': p, 'path': graph.nodes[p].path,
+                             'conditional_first_entry_weight': summary.get('first_entry_weights', {}).get(p)} for p in positions],
+                'score': summary, 'entry_baseline': chapter_entry_baseline(positions, summary, evidence, color, explorer.provenance)}
+        del post_sample, post_values
+    chapters = [chapter_results[c['id']] for c in graph.chapters]
     destination_sets = {cid: region['positions'] if (region := regions.get(cid)) else positions
                         for cid, positions in entries.items()}
-    transition_rows = chapter_transitions(model, order, raw_sample, chapters, destination_sets)
+    transition_rows = []
+    for profile in profiles:
+        rows = chapter_transitions(profile['model'], profile['order'], profile['raw'], chapters, destination_sets)
+        transition_rows.extend(dict(row, policy_basis='source chapter comparison policy') for row in rows
+                               if row['source_id'] in profile['chapters'])
     sensitivity = []
     # Symmetric weak and stronger priors expose changes from the default.
     for prior in ([0.1, 0.1, 0.1], [2., 2., 2.]):
-        alt_samples = draws(model, color, args.simulations, args.seed, prior)
-        alt_values = backward(model, order, alt_samples, args.sparse_threshold, args.simulations)
-        alt_root = sum(w*alt_values[k] for k, w in root_weights.items())
-        sensitivity.append({"prior": prior, "overall": summarize(raw_root, alt_root), "chapters": {
-            c["id"]: chapter_score(model, order, raw_sample, alt_samples, raw_values, alt_values, root_weights, entries[c["id"]], args.simulations)
-            for c in graph.chapters if entries[c["id"]]}})
-        del alt_samples, alt_values
+        item = {'prior': prior, 'chapters': {}}
+        for index, profile in enumerate(profiles):
+            alt_samples = draws(profile['model'], color, args.simulations, args.seed, prior)
+            alt_values = backward(profile['model'], profile['order'], alt_samples, args.sparse_threshold, args.simulations)
+            if index == 0:
+                alt_root = sum(w*alt_values[k] for k, w in root_weights.items())
+                item['overall'] = summarize(raw_root, alt_root)
+            for c in graph.chapters:
+                if c['id'] in profile['chapters'] and entries[c['id']]:
+                    item['chapters'][c['id']] = conditional(profile, c, alt_samples, alt_values)
+            del alt_samples, alt_values
+        sensitivity.append(item)
     report = {"color": args.color, "overall": summarize(raw_root, post_root), "chapters": chapters,
               "chapter_transitions": transition_rows,
               "starting_position_reference": starting_position_reference(evidence[starting_position], color, explorer.provenance[starting_position]),
@@ -157,7 +222,11 @@ def analyze(args):
                            "input_sha256": hashlib.sha256(Path(args.pgn).read_bytes()).hexdigest(), "configuration": config,
                            "filters": explorer.filters, "endpoint": "https://explorer.lichess.org/lichess", "evidence": explorer.provenance,
                            "prior": args.prior, "seed": args.seed, "simulations": args.simulations, "sparse_threshold": args.sparse_threshold,
-                           "positions": len(graph.nodes), "evaluated_positions": len(order), "root_weights": root_weights,
+                           "positions": len(graph.nodes), "evaluated_positions": len({k for p in profiles for k in p['order']}),
+                           "overall_policy_evaluated_positions": len(order), "root_weights": root_weights,
+                           "conflict_resolution": "explicit policy overrides, otherwise first PGN move in first chapter order",
+                           "chapter_policy_semantics": "chapter first choices from roots, overall policy elsewhere; chapter comparison reach is separate from overall-policy region reach",
+                           "policy_profile_count": len(profiles),
                            "overall_basis": "supplied root weights" if "root_weights" in config else "standard starting position" if absolute_reach else "conditional on custom PGN root",
                            "tolerance_score_points": args.tolerance,
                            "tolerance_met": float((post_root[COMPLETED].max()-post_root[COMPLETED].min())*100) <= args.tolerance},
@@ -168,7 +237,7 @@ def analyze(args):
     report['manifest']['prepared_depth_definition'] = (
         'Expected remaining own prepared moves before a deviation, theory leaf, or terminal outcome; '
         'includes an available own move at entry, uses the merged repertoire and empirical opponent probabilities, '
-        'and uses chapter first-entry weights. No depth cutoff, discount, or bonus for entry itself. '
+        'and uses chapter comparison policies and first-entry weights. No depth cutoff, discount, or bonus for entry itself. '
         'Missing move distributions or first-entry weights remain unresolved with conditional bounds.')
     report["manifest"]["tolerance_met"] = bool(report["manifest"]["tolerance_met"])
     output.with_suffix(".json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")

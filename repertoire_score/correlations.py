@@ -95,9 +95,10 @@ def report_rows(path):
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError(f'PGN differs from saved report; reanalyze before clustering: {source}')
     graph = parse(source, manifest['configuration'].get('exclude', []))
-    transitions = resolve(graph, color=='white', manifest['configuration'].get('policy', {}))
     rows, position_sets = [], []
     for chapter in report['chapters']:
+        chapter_transitions = resolve(graph, color=='white', dict(manifest['configuration'].get('policy', {}),
+                                                                  **chapter.get('policy_overrides', {})))
         score, baseline = chapter['score'], chapter['entry_baseline']
         row = dict(color=color, id=chapter['id'], name=chapter['name'], family=chapter['name'].split(':')[0],
                    depth=score['prepared_depth']['expected_moves'], delta=baseline['difference_pp'],
@@ -112,7 +113,7 @@ def report_rows(path):
             k = pending.pop()
             if k not in seen:
                 seen.add(k)
-                pending.extend(target for target, _ in transitions[k].values())
+                pending.extend(target for target, _ in chapter_transitions[k].values())
         position_sets.append(seen)
     groups = connected_groups(position_sets)
     for group_number, indices in enumerate(groups, 1):
@@ -195,7 +196,7 @@ def markdown(result):
             lines.append(f'| {METRICS[metric]} | {cell(sensitivity,metric)} |')
     lines += ['', '## Interval method and limitations', '',
               f"Used {method['repetitions']:,} paired cluster-bootstrap replicates per analysis, seed {method['seed']}. Bounds are the 2.5th and 97.5th percentiles of the resampled statistic. No new Lichess requests were made.", '',
-              'Chapters belong to the same group when their reachable post-entry theory shares any canonical position, directly or through another chapter. Reachability uses the selected repertoire policy and the complete merged graph, including structurally possible theory moves with zero observed frequency. Repeated introductory positions before chapter entry are excluded. All chapters and variables in a group are resampled together. Each color draws its original number of groups with replacement; pooled resampling is stratified by color. The number of chapter rows can vary because groups have different sizes.', '',
+              'Chapters belong to the same group when their reachable post-entry theory shares any canonical position, directly or through another chapter. Reachability uses each chapter comparison policy and the complete merged graph, including structurally possible theory moves with zero observed frequency. Entry weights also use that comparison policy for alternative chapters. Repeated introductory positions before chapter entry are excluded. All chapters and variables in a group are resampled together. Each color draws its original number of groups with replacement; pooled resampling is stratified by color. The number of chapter rows can vary because groups have different sizes.', '',
               'These intervals treat transposition groups as exchangeable independent units. There are few groups, their sizes differ, and the repertoire is deliberately selected rather than randomly sampled. Shared upstream frequencies and overlapping historical games can also create dependence across groups. Therefore nominal 95% coverage is not guaranteed; these are exploratory intervals, not a full uncertainty analysis of the fixed repertoire. More bootstrap replicates improve numerical precision, not the number of independent groups.', '',
               'The fixed saved chapter values have an exactly computable correlation. The intervals ask how that association varies under repeated sampling of similar chapter groups; they do not measure uncertainty about that arithmetic. A separate joint evidence-model analysis would be required to estimate uncertainty from finite Lichess observations for these fixed chapters.', '',
               'Undefined replicates are counted in JSON. An interval is withheld if more than 1% of replicates are undefined or its original statistic is undefined. These are individual 95% intervals, not simultaneous intervals adjusted for trying multiple variants. No significance claim or causal effect follows merely from excluding zero.', '',
