@@ -3,6 +3,7 @@ import numpy as np
 import chess
 from .model import score
 from .explorer import counts
+from .attribution import chapter_text, ATTRIBUTION_NOTE
 
 
 def starting_position_reference(data, color, provenance):
@@ -123,6 +124,7 @@ def chapter_table(chapters, concise=False):
 
 
 def markdown(report):
+    catalog = report.get('chapter_catalog',report.get('chapters',[]))
     overall = report["overall"]
     filters = report["manifest"]["filters"]
     lines = [f"# {report['color'].title()} repertoire score", "", 
@@ -165,13 +167,13 @@ def markdown(report):
             lines += [f"- `{anchor}`" for anchor in region['anchors']]
             lines += ['', 'Possible first-entry positions:', '']
         for e in c["entries"]:
-            lines.append(f"- {' '.join(e['path']) or '(PGN root)'}; first-entry weight {pct(e.get('conditional_first_entry_weight'))}; canonical position `{e['position']}`")
-    lines += ["", "## Largest stopping contributions", "", "| Type | Representative SAN path | Probability | Contribution | Observations |", "|---|---|---:|---:|---:|"]
+            lines.append(f"- {' '.join(e['path']) or '(PGN root)'}; chapters: {chapter_text(e,catalog)}; first-entry weight {pct(e.get('conditional_first_entry_weight'))}; canonical position `{e['position']}`")
+    lines += ["", ATTRIBUTION_NOTE, "", "## Largest stopping contributions", "", "| Type | Representative SAN path | Chapter source / context | Probability | Contribution | Observations |", "|---|---|---|---:|---:|---:|"]
     for e in sorted(report["events"], key=lambda e:e["posterior_contribution_mean"], reverse=True)[:15]:
-        lines.append(f"| {e['type']} | {' '.join(e['representative_path_san'])} | {pct(e['probability'])} | {pct(e['posterior_contribution_mean'])} | {e['sample_count']} |")
-    lines += ["", "## Largest uncertainty priorities", "", "Priority is posterior mean reach times stopping-score interval width. It is a review heuristic, not additive variance attribution.", "", "| Type | Representative SAN path | Priority (score points) | Observations |", "|---|---|---:|---:|"]
+        lines.append(f"| {e['type']} | {' '.join(e['representative_path_san'])} | {chapter_text(e,catalog)} | {pct(e['probability'])} | {pct(e['posterior_contribution_mean'])} | {e['sample_count']} |")
+    lines += ["", "## Largest uncertainty priorities", "", "Priority is posterior mean reach times stopping-score interval width. It is a review heuristic, not additive variance attribution.", "", "| Type | Representative SAN path | Chapter source / context | Priority (score points) | Observations |", "|---|---|---|---:|---:|"]
     for e in sorted(report["events"], key=lambda e:e["uncertainty_priority"], reverse=True)[:15]:
-        lines.append(f"| {e['type']} | {' '.join(e['representative_path_san'])} | {100*e['uncertainty_priority']:.4f} | {e['sample_count']} |")
+        lines.append(f"| {e['type']} | {' '.join(e['representative_path_san'])} | {chapter_text(e,catalog)} | {100*e['uncertainty_priority']:.4f} | {e['sample_count']} |")
     lines += ["", "## Prior sensitivity", "", "The total joint-table prior strength is controlled per opponent position, divided over legal moves and any observed residual bucket.", ""]
     for p in report["prior_sensitivity"]:
         lines.append(f"- Prior {p['prior']}: posterior mean {pct(p['overall']['posterior']['mean'])}; interval {bounds(p['overall']['posterior']['credible_interval_95'])}.")

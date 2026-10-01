@@ -12,6 +12,7 @@ from .evaluate import KNOWN, UNKNOWN, backward, forward
 from .explorer import Explorer, counts
 from .graph import parse, resolve, topology
 from .model import empirical, prepare, score
+from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE, vulnerability_summary
 
 
 def reaches(model, order, sampled, roots):
@@ -253,7 +254,7 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
     used = {k: provenance[k] for k in evidence}
     baseline = saved.get('starting_position_reference', {}).get('owner_score')
     total_score = saved['overall']['raw_empirical_score']
-    return dict(color=saved['color'], overall_score=total_score, starting_baseline_score=baseline,
+    result = dict(color=saved['color'], overall_score=total_score, starting_baseline_score=baseline,
                 overall_delta_pp=None if baseline is None or total_score is None else 100*(total_score-baseline),
                 overall=overall_scope, chapters=chapters,
                 manifest=dict(created_at=datetime.now(timezone.utc).isoformat(),
@@ -265,6 +266,7 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
                                 probability_conservation=True, max_opponent_balance_error=max_balance_error,
                                 own_decision_positions=len(own_positions),
                                 own_parent_tables_complete=True))
+    return enrich(result, graph)
 
 
 def pct(value):
@@ -275,13 +277,13 @@ def delta(value):
     return 'unresolved' if value is None else f'{value:+.3f} pp'
 
 
-def table(rows, limit, chapter=False, own=False):
+def table(rows, limit, chapter=False, own=False, catalog=()):
     if not rows:
         return ['No positive drag identified among resolved, reachable moves.', '']
     before_label = 'Parent database score' if own else 'Before reply repertoire score'
     after_label = 'Selected move database score' if own else 'After reply score'
-    heading = f'| # | Representative line | Reach of move | {before_label} | {after_label} | Drop (pp) | Weighted drag (pp) |'
-    divider = '|---:|---|---:|---:|---:|---:|---:|'
+    heading = f'| # | Representative line | Chapter source / context | Reach of move | {before_label} | {after_label} | Drop (pp) | Weighted drag (pp) |'
+    divider = '|---:|---|---|---:|---:|---:|---:|---:|'
     if chapter:
         heading += ' Root drag under chapter policy (pp) |'
         divider += '---:|'
@@ -292,7 +294,7 @@ def table(rows, limit, chapter=False, own=False):
         divider += '---|'
     text = [heading, divider]
     for i, row in enumerate(rows[:limit], 1):
-        value = f"| {i} | `{row['line']}` | {pct(row['branch_reach'])} | {pct(row['reference_score'])} | {pct(row['move_score'])} | {row['local_drop_pp']:.3f} | {row['weighted_drag_pp']:.4f} |"
+        value = f"| {i} | `{row['line']}` | {chapter_text(row,catalog)} | {pct(row['branch_reach'])} | {pct(row['reference_score'])} | {pct(row['move_score'])} | {row['local_drop_pp']:.3f} | {row['weighted_drag_pp']:.4f} |"
         if chapter:
             v = row['study_drag_pp_after_entry']
             value += ' '+('unresolved' if v is None else f'{v:.4f}')+' |'
@@ -300,22 +302,23 @@ def table(rows, limit, chapter=False, own=False):
         if own:
             a = row['alternative']
             value += (' none observed |' if not a else
-                      f" {a['san']}: {pct(a['score'])}, n={a['sample_count']:,}{' (sparse)' if a['sparse'] else ''} |")
+                      f" {a['san']}: {pct(a['score'])}, n={a['sample_count']:,}{' (sparse)' if a['sparse'] else ''}; {chapter_text(a,catalog)} |")
         text.append(value)
     return text+['']
 
 
-def opponent_tables(rows, limit, chapter=False):
+def opponent_tables(rows, limit, chapter=False, catalog=()):
     text = []
     for prepared, label in ((False, 'Unprepared'), (True, 'Prepared')):
         text += [f'### {label} opponent replies', '']
-        text += table([r for r in rows if r['prepared'] == prepared], limit, chapter=chapter)
+        text += table([r for r in rows if r['prepared'] == prepared], limit, chapter=chapter, catalog=catalog)
     return text
 
 
 def markdown(report, top=20, chapter_top=5):
     color = report['color'].title()
     filters = report['manifest']['filters']
+    catalog = report.get('chapter_catalog',[])
     text = [f'# {color} repertoire vulnerabilities', '',
             f"Repertoire score: **{pct(report['overall_score'])}**. "
             f"{color} starting-position baseline: **{pct(report['starting_baseline_score'])}**. "
@@ -324,7 +327,7 @@ def markdown(report, top=20, chapter_top=5):
             f"dates `{filters['since']}` to `{filters['until']}`.", '',
             'Ranked by weighted score deficit. Opponent replies and our moves use different references and are ranked separately. '
             'Rows can overlap, so do not sum them or interpret drag as a guaranteed improvement. Definitions and evidence checks follow the chapter tables.', '',
-            '## Overall study', '']
+            ATTRIBUTION_NOTE, '', '## Overall study', '']
     methods = [
             'Rankings identify empirical pressure points. Positive weighted drag means a score deficit relative to the stated local reference. '
             'It is a screening measure, not a promised improvement, an engine judgment, or proof that a move causes worse results.', '',
@@ -343,8 +346,8 @@ def markdown(report, top=20, chapter_top=5):
             f"Counts below {report['manifest']['sparse_threshold']} are flagged. Opponent counts measure reply frequency; prepared continuation scores can rely on other downstream evidence.", '',
             'Unobserved moves have zero empirical frequency. Missing score evidence stays unresolved and is excluded from positive rankings. '
             'No score intervals are inferred from these rankings. Non-move residual stopping buckets are included in model validation but are not ranked as chess moves.', '']
-    text += opponent_tables(report['overall']['rankings']['opponent'], top)
-    text += ['### Our selected moves', '']+table(report['overall']['rankings']['own'], top, own=True)
+    text += opponent_tables(report['overall']['rankings']['opponent'], top, catalog=catalog)
+    text += ['### Our selected moves', '']+table(report['overall']['rankings']['own'], top, own=True, catalog=catalog)
     for chapter in report['chapters']:
         text += [f"## {chapter['name']}", '', f"Chapter entry probability: **{pct(chapter['entry_probability'])}**. Rankings are conditional on first entry.", '']
         if chapter.get('policy_overrides'):
@@ -358,8 +361,8 @@ def markdown(report, top=20, chapter_top=5):
         if chapter['status'] != 'evaluated':
             text += ['Entry weights are unresolved; no conditional ranking is available.', '']
             continue
-        text += opponent_tables(chapter['rankings']['opponent'], chapter_top, chapter=True)
-        text += ['### Our selected moves', '']+table(chapter['rankings']['own'], chapter_top, chapter=True, own=True)
+        text += opponent_tables(chapter['rankings']['opponent'], chapter_top, chapter=True, catalog=catalog)
+        text += ['### Our selected moves', '']+table(chapter['rankings']['own'], chapter_top, chapter=True, own=True, catalog=catalog)
         text += [f"Unresolved reachable move comparisons: {len(chapter['unresolved_rows'])}.", '']
     text += ['## How to read the rankings', '', *methods, '## Evidence and checks', '',
              'All candidate results come from parent-position response tables. Candidate child requests: **0**. '
@@ -395,20 +398,10 @@ def main():
         write_outputs(result, path, args.top, args.chapter_top)
         results.append((result, Path(path)))
         print(f"Generated {result['color']} vulnerabilities: overall and {len(result['chapters'])} chapters", flush=True)
-    summary = ['# Repertoire vulnerability summary', '',
-               'Largest weighted deficits, separately for opponent replies and our moves. '
-               'The benchmarks differ and the rows overlap, so do not sum them or interpret drag as an achievable improvement. '
-               'See each full report for definitions, sample caveats, all chapters and exact evidence.', '']
-    for report, path in results:
-        summary += [f"## {report['color'].title()}", '',
-                    f"Repertoire score: {pct(report['overall_score'])}; {report['color']} starting baseline: "
-                    f"{pct(report['starting_baseline_score'])}; difference: {delta(report['overall_delta_pp'])}.", '',
-                    f"[Full overall and chapter report]({path.with_suffix('.vulnerabilities.md').name})", '']
-        summary += opponent_tables(report['overall']['rankings']['opponent'], min(args.top, 10))
-        summary += ['### Our selected moves', '']+table(report['overall']['rankings']['own'], min(args.top, 10), own=True)
+    summary = vulnerability_summary(results, min(args.top,10))
     target = Path(args.summary) if args.summary else Path(args.reports[0]).parent/'vulnerabilities.md'
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text('\n'.join(summary), encoding='utf-8')
+    target.write_text(summary, encoding='utf-8')
 
 
 if __name__ == '__main__':

@@ -137,6 +137,16 @@ The supplied PGN source files are never modified. `prefetch.py` can warm the cac
 
 ## Repertoire character: reuse, reply predictability and position profiles
 
+All report tables containing individual lines now include linked chapter attribution. A recorded move lists its exact position/move providers, including every shared source. A position lists the chapters containing that canonical board. An unprepared reply is labeled unprepared and lists its parent chapters as context; an unrecorded move that transposes into preparation lists the destination chapters. Representative routes may combine chapters. Trim proposals list the actual PGN chapters edited by the proposal. These relationships are stored separately from the older parent-membership `chapters` fields in JSON.
+
+To refresh attribution in saved score, vulnerability, preparation and character reports without recomputing estimates or querying Lichess:
+
+```powershell
+uv run repertoire-attribution reports/white.json reports/black.json
+```
+
+The command validates source hashes and companion-report hashes before writing, preserves all numerical results and updates companion source-report hashes. Normal analysis commands also populate attribution automatically.
+
 ```powershell
 uv run repertoire-character reports/white.json reports/black.json
 ```

@@ -11,6 +11,7 @@ import chess
 
 from .explorer import Explorer, counts
 from .preparation import Study, Evaluator, chess_facts, line_text, stopping_rows
+from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE
 
 
 DEFAULT_GAMES = (10, 50, 100, 500)
@@ -233,11 +234,12 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
         scope['status'] = 'partial: unknown opponent distribution' if scope['unresolved_opponent_distribution_mass'] else 'resolved'
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError('PGN changed during character analysis')
-    return dict(color=saved['color'],scopes=scopes,manifest=dict(created_at=datetime.now(timezone.utc).isoformat(),
+    result = dict(color=saved['color'],scopes=scopes,manifest=dict(created_at=datetime.now(timezone.utc).isoformat(),
                 report_path=str(path.resolve()),report_sha256=hashlib.sha256(source_bytes).hexdigest(),
                 input_path=str(source),input_sha256=manifest['input_sha256'],filters=manifest['filters'],
                 cache_only=True,network_requests=0,evidence=explorer.provenance,uncached_positions=missing,
                 games=list(games),source_pgn_unchanged=True))
+    return enrich(result, graph)
 
 
 def pct(value):
@@ -249,10 +251,11 @@ def num(value):
 
 
 def render(result, top=8):
+    catalog = result.get('chapter_catalog',[])
     text = [f'# {result["color"].title()} repertoire character', '',
         'Expected reuse, opponent reply predictability and positions at the end of preparation. All estimates use cached Lichess population data with the saved repertoire policy, not personal game forecasts.', '',
         'Overall figures start at the repertoire roots. Chapter figures start at the saved weighted first-entry positions and include subsequent shared continuations. An N-game chapter curve means N games entering that chapter under its comparison policy. Alternative chapters remain separate comparisons; overlapping chapters must not be added.', '',
-        '## Chapter comparison', '',
+        ATTRIBUTION_NOTE, '', '## Chapter comparison', '',
         '| Chapter | Entry probability | Overall-policy entry | Distinct decisions | Own decisions / game | Effective replies | Effective pawn structures |',
         '|---|---:|---:|---:|---:|---:|---:|']
     for s in result['scopes']:
@@ -269,17 +272,18 @@ def render(result, top=8):
         for row in r['curve']:
             text.append(f"| {row['games']} | {num(row['expected_distinct_decisions'])} | {num(row['expected_unseen_decisions'])} | {pct(row['fraction_of_reachable_decisions_seen'])} | {num(row['expected_repeat_encounters'])} |")
         text += ['', 'Most frequently revisited decisions (per game in this scope):', '',
-                 '| Position reached by | Your move | Encounter probability |', '|---|---|---:|']
+                 '| Position reached by | Your move | Source chapters | Encounter probability |', '|---|---|---|---:|']
         for row in r['decisions'][:top if s['id']=='overall' else 3]:
-            text.append(f"| {row['line']} | {row['san']} | {pct(row['reach'])} |")
+            text.append(f"| {row['line']} | {row['san']} | {chapter_text(row,catalog)} | {pct(row['reach'])} |")
         text += ['', '### Opponent reply predictability', '',
                  f"**{num(p['effective_replies'])} effective replies** per recorded opponent decision; {num(p['mean_entropy_bits'])} bits of average reply entropy. Expected reply information across preparation: {num(p['expected_reply_information_bits'])} bits per game.", '',
                  f"Recorded replies cover {pct(p['recorded_reply_coverage'])} of reached opponent opportunities. Sparse parent samples account for {pct(p['sparse_recorded_opportunity_fraction'])} of recorded opportunities.", '',
                  'Positions contributing the most reply information (reach times recorded fraction times entropy):', '',
-                 '| Position reached by | Reach | Effective replies | Most common reply | Reply share | Observations | Bits / game |', '|---|---:|---:|---|---:|---:|---:|']
+                 '| Position reached by | Source chapters | Reach | Effective replies | Most common reply | Reply share | Observations | Bits / game |', '|---|---|---:|---:|---|---:|---:|---:|']
         for row in p['positions'][:top if s['id']=='overall' else 3]:
             common=row['replies'][0] if row['replies'] else {}
-            text.append(f"| {row['line']} | {pct(row['reach'])} | {num(row['effective_replies'])} | {common.get('san','unavailable')} | {pct(common.get('probability_given_recorded_reply'))} | {row['recorded_reply_observations']:,}{' (sparse)' if row['sparse'] else ''} | {num(row['entropy_contribution_bits'])} |")
+            common_source = chapter_text(common,catalog) if common else 'None'
+            text.append(f"| {row['line']} | {chapter_text(row,catalog)} | {pct(row['reach'])} | {num(row['effective_replies'])} | {common.get('san','unavailable')}<br>{common_source} | {pct(common.get('probability_given_recorded_reply'))} | {row['recorded_reply_observations']:,}{' (sparse)' if row['sparse'] else ''} | {num(row['entropy_contribution_bits'])} |")
         text += ['', '### Position profile when preparation ends', '',
                  'Includes prepared endpoints and the board after an unprepared opponent reply. These describe the boundary of preparation, not the eventual middlegame. Shares below use all stopping mass; features can overlap.', '',
                  '| Boundary type | Share |', '|---|---:|']
@@ -295,9 +299,9 @@ def render(result, top=8):
         for row in profile['distributions'].get('total_pawns',[]):
             text.append(f"| {row['value']} | {pct(row['probability'])} |")
         text += ['', f"{profile['distinct_pawn_structures']} observed boundary pawn skeletons; **{num(profile['effective_pawn_structures'])} effective skeletons** after weighting their frequencies.", '',
-                 '| Pawn skeleton | Share | Example route |', '|---|---:|---|']
+                 '| Pawn skeleton | Share | Example route | Chapter source / context |', '|---|---:|---|---|']
         for row in profile['distributions'].get('pawn_structure',[])[:top if s['id']=='overall' else 3]:
-            text.append(f"| {row['value']} | {pct(row['probability'])} | {row['example_line']} |")
+            text.append(f"| {row['value']} | {pct(row['probability'])} | {row['example_line']} | {chapter_text({'chapter_attribution':row.get('example_chapter_attribution')},catalog)} |")
     text += ['', '## Definitions and limits', '',
         '- For decision probability p, expected encounters over N independent games are N*p; probability of seeing it at least once is 1-(1-p)^N. Summing gives distinct decisions encountered. Repeats equal total encounters minus distinct encounters. Only selected decisions with positive empirical reach count. This is exposure, not memory retention.',
         '- Reply entropy is -sum(p*log2(p)) over observed named replies at each active opponent decision. Effective replies are 2 to the power of the reach-and-recorded-fraction-weighted mean entropy, a geometric rather than arithmetic average of local effective reply counts. No move popularity is applied to our forced choices. PGN leaves are excluded because preparation has ended.',

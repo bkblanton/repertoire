@@ -11,6 +11,7 @@ from .explorer import Explorer, DEFAULT_FILTERS
 from .model import prepare, outcome, empirical, draws
 from .evaluate import backward, forward, summarize, chapter_score, COMPLETED, KNOWN
 from .report import events, markdown, starting_position_reference
+from .attribution import enrich
 from .baseline import chapter_entry_baseline
 from .render import update_report_outputs
 from .transitions import chapter_transitions, hitting_bounds
@@ -240,6 +241,7 @@ def analyze(args):
         'and uses chapter comparison policies and first-entry weights. No depth cutoff, discount, or bonus for entry itself. '
         'Missing move distributions or first-entry weights remain unresolved with conditional bounds.')
     report["manifest"]["tolerance_met"] = bool(report["manifest"]["tolerance_met"])
+    enrich(report, graph)
     output.with_suffix(".json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     update_report_outputs(output.with_suffix(".json"))
     print(json.dumps({"overall": report["overall"], "report": str(output.with_suffix('.md').resolve())}, indent=2))

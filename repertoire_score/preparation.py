@@ -15,6 +15,7 @@ from .explorer import Explorer, counts
 from .graph import Graph, Node, key, parse
 from .model import outcome, score
 from .report import pct
+from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE
 
 
 @dataclass
@@ -438,7 +439,7 @@ def analyze(path, cache='.cache/explorer'):
             if k.startswith('_') or k=='expected': del scope[k]
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError('Source PGN changed during preparation analysis')
-    return dict(color=saved['color'], scopes=scopes, proposals=proposals,
+    result = dict(color=saved['color'], scopes=scopes, proposals=proposals,
         manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), report_path=str(path.resolve()),
             report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(), input_sha256=manifest['input_sha256'],
             input_path=str(source), filters=manifest['filters'], evidence=explorer.provenance,
@@ -447,6 +448,7 @@ def analyze(path, cache='.cache/explorer'):
             comparison='Original chapter first-entry positions and weights held fixed; priorities recomputed from remaining PGN content'),
         validation=dict(original_scores_reproduced=True, stopping_contributions_reproduced=True,
                         baseline_attribution_reproduced=True, source_pgn_unchanged=True))
+    return enrich(result, graph)
 
 
 def number(value, precision=4):
@@ -457,27 +459,28 @@ def number(value, precision=4):
 
 def render(result, top=15, chapter_top=3):
     proposals = {p['id']:p for p in result['proposals']}
+    catalog = result.get('chapter_catalog',[])
     text = [f'# {result["color"].title()} preparation value and trimming', '',
         'Memorization value is score before trimming minus score after trimming. Negative values identify preparation that lowers the modeled score. Small positive values identify small benefits per memorized move. Trimming gain has the opposite sign. No cost threshold or depth discount is used.', '',
         'Each proposal deletes a PGN subtree in memory and rebuilds choices and transpositions. Shared moves count as saved only when their last provider is removed. Coordinated proposals explicitly remove all copies of the same edge. Broad cuts can remove several lines or switch the first available own move. Source PGNs are never edited.', '',
         'Chapter comparisons retain their original first-entry mixture and prefer that chapter\'s remaining first choices. Alternative chapter gains are not gains for the selected overall repertoire. Proposals overlap and their gains must not be added; evaluate any combination afresh.', '',
-        'These are empirical screening estimates. A higher score after trimming means an earlier database fallback scores better, not that forgetting preparation improves personal play. Low-sample rows are marked sparse; trim gains do not have statistical confidence intervals. Missing observations retain unresolved bounds and missing cache entries are reported, with no network requests.', '']
+        'These are empirical screening estimates. A higher score after trimming means an earlier database fallback scores better, not that forgetting preparation improves personal play. Low-sample rows are marked sparse; trim gains do not have statistical confidence intervals. Missing observations retain unresolved bounds and missing cache entries are reported, with no network requests.', '', ATTRIBUTION_NOTE, '']
 
     def strength(rows, count, title, reverse):
         rows = sorted([r for r in rows if r['baseline_contribution_pp'] is not None], key=lambda r:r['baseline_contribution_pp'], reverse=reverse)[:count]
-        output = [title, '', '| Line / stopping position | Reach | Score | Contribution (pp) | Versus baseline (pp) | Observations |', '|---|---:|---:|---:|---:|---:|']
+        output = [title, '', '| Line / stopping position | Chapter source / context | Reach | Score | Contribution (pp) | Versus baseline (pp) | Observations |', '|---|---|---:|---:|---:|---:|---:|']
         for r in rows:
-            output.append(f"| {r['line']} | {pct(r['reach'])} | {pct(r['score'])} | {number(r['contribution_pp'])} | {number(r['baseline_contribution_pp'])} | {r['sample_count']:,}{' (sparse)' if r['sparse'] else ''} |")
+            output.append(f"| {r['line']} | {chapter_text(r,catalog)} | {pct(r['reach'])} | {pct(r['score'])} | {number(r['contribution_pp'])} | {number(r['baseline_contribution_pp'])} | {r['sample_count']:,}{' (sparse)' if r['sparse'] else ''} |")
         return output if rows else [title,'','No resolved outcomes in this category.','']
 
     def trims(rows, count, title):
-        output = [title, '', '| ID / stop after | Delete from | Own moves saved | Preparation value (pp) | Value per move (pp) | Trim gain (pp) | Depth reduction | Chapters / leaf positions affected | Minimum changed-stop observations |', '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|']
+        output = [title, '', '| ID / stop after | Delete from | Source chapters | Own moves saved | Preparation value (pp) | Value per move (pp) | Trim gain (pp) | Depth reduction | Chapters / leaf positions affected | Minimum changed-stop observations |', '|---|---|---|---:|---:|---:|---:|---:|---:|---:|']
         for row in rows[:count]:
             p=proposals[row['id']]
             label=p['line']+(' [all copies]' if len(p['cut_occurrences'])>1 else '')
             sample_count = row.get('minimum_changed_stop_observations')
             support = ('n/a' if sample_count is None else str(sample_count))+(' (sparse)' if row.get('changed_stop_sparse') else '')
-            output.append(f"| {row['id']}: {label} | {p['remove_from']} | {row['distinct_own_moves_saved']} | {number(row['memorization_value_pp'])} | {number(row['value_per_move_pp'],5)} | {number(row['trimming_gain_pp'])} | {number(row['expected_depth_reduction'],3)} | {len(p['affected_chapters'])} / {len(p['affected_pgn_leaves'])} | {support} |")
+            output.append(f"| {row['id']}: {label} | {p['remove_from']} | {chapter_text(p,catalog)} | {row['distinct_own_moves_saved']} | {number(row['memorization_value_pp'])} | {number(row['value_per_move_pp'],5)} | {number(row['trimming_gain_pp'])} | {number(row['expected_depth_reduction'],3)} | {len(p['affected_chapters'])} / {len(p['affected_pgn_leaves'])} | {support} |")
         return output if rows else [title,'','No resolved candidates in this category.','']
 
     for scope in result['scopes']:
@@ -496,14 +499,16 @@ def render(result, top=15, chapter_top=3):
         trims_by_id = {r['id']:r for r in scope['trims']}
         weakest = sorted([r for r in leaves if r['baseline_contribution_pp'] is not None],key=lambda r:r['baseline_contribution_pp'])[:count]
         text += ['### Trim options for the weakest prepared leaves', '',
-                 '| Leaf | Best-gain trim | Gain (pp) | Shortest beneficial trim |', '|---|---|---:|---|']
+                 '| Leaf | Source chapters | Best-gain trim | Gain (pp) | Shortest beneficial trim |', '|---|---|---|---:|---|']
         for leaf in weakest:
             choice = choices[leaf['position']]
             best = choice['best_gain']; shortest = choice['shortest_beneficial']
             label = f"{best}: stop after {proposals[best]['line']}" if best else 'No available trim'
             short_label = f"{shortest}: stop after {proposals[shortest]['line']}" if shortest else 'None'
+            if best: label += '<br>Chapters: '+chapter_text(proposals[best],catalog)
+            if shortest: short_label += '<br>Chapters: '+chapter_text(proposals[shortest],catalog)
             gain = number(trims_by_id[best]['trimming_gain_pp']) if best else 'unavailable'
-            text.append(f"| {leaf['line']} | {label} | {gain} | {short_label} |")
+            text.append(f"| {leaf['line']} | {chapter_text(leaf,catalog)} | {label} | {gain} | {short_label} |")
         text += ['', 'Best gain can be negative when every evaluated trim costs score. Shortest beneficial minimizes total PGN half-moves deleted across all affected copies. A broad cut may affect other leaves too; use its proposal ID to inspect the exact edits and affected chapters in JSON.', '']
         text += [f"Evaluated trims: {len(scope['trims'])}. Unresolved gains: {sum(r['memorization_value_pp'] is None for r in scope['trims'])}. Unavailable trims: {len(scope['unavailable_trims'])}. Full candidate edits, all leaf-to-trim mappings, unresolved bounds, evidence and affected chapters are in JSON.", '']
     text += ['## Reading the numbers', '',
