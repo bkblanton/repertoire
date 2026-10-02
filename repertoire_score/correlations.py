@@ -19,7 +19,7 @@ METRICS = {
     'log_depth_vs_delta': 'Log-depth vs delta',
     'within_named_family_pearson': 'Within named opening families',
     'depth_vs_entry_baseline': 'Depth vs entry baseline',
-    'slope_pp_per_move': 'Linear slope (pp per own move)',
+    'slope_pp_per_move': 'Linear slope (% per own move)',
 }
 
 
@@ -166,9 +166,10 @@ def cell(result, metric):
     if value is None:
         return 'undefined'
     limits = result['confidence_intervals_95'][metric]['bounds']
+    suffix = '%' if metric == 'slope_pp_per_move' else ''
     if limits is None:
-        return f'{value:.3f} (interval unavailable)'
-    return f'{value:.3f} [{limits[0]:.3f}, {limits[1]:.3f}]'
+        return f'{value:.3f}{suffix} (interval unavailable)'
+    return f'{value:.3f}{suffix} [{limits[0]:.3f}{suffix}, {limits[1]:.3f}{suffix}]'
 
 
 def markdown(result):

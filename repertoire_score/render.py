@@ -59,7 +59,7 @@ def main():
     parser.add_argument('--summary', help='Summary (default: full report folder/summary.md)')
     parser.add_argument('--top', type=int, default=10, help='Rows per overall ranking')
     parser.add_argument('--chapter-top', type=int, default=2, help='Rows per chapter ranking')
-    parser.add_argument('--position-top', type=int, default=20, help='Rows per category and color in the common-position rankings')
+    parser.add_argument('--position-top', type=int, default=20, help='Rows per category in each color and chapter common-position ranking')
     parser.add_argument('--require-complete', action='store_true', help='Require every companion analysis and current correlations')
     args = parser.parse_args()
     try:

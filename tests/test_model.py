@@ -216,8 +216,8 @@ def test_unlisted_opponent_move_reenters_known_theory(tmp_path):
 def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     from repertoire_score import __main__ as cli
     from repertoire_score.consolidated import cp
-    white_row = f'| White | 80.00% | {cp(.8)} | 70.00% | {cp(.7)} | -10.00 |'
-    black_row = f'| Black | 20.00% | {cp(.2)} | 30.00% | {cp(.3)} | +10.00 |'
+    white_row = f'| White | 80.00% | {cp(.8)} | 70.00% | {cp(.7)} | -10.00% |'
+    black_row = f'| Black | 20.00% | {cp(.2)} | 30.00% | {cp(.3)} | +10.00% |'
     g = graph(tmp_path,'1. e4 e5 *')
     evidence = {position(''):data(7,2,1,[('e2e4',7,2,1)]), position('e4'):data(80,0,20,[('e7e5',80,0,20)]),position('e4 e5'):data(6,2,2)}
     class FakeExplorer:

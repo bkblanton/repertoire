@@ -7,7 +7,7 @@ import pytest
 
 from repertoire_score.ratings import analyze as ratings
 from repertoire_score.character import analyze as character
-from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_equivalent, common_positions_section,
+from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_equivalent, common_positions_for_scope, common_positions_section,
     combined_overall, cp, cp_change, elo_equivalent, generate, line, load, non_sparse_rows,
     position_contributions, strengths_section, summary_report, vulnerabilities_section)
 from repertoire_score.preparation import analyze as preparation
@@ -31,7 +31,7 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     bundles = generate([path])
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
-    prefix = f'| White | 50.00% | +0.00 | 40.00% | {cp(.4)} | -10.00 | {cp_change(.4, .5)} |'
+    prefix = f'| White | 50.00% | +0.00 | 40.00% | {cp(.4)} | -10.00% | {cp_change(.4, .5)} |'
     assert prefix in full
     assert prefix in summary
     assert not re.search(r'^\| Black \|', full, flags=re.M) and '[Black](#black)' not in full
@@ -45,6 +45,8 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     assert '### Strengths' in full
     assert 'Strongest and weakest stopping outcomes' not in full
     assert 'Preparation, replies, and resulting positions' in full
+    assert 'Most frequently used own decisions' not in full
+    assert full.count('##### Most common positions') == len(report['chapters'])
     assert 'Optional memorization and trimming analysis' not in full
     assert 'Trim gain (pp)' not in full
     assert 'optional trimming' not in summary.lower()
@@ -267,9 +269,9 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     scope = dict(id='overall', rankings={'own': [], 'opponent': [
         dict(common, line='Prepared reply', prepared=True), dict(common, line='Unprepared reply', prepared=False)]})
     full = '\n'.join(vulnerabilities_section(scope, refs, 10))
-    expected = f'| 57.50% | {cp(.575)} | 52.50% | {cp(.525)} | {cp_change(.525, .575)} | 5.00 | 0.1000 |'
+    expected = f'| 57.50% | {cp(.575)} | 52.50% | {cp(.525)} | {cp_change(.525, .575)} | 5.00% | 0.1000% |'
     assert full.count(expected) == 2
-    assert full.count('| CP delta | Drag (pp) | Weighted drag (pp) |') == 2
+    assert full.count('| CP delta | Drag | Weighted drag |') == 2
     assert centipawn_delta(.525, .575) < 0
     check_score_tables(full)
     bundle['vulnerabilities']['overall'] = scope
@@ -404,7 +406,7 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
     black_path = path.parent/'black.json'
     bundles = generate([path, black_path])
     result = combined_overall(bundles)
-    prefix = f"| **Combined** | {100*result['starting_baseline']:.2f}% | {cp(result['starting_baseline'])} | {100*result['repertoire_score']:.2f}% | {cp(result['repertoire_score'])} | {result['difference_pp']:+.2f} | {cp_change(result['repertoire_score'], result['starting_baseline'])} | {result['elo_equivalent']:+.2f} |"
+    prefix = f"| **Combined** | {100*result['starting_baseline']:.2f}% | {cp(result['starting_baseline'])} | {100*result['repertoire_score']:.2f}% | {cp(result['repertoire_score'])} | {result['difference_pp']:+.2f}% | {cp_change(result['repertoire_score'], result['starting_baseline'])} | {result['elo_equivalent']:+.2f} |"
     for filename in ['report.md', 'summary.md']:
         text = (path.parent/filename).read_text(encoding='utf-8')
         assert prefix in text
@@ -483,6 +485,39 @@ def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoi
     # Filter before the limit: the lower-frequency unprepared reply still appears.
     limited = '\n'.join(common_positions_section([bundle],1))
     assert 'e4 e5 Nf3' in limited and 'e4 c5' in limited and 'e4 e6 d4' not in limited
+    scope['id'] = 'chapter'
+    chapter = '\n'.join(common_positions_for_scope(scope, Chapters(bundle['report']), 1, level='#####'))
+    assert '##### Most common positions' in chapter
+    assert '###### Unprepared opponent replies' in chapter
+    assert 'Reach after chapter entry' in chapter and 'Reach in repertoire' not in chapter
+    assert 'e4 e5 Nf3' in chapter and 'e4 c5' in chapter and 'e4 e6 d4' not in chapter
+
+
+def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(tmp_path, monkeypatch):
+    report, cache = run_fixture(tmp_path, monkeypatch)
+    path = tmp_path/'white.json'
+    path.with_suffix('.character.json').write_text(json.dumps(character(path, cache)), encoding='utf-8')
+    before = {p:p.read_bytes() for p in tmp_path.glob('*.json')}
+    bundles = generate([path], position_top=1)
+    text = (tmp_path/'report.md').read_text(encoding='utf-8')
+    refs = Chapters(bundles[0]['report'])
+    assert 'Most frequently used own decisions' not in text
+    for chapter in report['chapters']:
+        anchor = refs.anchor(chapter['id'])
+        block = text.split(f'<a id="{anchor}"></a>', 1)[1].split('</details>', 1)[0]
+        assert f'<a id="{anchor}-common-positions"></a>' in block
+        assert '##### Most common positions' in block
+        assert 'Reach after chapter entry' in block
+        assert 'Score CP' in block and 'Avg opponent rating' in block
+        assert block.index('##### Most common positions') < block.index('##### Strengths')
+    alternative = next(c for c in report['chapters'] if c['id'] == 'tarrasch')
+    assert alternative['score']['entry_probability'] == pytest.approx(.6)
+    block = text.split('<a id="white-chapter-2-common-positions"></a>', 1)[1].split('##### Strengths', 1)[0]
+    assert '| 1. e4 e6 2. d4 d5 3. Nd2 Nf6 4. e5 |' in block
+    assert '| 100.00% | 90.00% |' in block  # conditional on entry, not multiplied by the 60% chapter reach
+    overall = text.split('### Most common positions', 1)[1].split('### White chapters', 1)[0]
+    assert '3. Nd2 Nf6' not in overall  # overall still selects the Advance
+    assert all(p.read_bytes() == data for p, data in before.items())
 
 
 def test_first_pass_places_snapshot_notice_first_and_hides_chapter_tables(complete):
