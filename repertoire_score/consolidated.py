@@ -643,7 +643,7 @@ def common_positions_section(bundles, limit=20):
     return text
 
 
-def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=2, position_top=20):
+def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5, position_top=20):
     combined = combined_overall(bundles)
     has_combined = combined is not None and 'unavailable' not in combined
     text = ['# Repertoire report', '',
@@ -802,7 +802,7 @@ def summary_report(bundles, full_path, correlations, correlation_reason):
     text = [re.sub(r'\]\(#((?:white|black)-[^)]+)\)', r'](' + Path(full_path).name + r'#\1)', x) for x in text]
     return '\n'.join(row.rstrip() for row in text)
 
-def generate(paths, full_path=None, summary_path=None, *, strict=True, require_complete=False, top=10, chapter_top=2, position_top=20):
+def generate(paths, full_path=None, summary_path=None, *, strict=True, require_complete=False, top=10, chapter_top=5, position_top=20):
     if not paths or min(top, chapter_top, position_top) < 1:
         raise ValueError('Supply reports and positive table lengths')
     bundles = load(paths, strict, require_complete)
