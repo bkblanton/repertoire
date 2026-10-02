@@ -57,6 +57,7 @@ def test_reply_rating_difference_uses_same_player_parent_mean_and_discloses_cove
     assert missing['difference_vs_parent'] is None and missing['comparison_coverage'] == 0
     assert rating_difference(missing) == 'unavailable'
     assert comparison_fields(reply_rating(table, 'e7e5'), unavailable())['difference_vs_parent'] is None
+    assert rating_difference(response_rating(table)) == 'n/a'  # current-position response average is not a specific reply
 
 
 @pytest.mark.parametrize('color,path,own_move,opponent_move', [
@@ -87,6 +88,36 @@ def test_move_maker_rule_for_both_colors_and_no_child_queries(tmp_path, color, p
     assert move_context(evidence, color, opponent_position, missing_child)['mean'] == 2400
     assert len(evidence) == 4
     assert move_context(evidence, color, own_position, 'd2d4' if color else 'c7c5')['mean'] is None
+
+
+def test_starting_board_local_context_keeps_opponent_response_average_in_the_report(tmp_path):
+    from repertoire_score.consolidated import character_section
+    from repertoire_score.ratings import attach
+    from repertoire_score.consolidated import Chapters, opponent_rating
+    g = graph(tmp_path, '1. e4 c5 *')
+    root, e4, leaf = [position(p) for p in ('', 'e4', 'e4 c5')]
+    evidence = {root: rated(100, 0, 0, [('e2e4', 75, 0, 0, 1600), ('d2d4', 25, 0, 0, 2000)]),
+                e4: rated(100, 0, 0, [('c7c5', 100, 0, 0, 9999)]),
+                leaf: rated(100, 0, 0, [('g1f3', 100, 0, 0, 1800)])}
+    black = Context(Evaluator(g, chess.BLACK, evidence, chess_facts(g, chess.BLACK, evidence)), {root: 1}).inventory()
+    assert black['positions'][root]['local']['mean'] == 1700
+    assert 'continuation' not in black['positions'][root]
+    assert 'score_evidence' not in black
+    row = dict(position=root, line='(PGN root)', reach=1., effective_replies=2.,
+               recorded_reply_observations=100, sparse=False, replies=[])
+    scope = dict(id='overall', reuse=dict(reachable_distinct_decisions=0, curve=[], decisions=[]),
+                 predictability=dict(effective_replies=2., recorded_reply_coverage=1.,
+                                     sparse_recorded_opportunity_fraction=0., positions=[row]),
+                 position_profiles={'all': dict(effective_pawn_structures=1., distributions={}, features={})})
+    bundle = dict(report=dict(color='black', chapters=[], events=[]), character=dict(scopes=[scope]),
+                  ratings=dict(scopes=[dict(id='overall', **black)]))
+    attach(bundle)
+    assert row['opponent_rating']['mean'] == 1700
+    rendered = '\n'.join(character_section(scope, Chapters(bundle['report']), 1))
+    assert '| (PGN root) |' in rendered and '| 1,700 |' in rendered
+    white = Context(Evaluator(g, chess.WHITE, evidence, chess_facts(g, chess.WHITE, evidence)), {root: 1}).inventory()
+    assert white['positions'][root]['local']['mean'] is None
+    assert opponent_rating(white['positions'][root]['local']) == 'n/a (no preceding opponent move)'
 
 
 def transposed_context(tmp_path, duplicate=False):
@@ -203,7 +234,9 @@ def test_cache_only_ledger_preserves_scores_and_has_no_overall_mean(tmp_path, mo
     result = analyze(path, cache)
     overall = result['scopes'][0]
     assert 'score_evidence' not in overall and 'entry_baseline' not in overall
-    assert position('') not in overall['positions']
+    assert overall['positions'][position('')]['local']['mean'] is None
+    assert overall['positions'][position('')]['local']['reason'] == 'no_preceding_opponent_move'
+    assert 'continuation' not in overall['positions'][position('')]
     assert not any(k in result for k in ('mean', 'known_coverage', 'opponent_rating'))
     assert result['manifest']['network_requests'] == 0
     assert result['validation']['first_entry_weights_reproduced']

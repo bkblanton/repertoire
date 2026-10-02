@@ -108,6 +108,8 @@ class Context:
                                   mean=r['mean'], known_coverage=r['known_coverage'],
                                   **({'first_entry_origins': r['origins']} if parent is None and r.get('origins') else {}))
                              for p, r, parent, move in parts if p > 0])
+                if k == key(chess.Board()):
+                    self.local[k]['reason'] = 'no_preceding_opponent_move'
         self.moments = {}
 
     def stop(self, k, move, kind):
@@ -136,9 +138,10 @@ class Context:
                         for k, p in self.starts.items()], 'scope stopping evidence')
 
     def inventory(self):
+        # A starting-board row is still an individual position. Keep its local
+        # response average, without creating a whole-repertoire rating mean.
         positions = {k: dict(local=r, **({'continuation': self.continuation(k)}
-                          if k != key(chess.Board()) else {})) for k, r in self.local.items()
-                     if k != key(chess.Board())}
+                          if k != key(chess.Board()) else {})) for k, r in self.local.items()}
         stops, deviations = {}, defaultdict(list)
         for k, mass in self.reach.items():
             if mass <= 0: continue
@@ -388,7 +391,7 @@ def analyze(path, cache='.cache/explorer'):
         cache_only=True, network_requests=0, uncached_positions=missing),
         validation=dict(scores_reproduced=True, first_entry_weights_reproduced=True,
                         stopping_rating_moments_reproduced=True, source_pgn_unchanged=True,
-                        no_repertoire_rating_averages=True)), evidence)
+                        no_repertoire_rating_averages=True, starting_position_local_context_retained=True)), evidence)
 
 
 def attach(bundle):
