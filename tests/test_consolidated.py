@@ -8,7 +8,8 @@ import pytest
 from repertoire_score.ratings import analyze as ratings
 from repertoire_score.character import analyze as character
 from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_equivalent, common_positions_section,
-    combined_overall, cp, cp_change, elo_equivalent, generate, line, load, strengths_section, summary_report, vulnerabilities_section)
+    combined_overall, cp, cp_change, elo_equivalent, generate, line, load, non_sparse_rows,
+    position_contributions, strengths_section, summary_report, vulnerabilities_section)
 from repertoire_score.preparation import analyze as preparation
 from repertoire_score.vulnerabilities import analyze as vulnerabilities
 from test_chapter_policies import run_fixture
@@ -214,7 +215,7 @@ def check_score_tables(text):
     import math
     score_headers = {'Starting baseline', 'Entry baseline', 'Parent database score', 'Repertoire score',
                      'Before reply (repertoire)', 'After reply (repertoire)', 'After reply (database)',
-                     'Score at stop', 'Database score', 'Approximate 95% score interval'}
+                     'Score at stop', 'Score', 'Database score', 'Approximate 95% score interval'}
     checked = 0
     for block in re.findall(r'(?m)(?:^\|.*\|\n)+', text):
         rows = [[cell.strip() for cell in row.strip().strip('|').split('|')] for row in block.splitlines()]
@@ -297,25 +298,58 @@ def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(comple
         replies.extend([dict(reply, line=f'EXCLUDED_REPLY_{label}', prepared=prepared, sparse=True),
                         dict(reply, line=f'Supported {label} reply', prepared=prepared, sparse=False)])
     scope = dict(id='overall', rankings={'own':own_rows, 'opponent':replies}, strengths=own_rows)
-    stop = bundle['preparation']['scopes'][0]['stops'][0]
-    stops = dict(id='overall', stops=[
-        dict(stop, line='EXCLUDED_STOP', position=position('e4 c5'), sparse=True,
-             reach=.5, sample_count=10, score=.6, contribution_pp=30.),
-        dict(stop, line='EXCLUDED_POOLED_STOP', position=position('e4 c5'), sparse=False,
-             reach=.2, sample_count=50, score=.6, contribution_pp=12.),
-        dict(stop, line='Supported stopping position', position=position('e4 e6'), sparse=False,
-             reach=.3, sample_count=100, score=.6, contribution_pp=18.)])
-    full = '\n'.join(vulnerabilities_section(scope, refs, 1) + strengths_section(scope, stops, refs, 1))
+    def reached(path, route, reach, games, kind='opponent_reply', **extra):
+        return dict(position=position(path), line=route, reach=reach, games=games, kind=kind,
+                    is_starting_position=False, to_move='black', repertoire_score=.6, database_score=.6, **extra)
+    positions = dict(bundle['character']['scopes'][0], positions=[
+        reached('e4 c5', 'EXCLUDED_POSITION', .5, 10),
+        reached('e4 d5', 'EXCLUDED_POOLED_POSITION', .7, 60, kind='unprepared_reply',
+                unprepared_origins=[dict(games=10), dict(games=50)]),
+        reached('e4 e6', 'Supported reached position', .3, 100)])
+    full = '\n'.join(vulnerabilities_section(scope, refs, 1) + strengths_section(scope, positions, refs, 1))
     assert 'EXCLUDED_' not in full
     assert 'Supported own move' in full
     assert 'Supported prepared reply' in full and 'Supported unprepared reply' in full
-    assert 'Supported stopping position' in full
+    assert 'Supported reached position' in full
     bundle['vulnerabilities']['overall'] = scope
-    bundle['preparation']['scopes'][0] = stops
+    bundle['character']['scopes'][0] = positions
     summary = summary_report([bundle], path.parent/'report.md', None, None)
-    assert 'EXCLUDED_' not in summary
+    contribution_block = summary.split('### Largest position contributions', 1)[1].split('Preparation ends', 1)[0]
+    assert 'EXCLUDED_' not in contribution_block
     assert 'Supported own move' in summary and 'Supported unprepared reply' in summary
-    assert 'Supported stopping position' in summary
+    assert 'Supported reached position' in summary
+
+
+@pytest.mark.parametrize('color', ['white', 'black'])
+def test_position_contributions_include_intermediate_boards_and_cached_unprepared_replies(color):
+    def row(label, reach, score, kind='opponent_reply', games=100, **extra):
+        return dict(position=label, line=label, reach=reach, kind=kind, games=games,
+                    to_move='black' if color == 'white' else 'white', is_starting_position=False,
+                    repertoire_score=score, database_score=.1, **extra)
+    root = row('starting board', 1., .99)
+    root['is_starting_position'] = True
+    scope = dict(id='chapter', positions=[root,
+        row('1.e4', 1., .57),
+        row('1.e4 e5', .5, .62, kind='own_move'),
+        row('1.e4 e5 2.Nc3', .5, .62),
+        dict(row('unprepared transposed reply', .3, None, kind='unprepared_reply'), database_score=.8,
+             unprepared_origins=[dict(reach=.1, games=100), dict(reach=.2, games=100)]),
+        row('prepared endpoint', .2, .85, kind='theory_leaf'),
+        row('unresolved', .9, None, kind='unresolved_distribution'),
+        row('sparse position', .9, .99, games=10),
+        row('unknown local games', .9, .99, games=None)])
+    ranked = non_sparse_rows(position_contributions(scope, color))
+    assert [r['line'] for r in ranked] == ['1.e4', '1.e4 e5 2.Nc3', 'unprepared transposed reply', 'prepared endpoint']
+    assert [r['contribution_pp'] for r in ranked] == pytest.approx([57., 31., 24., 17.])
+    assert ranked[2]['score'] == .8 and ranked[2]['score_basis'] == 'database'
+    assert sum(r['contribution_pp'] for r in ranked) > 100  # overlapping continuation values are not additive
+    refs = Chapters(dict(color=color, chapters=[]))
+    displayed = '\n'.join(strengths_section(None, scope, refs, 2))
+    assert '| 1. e4 |' in displayed and '| 1. e4 e5 2. Nc3 |' in displayed
+    assert 'endpoint |' not in displayed
+    assert 'Reach after chapter entry' in displayed
+    assert 'Rows overlap and must not be added' in displayed
+    check_score_tables(displayed)
 
 
 def score_bundle(color, score, baseline, depth, chapters, games):
