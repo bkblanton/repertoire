@@ -10,7 +10,9 @@ from pathlib import Path
 import chess
 
 from .explorer import Explorer, counts
-from .preparation import Study, Evaluator, chess_facts, line_text, stopping_rows
+from .graph import key, parse
+from .model import score
+from .preparation import Evaluator, chess_facts, position_lines, stopping_rows
 from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE
 
 
@@ -151,6 +153,90 @@ def position_profile(stops, color):
                 effective_pawn_structures=2**entropy(p/mass for p in categories['pawn_structure'].values()) if mass else None)
 
 
+def position_reach_rows(evaluator, starts, reach, lines):
+    """Canonical reached boards, including the first unprepared opponent reply."""
+    paths, boards, best = {}, {}, {}
+    for k, weight in starts.items():
+        if weight <= 0: continue
+        paths[k] = '' if lines[k] == '(PGN root)' else lines[k]
+        boards[k] = chess.Board(evaluator.graph.nodes[k].fen)
+        best[k] = weight
+
+    def after_move(k, move):
+        board = boards[k]
+        label = f'{board.fullmove_number}{"." if board.turn else "..."}{board.san(chess.Move.from_uci(move))}'
+        after = board.copy()
+        after.push_uci(move)
+        return (paths[k] + ' ' + label).strip(), after
+
+    for k in reversed(evaluator.values):
+        if k not in paths: continue
+        for move, probability, target in evaluator.edges[k]:
+            route_mass = best[k] * probability
+            if probability <= 0 or route_mass <= best.get(target, -1): continue
+            path, after = after_move(k, move)
+            assert key(after) == target
+            paths[target], boards[target], best[target] = path, after, route_mass
+    rows = {}
+    for k, mass in reach.items():
+        if mass <= 0: continue
+        if evaluator.facts[k]['outcome'] is not None:
+            kind = 'terminal'
+        elif any(s[2] == 'unresolved_distribution' for s in evaluator.stops[k]):
+            kind = 'unresolved_distribution'
+        elif not evaluator.graph.nodes[k].edges:
+            kind = 'theory_leaf'
+        else:
+            kind = 'own_move' if evaluator.facts[k]['turn'] == evaluator.color else 'opponent_reply'
+        data = evaluator.evidence.get(k)
+        sample = counts(data) if data is not None else None
+        value = evaluator.values[k]
+        rows[k] = dict(position=k, line=paths[k] or '(PGN root)', reach=mass,
+                       to_move='white' if evaluator.facts[k]['turn'] else 'black', kind=kind,
+                       is_starting_position=k == key(chess.Board()),
+                       repertoire_score=float(value[0]) if value[1] == 0 else None,
+                       database_score=score(sample, evaluator.color) if sample is not None else None,
+                       games=sum(sample) if sample is not None else None,
+                       games_source='position' if sample is not None else 'unavailable',
+                       counts_white_draw_black=sample)
+    # The cached parent table supplies both the reply and its probability. No
+    # evidence for the reached child board, or for its next moves, is requested.
+    deviation_best = {}
+    for k, mass in reach.items():
+        if mass <= 0: continue
+        for move, probability, kind, sample, fixed in evaluator.stops[k]:
+            if kind != 'deviation' or probability <= 0: continue
+            path, after = after_move(k, move)
+            target = key(after)
+            assert target not in evaluator.graph.nodes
+            row = rows.setdefault(target, dict(position=target, line=path, reach=0.,
+                to_move='white' if after.turn else 'black',
+                kind='terminal' if fixed is not None else 'unprepared_reply',
+                is_starting_position=target == key(chess.Board()), unprepared_origins=[],
+                repertoire_score=None, database_score=0., games=0, games_source='parent_move_rows',
+                counts_white_draw_black=[0,0,0]))
+            branch_reach = mass * probability
+            database_score = fixed if fixed is not None else score(sample, evaluator.color)
+            assert database_score is not None  # a positive reply probability has observations
+            row['reach'] += branch_reach
+            row['database_score'] += branch_reach * database_score
+            row['games'] += sum(sample)
+            row['counts_white_draw_black'] = [a+b for a,b in zip(row['counts_white_draw_black'],sample)]
+            row['unprepared_origins'].append(dict(parent_position=k, move=move, reach=branch_reach,
+                database_score=database_score, games=sum(sample), counts_white_draw_black=sample))
+            route_mass = best[k] * probability
+            if route_mass > deviation_best.get(target, -1):
+                row['line'] = path
+                deviation_best[target] = route_mass
+    for row in rows.values():
+        if row.get('unprepared_origins'):
+            row['database_score'] /= row['reach']
+        if row['reach'] > 1 + 1e-10:
+            raise AssertionError('Canonical position revisited in an acyclic graph')
+        row['reach'] = min(1., row['reach'])
+    return sorted(rows.values(), key=lambda r: (-r['reach'], len(r['line'].split()), r['line'], r['position']))
+
+
 def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES):
     reach = evaluator.reaches(starts)
     value = evaluator.evaluate(starts)
@@ -171,7 +257,8 @@ def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES):
     for kind in sorted({r['type'] for r in stops}):
         profiles[kind] = position_profile([r for r in stops if r['type'] == kind], evaluator.color)
     unknown = sum(r['reach'] for r in stops if r['type'] == 'unresolved_distribution')
-    return dict(reuse=reuse, predictability=predictability_metrics(evaluator,reach,lines),
+    return dict(positions=position_reach_rows(evaluator,starts,reach,lines),
+                reuse=reuse, predictability=predictability_metrics(evaluator,reach,lines),
                 position_profiles=profiles, stopping_outcomes=stops,
                 unresolved_opponent_distribution_mass=unknown,
                 validation=dict(resolved_score=float(value[0]), unresolved_score_mass=float(value[1]),
@@ -186,8 +273,7 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
     source = Path(manifest['input_path'])
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError('PGN changed since scoring; regenerate scores first')
-    study = Study(source, manifest['configuration'].get('exclude', []))
-    graph = study.original
+    graph = parse(source, manifest['configuration'].get('exclude', []))
     color = saved['color'] == 'white'
     evidence, missing = {}, []
     explorer = Explorer(cache,manifest['filters'],offline=True)
@@ -202,8 +288,7 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
     finally:
         explorer.close()
     facts = chess_facts(graph,color,evidence)
-    root_fens = {c['id']:graph.nodes[c['root']].fen for c in graph.chapters}
-    lines = {r.position:line_text(r.path,root_fens[r.chapter]) for r in reversed(study.records)}
+    lines = position_lines(graph)
     scopes = [dict(id='overall', name='Overall repertoire', starts=manifest['root_weights'],
                    policy_basis='overall policy', chapter=None, entry_probability=1.0,
                    overall_policy_entry_probability=1.0, expected=saved['overall'])]
@@ -354,21 +439,14 @@ def main():
     parser.add_argument('reports',nargs='+',type=Path)
     parser.add_argument('--cache',default='.cache/explorer')
     parser.add_argument('--games',nargs='+',type=int,default=list(DEFAULT_GAMES))
-    parser.add_argument('--top',type=int,default=8)
-    parser.add_argument('--summary',type=Path)
     args=parser.parse_args()
-    if any(n <= 0 for n in args.games) or args.top < 1: parser.error('Games and top must be positive')
-    results=[]
+    if any(n <= 0 for n in args.games): parser.error('Games must be positive')
     for path in args.reports:
         result=analyze(path,args.cache,sorted(set(args.games)))
-        output=path.with_suffix('.character.md')
-        result['report_filename']=output.name
-        output.write_text(render(result,args.top),encoding='utf-8')
         path.with_suffix('.character.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
-        results.append(result)
         print(f"{result['color']}: character report generated for {len(result['scopes'])} scopes; no network requests",flush=True)
-    target=args.summary or args.reports[0].parent/'character.md'
-    target.write_text(summary(results),encoding='utf-8')
+    from .render import update_report_outputs
+    update_report_outputs(args.reports[-1])
 
 
 if __name__ == '__main__':

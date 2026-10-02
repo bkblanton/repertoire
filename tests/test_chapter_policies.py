@@ -90,11 +90,12 @@ def test_unselected_chapters_have_conditional_scores_and_separate_reach(tmp_path
         assert c['score']['overall_policy_entry_probability'] == 0
         assert c['score']['raw_empirical_score'] == pytest.approx(expected_score)
         assert c['score']['prepared_depth']['expected_moves'] == 1
-    rendered = (tmp_path/'white.md').read_text()
-    assert '**(alternative)**' in rendered and 'Overall-policy region reach' in rendered
-    description = (tmp_path/'white.study-description.md').read_text()
-    assert 'Tarrasch Nf6 (alternative): 60.00% / 90.00%' in description
-    assert 'region reach under overall policy: 0.00%' in description
+    rendered = (tmp_path/'report.md').read_text(encoding='utf-8')
+    assert not (tmp_path/'white.md').exists()
+    assert '**(alternative)**' in rendered and 'Overall-policy reach' in rendered
+    summary = (tmp_path/'summary.md').read_text()
+    assert 'Tarrasch Nf6' in summary and '**(alternative)** | 60.00% | 0.00%' in summary
+    assert 'Overall-policy reach' in summary
     result = vulnerabilities(tmp_path/'white.json', cache)
     assert result['manifest']['candidate_child_queries'] == 0
     assert result['manifest']['parent_tables_fetched'] == 0

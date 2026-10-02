@@ -63,11 +63,14 @@ def test_atomic_refresh_retries_sync_lock_without_truncating_previous_file(tmp_p
     assert not list(tmp_path.glob('.chapter-attribution-*.tmp'))
 
 
-def test_trim_sources_are_edited_occurrences_not_shared_parents(tmp_path):
+def test_stopping_sources_include_shared_moves_and_specific_providers(tmp_path):
     g=graph(tmp_path,'1. e4 e5 *\n\n1. e4 c5 *')
-    report=dict(scopes=[dict(stops=[])],proposals=[dict(edits=[dict(chapter_id='2')])])
+    shared=dict(parent_position=position(''),move='e2e4')
+    specific=dict(parent_position=position('e4'),move='e7e5')
+    report=dict(scopes=[dict(stops=[shared,specific])])
     enrich(report,g)
-    assert report['proposals'][0]['chapter_attribution']['source_ids']==['2']
+    assert shared['chapter_attribution']['source_ids']==['1','2']
+    assert specific['chapter_attribution']['source_ids']==['1']
 
 
 def without_attribution(item):
@@ -114,17 +117,12 @@ def test_refresh_all_saved_reports_preserves_metrics_and_rejects_stale_source(tm
         assert without_attribution(report)==originals[kind]
         assert report['chapter_catalog']
         assert report['manifest']['report_sha256']==hashlib.sha256(score_path.read_bytes()).hexdigest()
-        text=score_path.with_suffix(f'.{kind}.md').read_text()
-        assert 'Source chapters' in text or 'Chapter source / context' in text
-        assert '\u2014' not in text
-        width=None
-        for line in text.splitlines():
-            if line.startswith('|'):
-                if width is not None: assert line.count('|')==width
-                width=line.count('|')
-            else: width=None
-    assert 'Chapter source / context' in score_path.with_suffix('.md').read_text()
-    assert 'Chapter attribution follows' in (tmp_path/'vulnerabilities.md').read_text()
+        assert not score_path.with_suffix(f'.{kind}.md').exists()
+    text=(tmp_path/'report.md').read_text(encoding='utf-8')
+    assert 'Chapter source' in text
+    assert '\u2014' not in text
+    assert not score_path.with_suffix('.md').exists()
+    assert not (tmp_path/'vulnerabilities.md').exists()
     refreshed_correlation=json.loads(correlation_path.read_text())
     assert refreshed_correlation['results']==correlation['results']
     assert refreshed_correlation['provenance']['white']['report_sha256']==hashlib.sha256(score_path.read_bytes()).hexdigest()

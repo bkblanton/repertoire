@@ -1,8 +1,9 @@
-"""Regenerate reports and study descriptions from saved JSON, without network access."""
+"""Generate one consolidated report and summary from saved JSON, offline."""
 import argparse
 import json
 from pathlib import Path
-from .report import markdown, study_description, summary_markdown
+from .consolidated import generate
+from .layout import report_directory
 
 
 def load_report(path):
@@ -15,12 +16,8 @@ def load_report(path):
 def render_reports(paths, summary_path):
     paths = [Path(p) for p in paths]
     reports = [load_report(p) for p in paths]
-    for path, report in zip(paths, reports):
-        path.with_suffix('.md').write_text(markdown(report), encoding='utf-8')
-        path.with_suffix('.study-description.md').write_text(study_description(report), encoding='utf-8')
-    summary_path = Path(summary_path)
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(summary_markdown(reports, paths), encoding='utf-8')
+    # During a scoring refresh, old companions are pending rather than mixed in.
+    generate(paths, summary_path=summary_path, strict=False)
     return reports
 
 
@@ -51,18 +48,28 @@ def update_report_outputs(result_path):
         if load_report(path)['color'] != color:
             raise ValueError(f'Report registry color mismatch: {path}')
         paths.append(path)
-    render_reports(paths, directory / 'summary.md')
+    render_reports(paths, report_directory(result_path) / 'summary.md')
     index_path.write_text(json.dumps(index, indent=2), encoding='utf-8')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+', help='Saved repertoire JSON results')
-    parser.add_argument('--summary', help='Combined Markdown output (default: first report folder/summary.md)')
+    parser.add_argument('--output', help='Full report (default: first report folder/report.md)')
+    parser.add_argument('--summary', help='Summary (default: full report folder/summary.md)')
+    parser.add_argument('--top', type=int, default=10, help='Rows per overall ranking')
+    parser.add_argument('--chapter-top', type=int, default=2, help='Rows per chapter ranking')
+    parser.add_argument('--position-top', type=int, default=20, help='Rows per category and color in the common-position rankings')
+    parser.add_argument('--require-complete', action='store_true', help='Require every companion analysis and current correlations')
     args = parser.parse_args()
-    target = Path(args.summary) if args.summary else Path(args.reports[0]).parent / 'summary.md'
-    render_reports(args.reports, target)
-    print(f'Regenerated {len(args.reports)} detailed reports and study descriptions; summary: {target.resolve()}')
+    try:
+        generate(args.reports, args.output, args.summary, require_complete=args.require_complete,
+                 top=args.top, chapter_top=args.chapter_top, position_top=args.position_top)
+    except ValueError as exc:
+        parser.exit(1, f'Report generation failed: {exc}\n')
+    output = Path(args.output) if args.output else report_directory(args.reports[0]) / 'report.md'
+    summary = Path(args.summary) if args.summary else output.parent / 'summary.md'
+    print(f'Full report: {output.resolve()}\nSummary: {summary.resolve()}\nNetwork requests: 0')
 
 
 if __name__ == '__main__':

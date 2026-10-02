@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from repertoire_score.correlations import connected_groups, cluster_sample, correlation, rank, metrics, bootstrap, analyze, report_rows
+from repertoire_score.correlations import connected_groups, cluster_sample, correlation, rank, metrics, bootstrap, analyze, report_rows, markdown
 
 
 def row(i, cluster, color='white', depth=None, delta=None, baseline=.5):
@@ -77,7 +77,9 @@ def test_report_generation_and_source_hash_guard(tmp_path):
     assert result['results']['white']['cluster_count'] == 5
     assert result['results']['white']['n'] == 5
     assert 'pooled' not in result['results']
-    assert '95% cluster-bootstrap confidence interval' in (tmp_path/'correlations.md').read_text()
+    assert '95% cluster-bootstrap confidence interval' in markdown(result)
+    assert not (tmp_path/'correlations.md').exists()
+    assert (tmp_path/'correlations.json').exists()
     assert path.read_bytes() == before
     source.write_text(source.read_text()+'\n',encoding='utf-8')
     with pytest.raises(ValueError,match='PGN differs'):

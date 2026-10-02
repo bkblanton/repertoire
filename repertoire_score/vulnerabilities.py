@@ -91,23 +91,43 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
                               reference_basis='repertoire value before opponent reply',
                               alternative=None)
             else:
-                after = score(counts(row), color) if row else None
+                move_database_score = score(counts(row), color) if row else None
+                after = (float(values[b.target][KNOWN, 0])
+                         if b.target is not None and values[b.target][UNKNOWN, 0] == 0 else None)
                 alternatives = [r for r in rows.values() if r['uci'] != b.move and sum(counts(r)) > 0]
                 alternatives.sort(key=lambda r: (-score(counts(r), color), -sum(counts(r)), r['uci']))
                 alternative = None
-                if after is not None and alternatives and score(counts(alternatives[0]), color) > after:
+                if move_database_score is not None and alternatives and score(counts(alternatives[0]), color) > move_database_score:
                     a = alternatives[0]
                     alternative = dict(move=a['uci'], san=board.san(chess.Move.from_uci(a['uci'])),
                                        score=score(counts(a), color), sample_count=sum(counts(a)),
                                        sparse=sum(counts(a)) < sparse_threshold,
-                                       gap_pp=100*(score(counts(a), color)-after))
+                                       gap_pp=100*(score(counts(a), color)-move_database_score),
+                                       reference_basis='selected move database score; historical screen only')
                 common.update(kind='own', reference_score=parent_score, move_score=after,
-                              score_basis='parent move row', prepared=True,
+                              move_database_score=move_database_score,
+                              score_basis='prepared repertoire continuation', prepared=True,
+                              parent_sparse=parent_n < sparse_threshold,
+                              continuation_endpoint_sparse=(b.target is not None and model[b.target].mode == 'stop'
+                                  and model[b.target].branches[0].fixed_score is None and model[b.target].sample < sparse_threshold),
                               reference_basis='ordinary database score at parent', alternative=alternative)
             before, after = common['reference_score'], common['move_score']
             common['local_drop_pp'] = None if before is None or after is None else 100*(before-after)
+            if common['kind'] == 'own':
+                common['local_gain_pp'] = None if common['local_drop_pp'] is None else -common['local_drop_pp']
             result.append(common)
     return result
+
+
+def rankings(rows):
+    result = {}
+    for kind in ('opponent', 'own'):
+        field = 'weighted_drag_pp' if kind == 'opponent' else 'local_drop_pp'
+        result[kind] = sorted((r for r in rows if r['kind'] == kind and r.get(field) is not None
+                               and r[field] > 1e-12), key=lambda r: (-r[field], r['id']))
+    strengths = sorted((r for r in rows if r['kind'] == 'own' and r.get('local_gain_pp') is not None
+                        and r['local_gain_pp'] > 1e-12), key=lambda r: (-r['local_gain_pp'], r['id']))
+    return result, strengths
 
 
 def rank_scope(local, reach, lines, entry_probability=1.0):
@@ -125,12 +145,8 @@ def rank_scope(local, reach, lines, entry_probability=1.0):
         row['alternative_opportunity_pp'] = (row['branch_reach']*row['alternative']['gap_pp']
                                               if row['alternative'] else None)
         rows.append(row)
-    ranked = {}
-    for kind in ('opponent', 'own'):
-        ranked[kind] = sorted((r for r in rows if r['kind'] == kind and r['weighted_drag_pp'] is not None
-                               and r['weighted_drag_pp'] > 1e-12),
-                              key=lambda r: (-r['weighted_drag_pp'], r['id']))
-    return dict(rankings=ranked, evaluated_rows=len(rows),
+    ranked, strengths = rankings(rows)
+    return dict(rankings=ranked, strengths=strengths, evaluated_rows=len(rows),
                 unresolved_rows=[r for r in rows if r['weighted_drag_pp'] is None],
                 all_signed_rows=rows)
 
@@ -266,7 +282,54 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
                                 probability_conservation=True, max_opponent_balance_error=max_balance_error,
                                 own_decision_positions=len(own_positions),
                                 own_parent_tables_complete=True))
+    result['manifest']['own_score_basis'] = 'prepared repertoire continuation'
     return enrich(result, graph)
+
+
+def refresh_saved(path):
+    """Update own comparisons from a matching saved character continuation model.
+
+    This does not parse a newer PGN, query the cache, or change scoring evidence.
+    """
+    path = Path(path); saved_bytes = path.read_bytes(); saved = json.loads(saved_bytes)
+    companion = path.with_suffix('.vulnerabilities.json')
+    result = json.loads(companion.read_bytes())
+    character_path = path.with_suffix('.character.json')
+    character_bytes = character_path.read_bytes(); character = json.loads(character_bytes)
+    for data in (result, character):
+        if data['color'] != saved['color'] or any(data['manifest'].get(k) != v for k, v in (
+                ('report_sha256', hashlib.sha256(saved_bytes).hexdigest()),
+                ('input_sha256', saved['manifest']['input_sha256']), ('filters', saved['manifest']['filters']))):
+            raise ValueError('Saved continuation analysis belongs to a different score snapshot')
+    positions = {s['id']: {r['position']: r for r in s.get('positions', [])} for s in character['scopes']}
+    for sid, scope in [('overall', result['overall']), *[(s['id'], s) for s in result['chapters']]]:
+        for row in scope['all_signed_rows']:
+            if row['kind'] != 'own': continue
+            target = positions.get(sid, {}).get(row['target'])
+            if target is None:
+                raise ValueError('Saved continuation position missing from character analysis')
+            row.setdefault('move_database_score', row['move_score'])
+            row['move_score'] = target['repertoire_score']
+            row['score_basis'] = 'prepared repertoire continuation'
+            row['continuation_endpoint_sparse'] = (target.get('kind') == 'theory_leaf' and target.get('games') is not None
+                and target['games'] < result['manifest']['sparse_threshold'])
+            row['parent_sparse'] = row['parent_sample_count'] < result['manifest']['sparse_threshold']
+            before, after = row['reference_score'], row['move_score']
+            row['local_drop_pp'] = None if before is None or after is None else 100 * (before - after)
+            row['local_gain_pp'] = None if row['local_drop_pp'] is None else -row['local_drop_pp']
+            row['weighted_drag_pp'] = None if row['local_drop_pp'] is None else row['branch_reach'] * row['local_drop_pp']
+            probability = 1. if sid == 'overall' else scope['entry_probability']
+            row['study_drag_pp_after_entry'] = (None if probability is None or row['weighted_drag_pp'] is None
+                                               else probability * row['weighted_drag_pp'])
+            if row.get('alternative'):
+                row['alternative']['reference_basis'] = 'selected move database score; historical screen only'
+        scope['rankings'], scope['strengths'] = rankings(scope['all_signed_rows'])
+        scope['unresolved_rows'] = [r for r in scope['all_signed_rows'] if r['weighted_drag_pp'] is None]
+    result['manifest']['own_score_basis'] = 'prepared repertoire continuation'
+    result['manifest']['continuation_source_sha256'] = hashlib.sha256(character_bytes).hexdigest()
+    result['manifest']['comparison_updated_at'] = datetime.now(timezone.utc).isoformat()
+    result['validation']['own_scores_from_prepared_continuations'] = True
+    return result
 
 
 def pct(value):
@@ -281,7 +344,7 @@ def table(rows, limit, chapter=False, own=False, catalog=()):
     if not rows:
         return ['No positive drag identified among resolved, reachable moves.', '']
     before_label = 'Parent database score' if own else 'Before reply repertoire score'
-    after_label = 'Selected move database score' if own else 'After reply score'
+    after_label = 'Repertoire continuation score' if own else 'After reply score'
     heading = f'| # | Representative line | Chapter source / context | Reach of move | {before_label} | {after_label} | Drop (pp) | Weighted drag (pp) |'
     divider = '|---:|---|---|---:|---:|---:|---:|---:|'
     if chapter:
@@ -325,7 +388,7 @@ def markdown(report, top=20, chapter_top=5):
             f"Difference: **{delta(report['overall_delta_pp'])}**.", '',
             f"Lichess population: speeds `{filters['speeds']}`; rating groups `{filters['ratings']}`; "
             f"dates `{filters['since']}` to `{filters['until']}`.", '',
-            'Ranked by weighted score deficit. Opponent replies and our moves use different references and are ranked separately. '
+            'Opponent replies rank by weighted score deficit; our moves rank by parent database score minus repertoire continuation score. '
             'Rows can overlap, so do not sum them or interpret drag as a guaranteed improvement. Definitions and evidence checks follow the chapter tables.', '',
             ATTRIBUTION_NOTE, '', '## Overall study', '']
     methods = [
@@ -333,7 +396,7 @@ def markdown(report, top=20, chapter_top=5):
             'It is a screening measure, not a promised improvement, an engine judgment, or proof that a move causes worse results.', '',
             'Opponent reply drag = probability of reaching the parent x reply probability x (parent repertoire score - score after reply). '
             'Prepared replies use the full merged continuation; unprepared replies use the cached parent move row. '
-            'Our move drag = probability of reaching the parent x selected policy weight x (ordinary parent database score - selected move-row score). '
+            'Our move drag = ordinary parent database score - repertoire continuation score after our move. Own rankings use this direct difference; the reach-weighted diagnostic is retained separately. '
             'Our move popularity is not a weight. The two benchmarks differ, so their rankings are separate.', '',
             'All scores use the repertoire owner\'s perspective. Weighted drag is in percentage points of the overall score, '
             'or of the conditional chapter score in chapter tables. Chapter root drag is weighted again by entry probability under the chapter comparison policy. '
@@ -375,33 +438,41 @@ def markdown(report, top=20, chapter_top=5):
     return '\n'.join(text)
 
 
-def write_outputs(report, path, top=20, chapter_top=5):
+def write_outputs(report, path, refresh_rating_provenance=False):
     path = Path(path)
-    path.with_suffix('.vulnerabilities.json').write_text(json.dumps(report, indent=2, allow_nan=False), encoding='utf-8')
-    path.with_suffix('.vulnerabilities.md').write_text(markdown(report, top, chapter_top), encoding='utf-8')
+    companion = path.with_suffix('.vulnerabilities.json')
+    rating_path = path.with_suffix('.ratings.json'); rating = None
+    if refresh_rating_provenance and rating_path.exists():
+        rating = json.loads(rating_path.read_bytes()); m = rating['manifest']
+        if rating['color'] != report['color'] or any(m.get(k) != report['manifest'][k]
+                for k in ('report_sha256', 'input_sha256', 'filters')):
+            raise ValueError('Rating ledger differs from saved comparison snapshot')
+        for family, digest in m['supporting_sha256'].items():
+            if hashlib.sha256(path.with_suffix(f'.{family}.json').read_bytes()).hexdigest() != digest:
+                raise ValueError('Rating supporting analysis changed before comparison refresh')
+    companion.write_text(json.dumps(report, indent=2, allow_nan=False), encoding='utf-8')
+    if rating is not None:
+        # Only own score comparisons changed; all move identities and rating
+        # sources remain the same, so keep the verified cached rating contexts.
+        rating['manifest']['supporting_sha256']['vulnerabilities'] = hashlib.sha256(companion.read_bytes()).hexdigest()
+        rating['manifest']['comparison_provenance_updated_at'] = datetime.now(timezone.utc).isoformat()
+        rating_path.write_text(json.dumps(rating, indent=2, allow_nan=False), encoding='utf-8')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+', help='Saved score JSON files, with unchanged source PGNs')
     parser.add_argument('--cache', default='.cache/explorer')
-    parser.add_argument('--fetch-missing', action='store_true', help='Fetch only missing own decision parent tables; default is cache-only')
-    parser.add_argument('--top', type=int, default=20)
-    parser.add_argument('--chapter-top', type=int, default=5)
-    parser.add_argument('--summary', help='Combined summary Markdown; defaults to first report directory/vulnerabilities.md')
+    refresh_mode = parser.add_mutually_exclusive_group()
+    refresh_mode.add_argument('--fetch-missing', action='store_true', help='Fetch only missing own decision parent tables; default is cache-only')
+    refresh_mode.add_argument('--refresh-saved', action='store_true', help='Update own comparisons from matching saved character scores without parsing PGNs or fetching data')
     args = parser.parse_args()
-    if args.top < 1 or args.chapter_top < 1:
-        parser.error('Ranking lengths must be positive')
-    results = []
     for path in args.reports:
-        result = analyze(path, args.cache, args.fetch_missing)
-        write_outputs(result, path, args.top, args.chapter_top)
-        results.append((result, Path(path)))
+        result = refresh_saved(path) if args.refresh_saved else analyze(path, args.cache, args.fetch_missing)
+        write_outputs(result, path, refresh_rating_provenance=args.refresh_saved)
         print(f"Generated {result['color']} vulnerabilities: overall and {len(result['chapters'])} chapters", flush=True)
-    summary = vulnerability_summary(results, min(args.top,10))
-    target = Path(args.summary) if args.summary else Path(args.reports[0]).parent/'vulnerabilities.md'
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(summary, encoding='utf-8')
+    from .render import update_report_outputs
+    update_report_outputs(args.reports[-1])
 
 
 if __name__ == '__main__':

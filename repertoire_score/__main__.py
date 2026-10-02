@@ -14,6 +14,7 @@ from .report import events, markdown, starting_position_reference
 from .attribution import enrich
 from .baseline import chapter_entry_baseline
 from .render import update_report_outputs
+from .layout import report_directory
 from .transitions import chapter_transitions, hitting_bounds
 from .depth import prepared_depth_values, summarize_depth, chapter_prepared_depth
 
@@ -244,7 +245,7 @@ def analyze(args):
     enrich(report, graph)
     output.with_suffix(".json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
     update_report_outputs(output.with_suffix(".json"))
-    print(json.dumps({"overall": report["overall"], "report": str(output.with_suffix('.md').resolve())}, indent=2))
+    print(json.dumps({"overall": report["overall"], "report": str((report_directory(output)/'report.md').resolve())}, indent=2))
 
 
 def main():
@@ -253,7 +254,7 @@ def main():
     parser.add_argument("pgn")
     parser.add_argument("--color", required=True, choices=["white", "black"])
     parser.add_argument("--config")
-    parser.add_argument("--output", default="reports/repertoire")
+    parser.add_argument("--output", default="reports/data/repertoire")
     parser.add_argument("--cache", default=".cache/explorer")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--refresh", action="store_true")

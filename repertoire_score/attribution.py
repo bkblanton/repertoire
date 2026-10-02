@@ -1,4 +1,4 @@
-"""Chapter provenance for displayed moves, positions and PGN edits."""
+"""Chapter provenance for displayed moves and positions."""
 import argparse
 import hashlib
 import json
@@ -80,16 +80,20 @@ def enrich(report, graph):
         for chapter in report['chapters']:
             for entry in chapter['entries']:
                 entry['chapter_attribution'] = attribution.position_or_move(entry['position'])
-    elif 'proposals' in report:
-        for scope in report['scopes']:
-            for row in scope['stops']:
-                row['chapter_attribution'] = attribution.position_or_move(row['parent_position'],row.get('move'))
-        for proposal in report['proposals']:
-            proposal['chapter_attribution'] = dict(source_ids=attribution.ordered(e['chapter_id'] for e in proposal['edits']),
-                context_ids=[],transposition_ids=[],basis='PGN subtree edits')
     elif 'scopes' in report:
         for scope in report['scopes']:
+            for row in scope.get('stops', []):
+                row['chapter_attribution'] = attribution.position_or_move(row['parent_position'],row.get('move'))
             if 'reuse' not in scope: continue
+            for row in scope.get('positions', []):
+                origins = row.get('unprepared_origins', [])
+                if origins:
+                    contexts = [attribution.position_or_move(o['parent_position'], o['move']) for o in origins]
+                    row['chapter_attribution'] = dict(source_ids=[], transposition_ids=[],
+                        context_ids=attribution.ordered(cid for context in contexts for cid in context['context_ids']),
+                        basis='unprepared move')
+                else:
+                    row['chapter_attribution'] = attribution.position_or_move(row['position'])
             for row in scope['reuse']['decisions']:
                 row['chapter_attribution'] = attribution.position_or_move(row['position'],row['move'])
             for row in scope['predictability']['positions']:
@@ -186,10 +190,7 @@ def improvement_markdown(report, text):
 
 def regenerate(paths):
     """Refresh saved attribution and Markdown without rerunning any analysis."""
-    from .render import render_reports
-    from .vulnerabilities import markdown as vulnerability_markdown
-    from .preparation import render as preparation_render, summary as preparation_summary
-    from .character import render as character_render, summary as character_summary
+    from .render import update_report_outputs
     paths = [Path(p) for p in paths]
     stages = []
     correlation_updates,improvement_updates = {},[]
@@ -222,7 +223,6 @@ def regenerate(paths):
                 raise ValueError(f'Saved companion differs from source scores: {companion_path}')
             companions.append((kind,companion_path,enrich(companion,graph)))
         stages.append((path,enrich(report,graph),companions))
-    vulnerability_results,preparation_results,character_results = [],[],[]
     for path,report,companions in stages:
         data = json.dumps(report,indent=2,allow_nan=False)
         write_text(path,data)
@@ -230,17 +230,7 @@ def regenerate(paths):
         for kind,companion_path,result in companions:
             result['manifest']['report_sha256'] = digest
             write_text(companion_path,json.dumps(result,indent=2,allow_nan=False))
-            renderer = {'vulnerabilities':vulnerability_markdown,'preparation':preparation_render,'character':character_render}[kind]
-            write_text(companion_path.with_suffix('.md'),renderer(result))
-            if kind == 'vulnerabilities': vulnerability_results.append((result,path))
-            elif kind == 'preparation': preparation_results.append((result,path))
-            else: character_results.append(result)
         print(f"Updated {report['color']} chapter attribution: score report and {len(companions)} companion reports",flush=True)
-    directory = paths[0].parent
-    render_reports(paths,directory/'summary.md')
-    if vulnerability_results: write_text(directory/'vulnerabilities.md',vulnerability_summary(vulnerability_results))
-    if preparation_results: write_text(directory/'preparation.md',preparation_summary(preparation_results))
-    if character_results: write_text(directory/'character.md',character_summary(character_results))
     for path,correlation in correlation_updates.items():
         changed = False
         for provenance in correlation.get('provenance',{}).values():
@@ -254,6 +244,8 @@ def regenerate(paths):
         markdown_path = path.with_suffix('.md')
         if markdown_path.exists():
             write_text(markdown_path,improvement_markdown(report,markdown_path.read_text(encoding='utf-8')))
+    for path in paths:
+        update_report_outputs(path)
 
 
 def main():

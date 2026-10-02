@@ -215,6 +215,9 @@ def test_unlisted_opponent_move_reenters_known_theory(tmp_path):
 
 def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     from repertoire_score import __main__ as cli
+    from repertoire_score.consolidated import cp
+    white_row = f'| White | 80.00% | {cp(.8)} | 70.00% | {cp(.7)} | -10.00 |'
+    black_row = f'| Black | 20.00% | {cp(.2)} | 30.00% | {cp(.3)} | +10.00 |'
     g = graph(tmp_path,'1. e4 e5 *')
     evidence = {position(''):data(7,2,1,[('e2e4',7,2,1)]), position('e4'):data(80,0,20,[('e7e5',80,0,20)]),position('e4 e5'):data(6,2,2)}
     class FakeExplorer:
@@ -241,13 +244,13 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     assert result['diagnostics']['sanity_checks_passed']
     assert len(result['chapters']) == 1
     assert len(result['prior_sensitivity']) == 2
-    assert 'Approx. 95% interval' in (tmp_path/'report.md').read_text()
-    assert '| White | 80.000% |' in (tmp_path/'report.md').read_text()
+    assert 'Approximate model-based 95% score interval' in (tmp_path/'report.md').read_text()
+    assert '| White | 80.00% |' in (tmp_path/'report.md').read_text()
     assert '| Black |' not in (tmp_path/'report.md').read_text()
-    assert 'baseline: **-10.000 pp**' in (tmp_path/'report.md').read_text()
+    assert white_row in (tmp_path/'report.md').read_text()
     assert '| Repertoire score |' in (tmp_path/'report.md').read_text()
     assert '| Posterior mean |' not in (tmp_path/'report.md').read_text()
-    assert (tmp_path/'report.study-description.md').exists()
+    assert not (tmp_path/'report.study-description.md').exists()
     assert (tmp_path/'summary.md').exists()
     saved_white = (tmp_path/'report.json').read_bytes()
     config = tmp_path/'config.json'
@@ -262,22 +265,19 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     assert black['chapters'][0]['entries'][0]['conditional_first_entry_weight'] == 1
     assert black['overall']['prepared_depth']['expected_moves'] == 1
     assert black['chapters'][0]['score']['prepared_depth']['expected_moves'] == 1
-    assert '| Black | 20.000% |' in (tmp_path/'black.md').read_text()
-    assert '| White |' not in (tmp_path/'black.md').read_text()
-    assert 'baseline: **+10.000 pp**' in (tmp_path/'black.md').read_text()
+    assert black_row in (tmp_path/'report.md').read_text(encoding='utf-8')
+    assert not (tmp_path/'black.md').exists()
     # A one-color rerun must retain its companion and regenerate their summary.
     assert (tmp_path/'report.json').read_bytes() == saved_white
     registry = json.loads((tmp_path/'.report-index.json').read_text())
     assert registry == {'white': 'report.json', 'black': 'black.json'}
     summary = (tmp_path/'summary.md').read_text()
-    assert '## White chapters (1)' in summary and '## Black chapters (1)' in summary
+    assert '<summary>All 1 White chapters</summary>' in summary and '<summary>All 1 Black chapters</summary>' in summary
     assert 'Posterior mean' not in summary and 'Empirical score' not in summary
-    assert '| White | 80.000% | 70.000% | -10.000 |' in summary
-    assert '| Black | 20.000% | 30.000% | +10.000 |' in summary
-    description = (tmp_path/'black.study-description.md').read_text()
-    assert 'Repertoire score:' in description and 'Starting-position reference:' in description
-    assert 'Overall delta: +10.00 pp.' in description
-    assert 'Posterior' not in description and str(tmp_path) not in description
+    assert white_row in summary
+    assert black_row in summary
+    assert 'Posterior' not in summary and str(tmp_path) not in summary
+    assert not (tmp_path/'black.study-description.md').exists()
 
 
 def test_missing_distribution_does_not_imply_zero_entry_probability(tmp_path):

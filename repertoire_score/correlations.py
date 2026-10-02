@@ -235,25 +235,27 @@ def analyze(paths, output, repetitions=20000, seed=20260929):
     output = Path(output)
     output.parent.mkdir(parents=True,exist_ok=True)
     output.with_suffix('.json').write_text(json.dumps(result,indent=2,ensure_ascii=False,allow_nan=False),encoding='utf-8')
-    output.with_suffix('.md').write_text(markdown(result),encoding='utf-8')
-    print(f'Saved correlation estimates and intervals: {output.with_suffix(".md").resolve()}')
+    print(f'Saved correlation estimates and intervals: {output.with_suffix(".json").resolve()}')
     return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports',nargs='+')
-    parser.add_argument('--output',default='reports/depth-delta-correlation')
+    parser.add_argument('--output',help='JSON output prefix (default: beside the score data)')
     parser.add_argument('--bootstrap-samples',type=int,default=20000)
     parser.add_argument('--seed',type=int,default=20260929)
     parser.add_argument('--plot',action='store_true',help='Also write a standalone HTML scatterplot; requires Plotly')
     args = parser.parse_args()
     if args.bootstrap_samples < 1000:
         parser.error('Use at least 1000 bootstrap replicates')
-    result = analyze(args.reports,args.output,args.bootstrap_samples,args.seed)
+    output = Path(args.output) if args.output else Path(args.reports[0]).parent/'depth-delta-correlation'
+    result = analyze(args.reports,output,args.bootstrap_samples,args.seed)
     if args.plot:
         from .correlation_plot import plot
-        plot(result,Path(args.output).with_suffix('.html'))
+        plot(result,output.with_suffix('.html'))
+    from .render import update_report_outputs
+    update_report_outputs(args.reports[-1])
 
 
 if __name__ == '__main__':

@@ -43,12 +43,12 @@ def test_own_deficit_forced_probability_and_same_table_alternative(tmp_path):
     g, m, o, raw, v, e = fixture(tmp_path)
     rows = candidates(g, m, raw, v, e, True, 30)
     scope = rank_scope(rows, reaches(m, o, raw, {g.roots[0]: 1}), {})
-    nf3, e4 = scope['rankings']['own']
+    e4, nf3 = scope['rankings']['own']
     assert nf3['move_san'] == 'Nf3'
     assert nf3['parent_reach'] == pytest.approx(.8)
     assert nf3['branch_probability'] == 1  # not historical 10%
-    assert nf3['weighted_drag_pp'] == pytest.approx(16)
-    assert e4['weighted_drag_pp'] == pytest.approx(10)
+    assert nf3['weighted_drag_pp'] == pytest.approx(8)
+    assert e4['weighted_drag_pp'] == pytest.approx(20)
     assert nf3['alternative']['san'] == 'Nc3'
     assert nf3['alternative']['sample_count'] == 90
     assert nf3['alternative_opportunity_pp'] == pytest.approx(.8*100*(56/90-.4))
@@ -72,16 +72,16 @@ def test_chapter_weighted_multiple_entries_and_transposition_aggregation(tmp_pat
     overall = rank_scope(local, mass, {})
     joined = [r for r in overall['rankings']['own'] if r['position'] == junction]
     assert len(joined) == 1
-    assert joined[0]['weighted_drag_pp'] == pytest.approx(30)
+    assert joined[0]['weighted_drag_pp'] == pytest.approx(20)
     selected = [r for r in overall['all_signed_rows'] if r['position'] == root]
-    assert sorted(r['weighted_drag_pp'] for r in selected) == pytest.approx([9, 21])
+    assert sorted(r['weighted_drag_pp'] for r in selected) == pytest.approx([6, 14])
     entries = [position('Nf3'), position('g3'), junction]
     _, first = forward(m, o, raw, {root: 1}, stop_at=entries)
     assert first[junction][0] == 0
     weights = {k: float(x[0]) for k, x in first.items()}
     conditional = rank_scope(local, reaches(m, o, raw, weights), {}, .25)
     join = next(r for r in conditional['rankings']['own'] if r['position'] == junction)
-    assert join['study_drag_pp_after_entry'] == pytest.approx(7.5)
+    assert join['study_drag_pp_after_entry'] == pytest.approx(5)
     assert all(r['position'] != root for r in conditional['all_signed_rows'])
     # The second route bypasses the early entry and first enters at the shared descendant.
     _, late = forward(m, o, raw, {root: 1}, stop_at=[position('Nf3'), junction])
@@ -95,11 +95,12 @@ def test_black_perspective_missing_and_sparse_evidence(tmp_path):
     g = graph(tmp_path, '1. e4 e5 *')
     root, e4, leaf = g.roots[0], position('e4'), position('e4 e5')
     e = {root: data(60, 0, 40, [('e2e4', 60, 0, 40)]),
-         e4: data(50, 0, 50, [('e7e5', 8, 0, 2), ('c7c5', 42, 0, 48)]), leaf: data(50, 0, 50)}
+         e4: data(50, 0, 50, [('e7e5', 8, 0, 2), ('c7c5', 42, 0, 48)]), leaf: data(70, 0, 30)}
     m, o, raw, _, v, _ = setup(g, False, e)
     own = next(r for r in candidates(g, m, raw, v, e, False, 30) if r['kind'] == 'own')
-    assert own['move_score'] == .2
-    assert own['local_drop_pp'] == pytest.approx(30)
+    assert own['move_score'] == .3
+    assert own['move_database_score'] == .2
+    assert own['local_drop_pp'] == pytest.approx(20)
     assert own['sparse']
     assert own['alternative']['san'] == 'c5'
     e[e4] = data(0, 0, 0)
@@ -160,8 +161,8 @@ def test_fetches_only_missing_own_parents_then_runs_fully_offline(tmp_path, monk
     assert not network_calls
     assert replay['overall'] == result['overall']
     chapter_own = replay['chapters'][0]['rankings']['own'][0]
-    assert chapter_own['weighted_drag_pp'] == pytest.approx(20)
-    assert chapter_own['study_drag_pp_after_entry'] == pytest.approx(16)
+    assert chapter_own['weighted_drag_pp'] == pytest.approx(10)
+    assert chapter_own['study_drag_pp_after_entry'] == pytest.approx(8)
     text = markdown(replay)
     assert 'Our selected moves' in text and 'Chapter entry probability: **80.00%**' in text
     assert '\u2014' not in text
@@ -187,3 +188,38 @@ def test_changed_source_rejected_before_loading_evidence(tmp_path):
     (tmp_path/'fixture.pgn').write_text('1. d4 d5 *')
     with pytest.raises(ValueError, match='PGN differs'):
         analyze(path, cache)
+
+
+def test_prepared_continuation_can_be_a_strength_despite_bad_historical_move_row(tmp_path):
+    g, _, _, _, _, e = fixture(tmp_path)
+    e[position('e4 e5 Nf3')] = data(80, 0, 20)
+    m, o, raw, _, v, _ = setup(g, True, e)
+    scope = rank_scope(candidates(g, m, raw, v, e, True, 30), reaches(m, o, raw, {g.roots[0]: 1}), {})
+    nf3 = next(r for r in scope['strengths'] if r['move_san'] == 'Nf3')
+    assert nf3['move_database_score'] == .4
+    assert nf3['move_score'] == .8
+    assert nf3['local_gain_pp'] == pytest.approx(20)
+    assert not scope['rankings']['own']
+
+
+def test_unknown_continuation_never_falls_back_to_historical_own_move_score(tmp_path):
+    g, _, _, _, _, e = fixture(tmp_path)
+    e[position('e4 e5 Nf3')] = data(0, 0, 0)
+    m, o, raw, _, v, _ = setup(g, True, e)
+    scope = rank_scope(candidates(g, m, raw, v, e, True, 30), reaches(m, o, raw, {g.roots[0]: 1}), {})
+    assert not scope['rankings']['own'] and not scope['strengths']
+    for row in scope['all_signed_rows']:
+        if row['kind'] == 'own':
+            assert row['move_database_score'] is not None
+            assert row['move_score'] is None and row['local_drop_pp'] is None
+
+
+def test_own_ranking_uses_direct_deficit_while_opponent_ranking_uses_weighted_drag():
+    from repertoire_score.vulnerabilities import rankings
+    rows = [dict(id='rare', kind='own', local_drop_pp=20., weighted_drag_pp=.02),
+            dict(id='common', kind='own', local_drop_pp=5., weighted_drag_pp=4.),
+            dict(id='reply-rare', kind='opponent', local_drop_pp=20., weighted_drag_pp=.02),
+            dict(id='reply-common', kind='opponent', local_drop_pp=5., weighted_drag_pp=4.)]
+    result, _ = rankings(rows)
+    assert [r['id'] for r in result['own']] == ['rare', 'common']
+    assert [r['id'] for r in result['opponent']] == ['reply-common', 'reply-rare']
