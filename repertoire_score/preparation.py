@@ -12,6 +12,7 @@ from .explorer import Explorer, counts
 from .graph import key, parse
 from .model import outcome, score
 from .attribution import enrich
+from .insights import depth_distribution, first_entry_examples
 
 
 class MissingEvidence(ValueError):
@@ -244,11 +245,14 @@ def analyze(path, cache='.cache/explorer'):
             baseline=chapter.get('entry_baseline', {}).get('raw_score'), chapter=chapter['id'],
             expected=chapter['score'], policy_basis=chapter.get('policy_basis', 'overall policy')))
     lines = position_lines(graph)
+    chapters = {c['id']: c for c in saved['chapters']}
     contexts = {}
     for scope in scopes:
         expected = scope.pop('expected')
         if not scope['starts']:
-            scope['status'] = 'unresolved entry weights'; scope['stops'] = []; continue
+            scope['status'] = 'unresolved entry weights'; scope['stops'] = []
+            scope['depth_distribution'] = depth_distribution(None, {})
+            continue
         local = {k:n.chapter_moves[scope['chapter']][0] for k,n in graph.nodes.items()
                  if facts[k]['turn'] == color and n.chapter_moves.get(scope['chapter'])
                  and policy.get(k, next(iter(n.edges))) != n.chapter_moves[scope['chapter']][0]}
@@ -265,15 +269,28 @@ def analyze(path, cache='.cache/explorer'):
         scope['score'] = float(value[0]) if value[1] == 0 else None
         scope['prepared_depth'] = float(value[2]) if value[1] == 0 else None
         scope['status'] = 'resolved' if value[1] == 0 else 'unresolved evidence'
+        scope['depth_distribution'] = depth_distribution(evaluator, scope['starts'])
+        bounds = expected.get('prepared_depth', {}).get('conditional_bounds')
+        if bounds is not None:
+            assert np.allclose(scope['depth_distribution']['expected_bounds'], bounds, atol=1e-10)
+        if scope['chapter']:
+            chapter = chapters[scope['chapter']]
+            region = (chapter.get('region') or {}).get('positions') or [e['position'] for e in chapter['entries']]
+            scope['entry_routes'] = first_entry_examples(evaluator, manifest['root_weights'], region,
+                chapter['score'].get('entry_probability'), chapter['score'].get('first_entry_weights') or None)
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError('Source PGN changed during preparation analysis')
     result = dict(color=saved['color'], scopes=scopes,
         manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), report_path=str(path.resolve()),
             report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(), input_sha256=manifest['input_sha256'],
             input_path=str(source), filters=manifest['filters'], evidence=explorer.provenance,
-            cache_only=True, network_requests=0, uncached_positions=missing),
+            cache_only=True, network_requests=0, uncached_positions=missing, insights_schema_version=1,
+            depth_distribution_definition='Remaining own moves from the same scope entry mixture; survival probabilities and exact stopping depths retain transposed elapsed-depth histories. Missing reply distributions have finite structural bounds. Missing leaf scores do not affect depth.',
+            entry_example_definition='Highest-probability single root-to-first-arrival path for each entry board. All routes contribute to entry weights; example probabilities are subsets, conditional on chapter entry.'),
         validation=dict(original_scores_reproduced=True, stopping_contributions_reproduced=True,
-                        baseline_attribution_reproduced=True, source_pgn_unchanged=True))
+                        baseline_attribution_reproduced=True, source_pgn_unchanged=True,
+                        depth_distribution_conserves_probability=True,
+                        survival_reproduces_prepared_depth=True, first_entry_routes_reproduced=True))
     return enrich(result, graph)
 
 

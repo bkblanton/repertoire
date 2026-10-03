@@ -240,7 +240,7 @@ def check_score_tables(text):
                         reproduced = 100 / (1 + math.exp(-.00368208 * float(equivalent)))
                         assert reproduced == pytest.approx(float(percent), abs=.0055)
                 checked += 1
-            if 'CP delta' in headers:
+            if 'CP delta' in headers and any(h in headers for h in ('Before CP', 'Parent CP', 'Baseline CP')):
                 before_header = next(h for h in ('Before CP', 'Parent CP', 'Baseline CP') if h in headers)
                 after_header = 'After CP' if 'After CP' in headers else 'Score CP'
                 before, after, delta = (row[headers.index(h)] for h in (before_header, after_header, 'CP delta'))
@@ -437,8 +437,8 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     assert full.index('## White repertoire') < full.index('### Most common positions') < full.index('### Vulnerabilities')
     assert not re.search(r'^## Most common positions$',full,flags=re.M)
     block = full.split('### Most common positions', 1)[1].split('### White chapters', 1)[0]
-    assert '| Position (representative line) | Chapter source | Reach in repertoire | Repertoire score | Score CP | Games at position / reply |' in block
-    assert '| 1. e4 |' in block and f'| 100.00% | 40.00% | {cp(.4)} | 100 |' in block
+    assert '| Position (representative line) | Chapter source | Reach in repertoire | Avg games per encounter | Repertoire score | Score CP | Games at position / reply |' in block
+    assert '| 1. e4 |' in block and f'| 100.00% | 1.0 | 40.00% | {cp(.4)} | 100 |' in block
     assert '(PGN root)' not in block
     assert '1. e4' in block and '100.00%' in block
     assert '| 1. e4 e6 |' not in block
@@ -514,7 +514,7 @@ def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(t
     assert alternative['score']['entry_probability'] == pytest.approx(.6)
     block = text.split('<a id="white-chapter-2-common-positions"></a>', 1)[1].split('##### Strengths', 1)[0]
     assert '| 1. e4 e6 2. d4 d5 3. Nd2 Nf6 4. e5 |' in block
-    assert '| 100.00% | 90.00% |' in block  # conditional on entry, not multiplied by the 60% chapter reach
+    assert '| 100.00% | 1.0 | 90.00% |' in block  # conditional on entry, not multiplied by the 60% chapter reach
     overall = text.split('### Most common positions', 1)[1].split('### White chapters', 1)[0]
     assert '3. Nd2 Nf6' not in overall  # overall still selects the Advance
     assert all(p.read_bytes() == data for p, data in before.items())

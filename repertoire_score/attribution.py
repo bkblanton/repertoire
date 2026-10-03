@@ -84,6 +84,8 @@ def enrich(report, graph):
         for scope in report['scopes']:
             for row in scope.get('stops', []):
                 row['chapter_attribution'] = attribution.position_or_move(row['parent_position'],row.get('move'))
+            for row in scope.get('entry_routes', {}).get('positions', []):
+                row['chapter_attribution'] = attribution.position_or_move(row['position'])
             if 'reuse' not in scope: continue
             for row in scope.get('positions', []):
                 origins = row.get('unprepared_origins', [])

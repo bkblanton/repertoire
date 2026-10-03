@@ -71,7 +71,7 @@ def test_report_uses_cache_keeps_alternative_chapter_and_source(tmp_path,monkeyp
     assert scopes['tarrasch']['name'] == 'Tarrasch Nf6'
     for scope in scopes.values():
         assert set(scope) <= {'id', 'name', 'starts', 'baseline', 'chapter', 'policy_basis',
-                             'stops', 'score', 'prepared_depth', 'status'}
+                             'stops', 'score', 'prepared_depth', 'status', 'depth_distribution', 'entry_routes'}
         assert sum(r['contribution_pp'] for r in scope['stops']) == pytest.approx(100*scope['score'])
         assert sum(r['baseline_contribution_pp'] for r in scope['stops']) == pytest.approx(100*(scope['score']-scope['baseline']))
         assert all('chapter_attribution' in row for row in scope['stops'])

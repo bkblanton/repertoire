@@ -183,6 +183,12 @@ The strengths section appears overall and per chapter. It shows our largest posi
 
 The preparation JSON retains a separate stopping-outcome ledger and baseline-relative contributions for analysis. Each modeled game stops once, so its complete stopping contributions still reproduce the resolved score without repeatedly counting intermediate positions.
 
+The summary's own-move highlights rank by **reach times local continuation gain or drag**, after the existing sparse filter. Full-report own-move rankings retain their local comparisons. Every highlighted gain includes the later prepared continuation, so these weighted comparisons overlap and must not be added. Line tables also show **Avg games per encounter**, `1 / reach`, for independent modeled games. In chapter tables this means games that enter the chapter; in overall tables it means games with that color. Zero reach is never encountered under the policy, rather than a finite waiting interval.
+
+`repertoire-preparation` automatically saves a **prepared-depth distribution** for each color and chapter. It propagates probability over both canonical board and elapsed own-move count, so paths that transpose into a shared board retain their different remaining-depth histories. The full report shows cumulative probabilities of preparing at least each depth and exact-depth endings at prepared endpoints, unprepared replies, and other stops. The survival probabilities from depth 1 sum to expected prepared depth. The summary links the full distribution and reports its median. Zero-data leaf outcomes do not obscure depth; missing opponent distributions retain finite structural bounds and are labeled unresolved. There is no depth cutoff or discount parameter.
+
+The same analysis saves actual **first-entry route examples** under each chapter's comparison policy. It stops every root-to-entry path when it first reaches any chapter-region position, merges all arriving probability at the exact board, and keeps the most likely single route as an example. Entry-position weights include every first-arrival route; the separately displayed example weight covers just that route. Both are conditional on reaching any position in the chapter. Examples are validated as legal and cannot pass an earlier chapter position. These explanations preserve the existing transposition-inclusive chapter scores and reach; ordinary position-table lines remain representative board labels. Older results without these fields explicitly request a cache-only preparation refresh.
+
 ## Opponent rating contexts
 
 ```powershell
@@ -209,7 +215,7 @@ Normal rating generation also includes these differences automatically. The diff
 
 ## Report readability and saved comparison refresh
 
-`report.md` contains one score overview, per-color common positions and early chapter overviews, vulnerabilities, strengths, and expandable chapter details. `summary.md` highlights strengths and deficits, the three most common unprepared replies and the three with the largest weighted drag, stopping reasons, and expandable chapter tables. Chapter source links use compact W/B identifiers. Reach labels state whether the denominator is the repertoire or games after chapter entry; opponent reply frequency is conditional on the parent. Snapshot notices appear before scores, with scoring and evidence retrieval dates separately. Empty categories are omitted.
+`report.md` contains one score overview, per-color common positions and early chapter overviews, vulnerabilities, strengths, and expandable chapter details. `summary.md` shows up to five rows in each ranking: weighted own-move gains and drag, common unprepared replies, unprepared replies with the largest weighted drag, and position contributions. It also includes stopping reasons and expandable chapter tables. Chapter source links use compact W/B identifiers. Reach labels state whether the denominator is the repertoire or games after chapter entry; opponent reply frequency is conditional on the parent. Snapshot notices appear before scores, with scoring and evidence retrieval dates separately. Empty categories are omitted.
 
 To update own-move comparison definitions from matching saved continuation analysis without parsing a changed PGN or requesting any data:
 
