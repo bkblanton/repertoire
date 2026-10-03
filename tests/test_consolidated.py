@@ -63,6 +63,36 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     assert not list(path.parent.glob('*.study-description.md'))
 
 
+def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
+    from repertoire_score.consolidated import gap_percentage
+    path, report = complete
+    bundle = generate([path])[0]
+    full = (path.parent / 'report.md').read_text(encoding='utf-8')
+    summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
+    overall = bundle['report']['gap_coverage']
+    assert '### Equivalent gap reach' in full
+    assert f'**Equivalent gap reach: {gap_percentage(overall)}.**' in summary
+    for text in (full, summary):
+        assert 'Weighted gap reach contribution' in text
+        assert 'Equivalent gap reach after entry' in text
+    for chapter in bundle['report']['chapters']:
+        metrics = chapter['gap_coverage']
+        assert metrics
+        if metrics['entry_probability'] is not None:
+            assert metrics['weighted_equivalent_gap_reach_bounds'] == pytest.approx([
+                metrics['entry_probability'] * p for p in metrics['equivalent_gap_reach_bounds']])
+        assert f"weighted gap reach contribution **{gap_percentage(metrics, weighted=True)}**" in full
+    assert 'weighted contributions are not additive' in full
+
+
+def test_gap_display_keeps_unknown_reach_bounded():
+    from repertoire_score.consolidated import gap_percentage
+    assert gap_percentage(None) == 'unavailable'
+    assert gap_percentage(dict(equivalent_gap_reach=0.)) == '0.00%'
+    assert gap_percentage(dict(equivalent_gap_reach_bounds=[.1, .2])) == '10.00% to 20.00% (bounds)'
+    assert gap_percentage(dict(weighted_equivalent_gap_reach_bounds=[.02, .04]), weighted=True) == '2.00% to 4.00% (bounds)'
+
+
 @pytest.mark.parametrize('field', ['report_sha256', 'input_sha256', 'filters', 'color'])
 def test_mismatched_companion_rejected_before_any_output_changes(complete, field):
     path, report = complete

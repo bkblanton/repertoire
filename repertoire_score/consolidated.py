@@ -140,6 +140,10 @@ def load(paths, strict=True, require_complete=False):
         if 'ratings' in bundle:
             from .ratings import attach
             attach(bundle)
+        gap_scopes = scope_by_id(bundle.get('character'))
+        report['gap_coverage'] = gap_scopes.get('overall', {}).get('gap_coverage')
+        for chapter in report['chapters']:
+            chapter['gap_coverage'] = gap_scopes.get(chapter['id'], {}).get('gap_coverage')
         bundles.append(bundle)
     return sorted(bundles, key=lambda b: b['report']['color'] != 'white')
 
@@ -336,10 +340,34 @@ def rating_difference(context):
     return result + (' (' + '; '.join(notes) + ')' if notes else '')
 
 
+def gap_percentage(metrics, weighted=False):
+    metrics = metrics or {}
+    prefix = 'weighted_' if weighted else ''
+    value = metrics.get(prefix + 'equivalent_gap_reach')
+    if value is not None:
+        return percentage(value)
+    bounds = metrics.get(prefix + 'equivalent_gap_reach_bounds')
+    return ' to '.join(map(percentage, bounds)) + ' (bounds)' if bounds is not None else 'unavailable'
+
+
+def gap_section(scope, level='###'):
+    metrics = (scope or {}).get('gap_coverage')
+    if not metrics:
+        return [f'{level} Equivalent gap reach', '', 'Unavailable; regenerate the cache-only character analysis.', '']
+    text = [f'{level} Equivalent gap reach', '',
+            f'**{gap_percentage(metrics)}**. The reach of one gap that would produce the same repeat probability as all first unprepared positions combined. '
+            'Lower values indicate less concentrated recurring gaps. [Definition and chapter weighting](#methods).', '']
+    if metrics.get('unresolved_mass', 0):
+        text += [f"First-gap reach is unresolved for {percentage(metrics['unresolved_mass'])} of games in this scope. "
+                 'The displayed range bounds the missing response data; it is not a sampling confidence interval.', '']
+    return text
+
+
 def chapter_table(report, refs, link=True):
     alternatives = any(c.get('policy_overrides') for c in report['chapters'])
     headers = ['Chapter', 'Chapter reach (incl. transpositions)', 'Entry baseline', 'Baseline CP', 'Repertoire score',
-               'Score CP', 'Delta', 'CP delta', 'Prepared depth', 'Avg opponent rating']
+               'Score CP', 'Delta', 'CP delta', 'Prepared depth',
+               'Weighted gap reach contribution', 'Equivalent gap reach after entry', 'Avg opponent rating']
     if alternatives:
         headers.insert(2, 'Overall-policy reach')
     rows = []
@@ -355,6 +383,7 @@ def chapter_table(report, refs, link=True):
                percentage(s.get('raw_empirical_score')), cp(s.get('raw_empirical_score')), score_points(base.get('difference_pp'), signed=True),
                cp_change(s.get('raw_empirical_score'), base.get('raw_score')),
                number(s.get('prepared_depth', {}).get('expected_moves')),
+               gap_percentage(c.get('gap_coverage'), weighted=True), gap_percentage(c.get('gap_coverage')),
                opponent_rating(c.get('opponent_ratings', {}).get('score_evidence'))]
         if alternatives:
             row.insert(2, percentage(s.get('overall_policy_entry_probability', s.get('entry_probability'))))
@@ -593,6 +622,7 @@ def methods(bundles):
              '- **Entry probability:** first arrival anywhere in the chapter region before the model stops, counting each modeled game once per chapter, including transpositions. Chapters overlap; entry probabilities, scores, and deltas are not additive. Representative lines show one route; reach combines all modeled routes.',
              '- **Alternative chapters:** overall uses the first PGN move in the earliest chapter unless explicitly overridden. An alternative chapter prefers its own first moves, with the overall policy elsewhere. Its score, reach, baseline, and depth use that comparison policy. Overall-policy reach is disclosed separately and does not mean an alternative move was selected.',
              '- **Expected prepared depth:** remaining prepared own moves averaged over entry routes and opponent replies. It includes an available own move at entry and compatible continuations from other chapters, with no discount or cutoff.',
+             '- **Equivalent gap reach:** `sqrt(sum(p_i ** 2))`, where `p_i` is the probability of first reaching an exact position with no prepared own reply. All transposed arrivals to the same gap are combined before squaring. Its square is the probability that two independent modeled games first encounter the same gap; the value itself is the reach of one gap with that repeat probability. Lower values mean gaps are less concentrated or less likely. Prepared endpoints use their cached opponent response table, and replies that transpose into preparation continue through the merged graph. Terminal games produce no gap. No unprepared child tables are fetched. All known gap probabilities are included, without sparse filtering, a depth cutoff, or normalization over gaps. Missing response distributions, unnamed residuals, and closed canonical cycles leave unresolved probability; displayed bounds allow that mass to spread over unseen gaps or join the largest known gap. These are conditional bounds, not sampling confidence intervals. Chapter equivalent gap reach uses the same normalized first-entry mixture and comparison policy as its score. Weighted gap reach contribution is chapter entry probability times its equivalent gap reach after entry. Chapters and gap boards overlap, and the square-root calculation is nonlinear, so these contributions are not additive. This gap walk can continue beyond the stopping point used for scores and prepared depth.',
              '- **Vulnerability drag:** local drag is the before score minus the after score, in percentage points. Opponent weighted drag multiplies this by reply reach. Our move drag is parent database score minus repertoire continuation score after the selected move, without a reach multiplier. Own strengths use the opposite difference. CP delta always subtracts before from after, so its sign is opposite to positive drag. The benchmarks differ. Nested rows overlap; drag is a screen, not an additive decomposition or promised gain. Cached alternatives are ranked observed outcomes, not recommendations.',
              '- **Position contribution:** reach × score, in percentage points, across all reached prepared positions and first unprepared opponent replies. Prepared positions use the repertoire continuation score; unprepared replies use the cached parent-row score or recorded endpoint database score. Exact transpositions share one board. Boards before guaranteed own replies and the standard starting board are omitted, as in common positions. These rows carry overlapping downstream results, so they must not be summed and are not a decomposition or a measure of improvement. Chapter values are conditional on entry. Unresolved scores are excluded. The separate stopping-outcome ledger in JSON remains additive because each modeled game stops once. † marks pooled parent counts that may overlap.',
              '- **Reuse:** over N independent games, an own decision with probability p has Np expected encounters and probability 1−(1−p)^N of appearing at least once. Exact transpositions share a memorization decision. This measures exposure, not retention. Chapter curves mean games entering that chapter.',
@@ -759,11 +789,13 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             ['Sparse-score sensitivity', ' to '.join(map(percentage, o['sparse_sensitivity'])), cp_interval(o['sparse_sensitivity'])]])
         text += table(['Stopping type', 'Probability'], [[k.replace('_', ' ').capitalize(), percentage(v)] for k, v in o['masses'].items()])
         text += ['</details>', '']
+        text += gap_section(characters.get('overall'))
         text += common_positions_section([b], position_top)
         text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
         text += section(f'### {color.title()} chapters ({len(r["chapters"])})', f'{color}-chapters')
-        text += ['Entry probability is the chance of first reaching any position in a chapter through any move order; all other metrics below are conditional on that entry. '
-                 'Alternative chapters use their own comparison policy. Chapters can overlap.', '', *chapter_table(r, refs)]
+        text += ['Entry probability is the chance of first reaching any position in a chapter through any move order. Scores, baselines, depth, and equivalent gap reach after entry are conditional on that entry. '
+                 'Weighted gap reach contribution is chapter entry probability times equivalent gap reach after entry. '
+                 'Alternative chapters use their own comparison policy. Chapters and gap positions can overlap, so weighted contributions are not additive.', '', *chapter_table(r, refs)]
         text += vulnerabilities_section(b.get('vulnerabilities', {}).get('overall'), refs, top)
         text += strengths_section(b.get('vulnerabilities', {}).get('overall'), characters.get('overall'), refs, top,
                                   sparse_threshold=r['manifest']['sparse_threshold'])
@@ -793,6 +825,8 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             if c.get('policy_overrides'):
                 text += [f"**Alternative comparison.** Region reach under the overall policy: {percentage(s.get('overall_policy_entry_probability'))}.", '']
             char = characters.get(cid)
+            text += [f"Equivalent gap reach after entry **{gap_percentage(c.get('gap_coverage'))}**; "
+                     f"weighted gap reach contribution **{gap_percentage(c.get('gap_coverage'), weighted=True)}**.", '']
             if char and 'reuse' in char:
                 text += [f"{char['reuse']['reachable_distinct_decisions']} distinct own decisions; {number(char['predictability']['effective_replies'])} effective replies; "
                          f"{number(char['position_profiles']['all']['effective_pawn_structures'])} effective boundary pawn structures.", '']
@@ -831,6 +865,9 @@ def summary_report(bundles, full_path, correlations, correlation_reason):
         char = scope_by_id(b.get('character')).get('overall', {})
         moves = b.get('vulnerabilities', {}).get('overall', {})
         text += [f'## {color.title()} repertoire', '']
+        text += [f"**Equivalent gap reach: {gap_percentage(char.get('gap_coverage'))}.** "
+                 'One gap with this reach would produce the same repeat probability as all first unprepared positions combined. '
+                 f'[Definition]({Path(full_path).name}#methods).', '']
         own_bad = own_priorities(moves.get('rankings', {}).get('own', []))
         own_good = own_priorities(moves.get('strengths', []), strongest=True)
         text += ['Own comparisons below rank by reach × local gain or drag. They include the full prepared continuation and overlap; '
@@ -879,7 +916,8 @@ def summary_report(bundles, full_path, correlations, correlation_reason):
             text += [f"{reuse['reachable_distinct_decisions']} distinct own decisions; **{number(p['effective_replies'])} effective opponent replies**. "
                      + (f"After 100 modeled games, expect to encounter about {number(curve['expected_distinct_decisions'], 0)} of those decisions." if curve else ''), '']
         text += ['<details>', f'<summary>All {len(r["chapters"])} {color.title()} chapters</summary>', '',
-                 'Chapter reach counts first arrival at any chapter position across all transposed routes. Scores, entry baselines, and depth are conditional on that entry; chapters overlap.', '',
+                 'Chapter reach counts first arrival at any chapter position across all transposed routes. Scores, entry baselines, depth, and equivalent gap reach after entry are conditional on that entry. '
+                 'Weighted gap reach contribution multiplies the conditional value by chapter reach. These contributions overlap and are not additive.', '',
                  *chapter_table(r, refs), '</details>', '']
     text += ['Positive gain and delta are favorable; positive drag is a deficit. Own-move gains and deficits compare the full prepared continuation with the parent database score. '
              'Opponent drag weights the drop from its parent repertoire value by reply reach. These overlapping comparisons cannot be added.', '',

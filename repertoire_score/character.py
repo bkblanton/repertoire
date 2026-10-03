@@ -14,6 +14,7 @@ from .graph import key, parse
 from .model import score
 from .preparation import Evaluator, chess_facts, position_lines, stopping_rows
 from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE
+from .gaps import distribution as gap_distribution
 
 
 DEFAULT_GAMES = (10, 50, 100, 500)
@@ -237,7 +238,7 @@ def position_reach_rows(evaluator, starts, reach, lines):
     return sorted(rows.values(), key=lambda r: (-r['reach'], len(r['line'].split()), r['line'], r['position']))
 
 
-def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES):
+def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probability=1.0):
     reach = evaluator.reaches(starts)
     value = evaluator.evaluate(starts)
     decisions = []
@@ -258,6 +259,7 @@ def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES):
         profiles[kind] = position_profile([r for r in stops if r['type'] == kind], evaluator.color)
     unknown = sum(r['reach'] for r in stops if r['type'] == 'unresolved_distribution')
     return dict(positions=position_reach_rows(evaluator,starts,reach,lines),
+                gap_coverage=gap_distribution(evaluator, starts, entry_probability),
                 reuse=reuse, predictability=predictability_metrics(evaluator,reach,lines),
                 position_profiles=profiles, stopping_outcomes=stops,
                 unresolved_opponent_distribution_mass=unknown,
@@ -307,7 +309,7 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
             continue
         evaluator = Evaluator(graph,color,evidence,facts,manifest['configuration'].get('policy',{}),
                               chapter=scope['chapter'],sparse=manifest['sparse_threshold'])
-        scope.update(scope_metrics(evaluator,scope['starts'],lines,games))
+        scope.update(scope_metrics(evaluator,scope['starts'],lines,games,scope['entry_probability']))
         validation = scope['validation']
         for actual, desired in [(validation['resolved_score'],expected['resolved_contribution']),
                                 (validation['unresolved_score_mass'],expected['unresolved_mass'])]:
@@ -323,7 +325,9 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
                 report_path=str(path.resolve()),report_sha256=hashlib.sha256(source_bytes).hexdigest(),
                 input_path=str(source),input_sha256=manifest['input_sha256'],filters=manifest['filters'],
                 cache_only=True,network_requests=0,evidence=explorer.provenance,uncached_positions=missing,
-                games=list(games),source_pgn_unchanged=True))
+                games=list(games),source_pgn_unchanged=True, gap_schema_version=1,
+                gap_definition='First unanswered own-turn board under the selected policy, including cached opponent replies after prepared endpoints and all exact transpositions. Aggregate first-exit mass by board before sqrt(sum(p**2)); unknown distributions remain bounded.',
+                weighted_gap_definition='Chapter entry probability multiplied by conditional equivalent gap reach. Entry weights and comparison policy match the chapter score. Overlapping chapters and shared gap boards make these weights non-additive.'))
     return enrich(result, graph)
 
 
