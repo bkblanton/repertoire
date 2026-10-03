@@ -48,6 +48,9 @@ def test_known_branching_entropy_and_depth(tmp_path):
     assert reply['games_source'] == 'parent_move_rows' and reply['repertoire_score'] is None
     parent = ranked[position('e4 e5 Nf3')]
     assert parent['repertoire_score'] == pytest.approx(.22)  # continuing our preparation
+    assert parent['outcomes']['win_probability'] == pytest.approx(.22)
+    assert parent['outcomes']['sharpness'] == pytest.approx(68.64)
+    assert reply['outcomes']['sharpness'] == pytest.approx(84.)
     assert parent['database_score'] == pytest.approx(.38)  # unconstrained database games
     assert parent['games'] == 100
     leaf = ranked[position('e4 e5 Nf3 Nc6 Bb5')]
@@ -195,6 +198,10 @@ def test_transposed_unprepared_reply_combines_reach_and_chapter_context(tmp_path
     assert replies[0]['database_score'] == pytest.approx((.2*.2 + .45*(70/75))/.65)
     assert replies[0]['games'] == 125
     assert replies[0]['counts_white_draw_black'] == [80,0,45]
+    expected_win = (.2 * .2 + .45 * (70 / 75)) / .65
+    assert replies[0]['outcomes']['win_probability'] == pytest.approx(expected_win)
+    assert replies[0]['outcomes']['sharpness'] == pytest.approx(400 * expected_win * (1 - expected_win))
+    assert replies[0]['outcomes']['win_probability'] != pytest.approx(80 / 125)  # pooled counts have different weights
     assert sum(o['reach'] for o in replies[0]['unprepared_origins']) == pytest.approx(.65)
     board = chess.Board()
     import re
@@ -217,6 +224,9 @@ def test_position_scores_and_parent_reply_counts_use_black_perspective(tmp_path)
                            {g.roots[0]:1}, {k:'' for k in g.nodes})
     rows = {r['position']:r for r in result['positions']}
     assert rows[parent]['repertoire_score'] == pytest.approx(.8*.7+.2*.35)
+    assert rows[parent]['outcomes']['win_probability'] == pytest.approx(.54)
+    assert rows[parent]['outcomes']['draw_probability'] == pytest.approx(.18)
+    assert rows[parent]['outcomes']['sharpness'] == pytest.approx(75.24)
     assert rows[parent]['database_score'] == pytest.approx(.35)
     assert rows[parent]['games'] == 100
     reply = position('e4 c5 d4')

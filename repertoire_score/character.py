@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 
 import chess
+import numpy as np
 
 from .explorer import Explorer, counts
 from .graph import key, parse
@@ -15,6 +16,7 @@ from .model import score
 from .preparation import Evaluator, chess_facts, position_lines, stopping_rows
 from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE
 from .gaps import distribution as gap_distribution
+from .sharpness import recursive_wdl, scope_outcomes, stopping_wdl, summarize as summarize_outcomes
 
 
 DEFAULT_GAMES = (10, 50, 100, 500)
@@ -154,8 +156,10 @@ def position_profile(stops, color):
                 effective_pawn_structures=2**entropy(p/mass for p in categories['pawn_structure'].values()) if mass else None)
 
 
-def position_reach_rows(evaluator, starts, reach, lines):
+def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
     """Canonical reached boards, including the first unprepared opponent reply."""
+    if wdl_values is None:
+        wdl_values = recursive_wdl(evaluator)
     paths, boards, best = {}, {}, {}
     for k, weight in starts.items():
         if weight <= 0: continue
@@ -196,13 +200,14 @@ def position_reach_rows(evaluator, starts, reach, lines):
                        to_move='white' if evaluator.facts[k]['turn'] else 'black', kind=kind,
                        is_starting_position=k == key(chess.Board()),
                        repertoire_score=float(value[0]) if value[1] == 0 else None,
+                       outcomes=summarize_outcomes(wdl_values[k]),
                        database_score=score(sample, evaluator.color) if sample is not None else None,
                        games=sum(sample) if sample is not None else None,
                        games_source='position' if sample is not None else 'unavailable',
                        counts_white_draw_black=sample)
     # The cached parent table supplies both the reply and its probability. No
     # evidence for the reached child board, or for its next moves, is requested.
-    deviation_best = {}
+    deviation_best, deviation_wdl = {}, {}
     for k, mass in reach.items():
         if mass <= 0: continue
         for move, probability, kind, sample, fixed in evaluator.stops[k]:
@@ -223,8 +228,12 @@ def position_reach_rows(evaluator, starts, reach, lines):
             row['database_score'] += branch_reach * database_score
             row['games'] += sum(sample)
             row['counts_white_draw_black'] = [a+b for a,b in zip(row['counts_white_draw_black'],sample)]
+            local_wdl = stopping_wdl(sample, evaluator.color, fixed)
+            deviation_wdl.setdefault(target, np.zeros(4))
+            deviation_wdl[target] += branch_reach * local_wdl
             row['unprepared_origins'].append(dict(parent_position=k, move=move, reach=branch_reach,
-                database_score=database_score, games=sum(sample), counts_white_draw_black=sample))
+                database_score=database_score, games=sum(sample), counts_white_draw_black=sample,
+                outcomes=summarize_outcomes(local_wdl)))
             route_mass = best[k] * probability
             if route_mass > deviation_best.get(target, -1):
                 row['line'] = path
@@ -232,6 +241,7 @@ def position_reach_rows(evaluator, starts, reach, lines):
     for row in rows.values():
         if row.get('unprepared_origins'):
             row['database_score'] /= row['reach']
+            row['outcomes'] = summarize_outcomes(deviation_wdl[row['position']] / row['reach'])
         if row['reach'] > 1 + 1e-10:
             raise AssertionError('Canonical position revisited in an acyclic graph')
         row['reach'] = min(1., row['reach'])
@@ -258,7 +268,9 @@ def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probabili
     for kind in sorted({r['type'] for r in stops}):
         profiles[kind] = position_profile([r for r in stops if r['type'] == kind], evaluator.color)
     unknown = sum(r['reach'] for r in stops if r['type'] == 'unresolved_distribution')
-    return dict(positions=position_reach_rows(evaluator,starts,reach,lines),
+    wdl_values = recursive_wdl(evaluator)
+    return dict(positions=position_reach_rows(evaluator,starts,reach,lines,wdl_values),
+                outcomes=scope_outcomes(evaluator, starts, wdl_values),
                 gap_coverage=gap_distribution(evaluator, starts, entry_probability),
                 reuse=reuse, predictability=predictability_metrics(evaluator,reach,lines),
                 position_profiles=profiles, stopping_outcomes=stops,
@@ -325,7 +337,10 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
                 report_path=str(path.resolve()),report_sha256=hashlib.sha256(source_bytes).hexdigest(),
                 input_path=str(source),input_sha256=manifest['input_sha256'],filters=manifest['filters'],
                 cache_only=True,network_requests=0,evidence=explorer.provenance,uncached_positions=missing,
-                games=list(games),source_pgn_unchanged=True, gap_schema_version=1,
+                games=list(games),source_pgn_unchanged=True, gap_schema_version=1, outcome_schema_version=1,
+                position_outcome_schema_version=1,
+                outcome_definition='Owner-relative WDL propagated through the exact score policy and stopping rules, including transpositions, cached parent-row deviations and weighted first entries. Missing outcomes remain unresolved.',
+                sharpness_definition='400 * (W + D/4 - (W + D/2)**2), normalized outcome variance on a 0-100 scale. Mix WDL before calculating sharpness; no priors or new API requests.',
                 gap_definition='First unanswered own-turn board under the selected policy, including cached opponent replies after prepared endpoints and all exact transpositions. Aggregate first-exit mass by board before sqrt(sum(p**2)); unknown distributions remain bounded.',
                 weighted_gap_definition='Chapter entry probability multiplied by conditional equivalent gap reach. Entry weights and comparison policy match the chapter score. Overlapping chapters and shared gap boards make these weights non-additive.'))
     return enrich(result, graph)

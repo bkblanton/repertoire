@@ -10,6 +10,7 @@ from repertoire_score.character import analyze as character
 from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_equivalent, common_positions_for_scope, common_positions_section,
     combined_overall, cp, cp_change, elo_equivalent, generate, line, load, non_sparse_rows,
     position_contributions, strengths_section, summary_report, vulnerabilities_section)
+from repertoire_score.consolidated import sharpness_display
 from repertoire_score.preparation import analyze as preparation
 from repertoire_score.vulnerabilities import analyze as vulnerabilities
 from test_chapter_policies import run_fixture
@@ -91,6 +92,24 @@ def test_gap_display_keeps_unknown_reach_bounded():
     assert gap_percentage(dict(equivalent_gap_reach=0.)) == '0.00%'
     assert gap_percentage(dict(equivalent_gap_reach_bounds=[.1, .2])) == '10.00% to 20.00% (bounds)'
     assert gap_percentage(dict(weighted_equivalent_gap_reach_bounds=[.02, .04]), weighted=True) == '2.00% to 4.00% (bounds)'
+
+
+def test_recursive_sharpness_in_overall_and_every_chapter(complete):
+    from repertoire_score.consolidated import number
+    path, report = complete
+    bundle = generate([path])[0]
+    full = (path.parent / 'report.md').read_text(encoding='utf-8')
+    summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
+    assert '| Sharpness |' in full and '| Sharpness |' in summary
+    assert '**Repertoire sharpness:**' in full
+    scopes = {s['id']: s for s in bundle['character']['scopes']}
+    for sid, score in [('overall', bundle['report']['overall']),
+                       *[(c['id'], c['score']) for c in bundle['report']['chapters']]]:
+        outcomes = score['outcomes']
+        assert outcomes == scopes[sid]['outcomes']
+        assert outcomes['win_probability'] + outcomes['draw_probability'] / 2 == pytest.approx(score['raw_empirical_score'])
+        if sid != 'overall':
+            assert f"sharpness **{number(outcomes['sharpness'])}%**" in full
 
 
 @pytest.mark.parametrize('field', ['report_sha256', 'input_sha256', 'filters', 'color'])
@@ -288,6 +307,32 @@ def test_every_score_table_has_direct_cp_and_comparisons_have_cp_delta(complete)
         check_score_tables((path.parent/name).read_text(encoding='utf-8'))
 
 
+def test_all_repertoire_score_tables_show_matching_sharpness(complete):
+    path, _ = complete
+    bundles = generate([path])
+    for filename in ('report.md', 'summary.md'):
+        text = (path.parent / filename).read_text(encoding='utf-8')
+        for block in re.findall(r'(?m)(?:^\|.*\|\n)+', text):
+            rows = [[c.strip() for c in row.strip().strip('|').split('|')] for row in block.splitlines()]
+            headers = rows[0]
+            for score_header, sharpness_header in [('Repertoire score', 'Sharpness'),
+                    ('Before reply (repertoire)', 'Before sharpness'), ('After reply (repertoire)', 'After sharpness')]:
+                if score_header not in headers:
+                    continue
+                assert sharpness_header in headers
+                for row in rows[2:]:
+                    if re.search(r'\d+\.\d+%', row[headers.index(score_header)]):
+                        assert re.fullmatch(r'\d+\.\d+%', row[headers.index(sharpness_header)])
+            if 'Position type' in headers and 'Score' in headers:
+                assert 'Sharpness' in headers
+    for scope in [bundles[0]['vulnerabilities']['overall'], *bundles[0]['vulnerabilities']['chapters']]:
+        for row in scope['all_signed_rows']:
+            if row['move_outcomes']:
+                assert row['move_outcomes']['resolved_score'] == pytest.approx(row['move_score'])
+            if row['kind'] == 'opponent' and row['reference_outcomes']:
+                assert row['reference_outcomes']['resolved_score'] == pytest.approx(row['reference_score'])
+
+
 def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta(complete):
     path, _ = complete
     bundle = load([path])[0]
@@ -299,7 +344,7 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     scope = dict(id='overall', rankings={'own': [], 'opponent': [
         dict(common, line='Prepared reply', prepared=True), dict(common, line='Unprepared reply', prepared=False)]})
     full = '\n'.join(vulnerabilities_section(scope, refs, 10))
-    expected = f'| 57.50% | {cp(.575)} | 52.50% | {cp(.525)} | {cp_change(.525, .575)} | 5.00% | 0.1000% |'
+    expected = f"| 57.50% | {cp(.575)} | {sharpness_display(common.get('reference_outcomes'))} | 52.50% | {cp(.525)} | {sharpness_display(common.get('move_outcomes'))} | {cp_change(.525, .575)} | 5.00% | 0.1000% |"
     assert full.count(expected) == 2
     assert full.count('| CP delta | Drag | Weighted drag |') == 2
     assert centipawn_delta(.525, .575) < 0
@@ -425,6 +470,18 @@ def test_incompatible_color_scopes_are_not_combined():
     assert 'standard starting position' in combined_overall([white, black])['unavailable']
 
 
+def test_combined_sharpness_uses_owner_relative_wdl_mixture():
+    from repertoire_score.sharpness import summarize
+    white = score_bundle('white', 1., .5, 1, 1, 1000)
+    black = score_bundle('black', 0., .5, 1, 1, 1)
+    white['report']['overall']['outcomes'] = summarize([1., 0., 0., 0.])
+    black['report']['overall']['outcomes'] = summarize([0., 0., 1., 0.])
+    outcomes = combined_overall([white, black])['outcomes']
+    assert outcomes['win_probability'] == outcomes['loss_probability'] == .5
+    assert outcomes['sharpness'] == 100.  # both separate sharpness values are zero
+    assert outcomes['resolved_score'] == .5
+
+
 def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypatch):
     from types import SimpleNamespace
     from repertoire_score import __main__ as cli
@@ -467,8 +524,8 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     assert full.index('## White repertoire') < full.index('### Most common positions') < full.index('### Vulnerabilities')
     assert not re.search(r'^## Most common positions$',full,flags=re.M)
     block = full.split('### Most common positions', 1)[1].split('### White chapters', 1)[0]
-    assert '| Position (representative line) | Chapter source | Reach in repertoire | Avg games per encounter | Repertoire score | Score CP | Games at position / reply |' in block
-    assert '| 1. e4 |' in block and f'| 100.00% | 1.0 | 40.00% | {cp(.4)} | 100 |' in block
+    assert '| Position (representative line) | Chapter source | Reach in repertoire | Avg games per encounter | Repertoire score | Score CP | Sharpness | Games at position / reply |' in block
+    assert '| 1. e4 |' in block and f"| 100.00% | 1.0 | 40.00% | {cp(.4)} | {sharpness_display(bundles[0]['report']['overall']['outcomes'])} | 100 |" in block
     assert '(PGN root)' not in block
     assert '1. e4' in block and '100.00%' in block
     assert '| 1. e4 e6 |' not in block
@@ -510,8 +567,8 @@ def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoi
     assert 'e4 c5' in unprepared and 'e4 e5 Nf3' not in unprepared
     assert 'e4 d5<br>White to move; no prepared reply' in unprepared
     assert 'e4 d5' not in prepared
-    assert '| Repertoire score | Score CP | Games at position / reply |' in prepared and f'| 60.00% | {cp(.6)} | 1,234 |' in prepared
-    assert '| Database score | Score CP | Games at position / reply |' in unprepared and f'| 45.00% | {cp(.45)} | 1,234† |' in unprepared
+    assert '| Repertoire score | Score CP | Sharpness | Games at position / reply |' in prepared and f'| 60.00% | {cp(.6)} | unavailable | 1,234 |' in prepared
+    assert '| Database score | Score CP | Sharpness | Games at position / reply |' in unprepared and f'| 45.00% | {cp(.45)} | unavailable | 1,234† |' in unprepared
     # Filter before the limit: the lower-frequency unprepared reply still appears.
     limited = '\n'.join(common_positions_section([bundle],1))
     assert 'e4 e5 Nf3' in limited and 'e4 c5' in limited and 'e4 e6 d4' not in limited
