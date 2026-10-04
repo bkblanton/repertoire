@@ -218,11 +218,12 @@ def database_samples(data, position, chosen, color, simulations, prior, seed):
     return parent, selected
 
 
-def add_recursive_spreads(value, saved, supporting, graph, evidence):
+def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None):
     """Add position, reply, chapter and opening spreads to one matching snapshot."""
     color = saved['color'] == 'white'
     manifest = saved['manifest']
-    facts = chess_facts(graph, color, evidence)
+    if facts is None:
+        facts = chess_facts(graph, color, evidence)
     characters = {s['id']: s for s in supporting['character']['scopes']}
     preparations = {s['id']: s for s in supporting['preparation']['scopes']}
     comparisons = supporting['vulnerabilities']
@@ -429,7 +430,7 @@ def analyze(path, cache='.cache/explorer'):
             spread_definition='Weighted standard deviation of stopping-event expected scores. Total variance equals between-canonical-position variance plus within-position incoming-evidence-cohort variance. No cutoff, sparse filter, prior or tunable parameter.'),
         validation=dict(source_pgn_unchanged=True, saved_scores_reproduced=True,
                         transposed_variance_decomposition=True, own_gain_decomposition=True))
-    return add_recursive_spreads(result, saved, supporting, graph, evidence)
+    return add_recursive_spreads(result, saved, supporting, graph, evidence, facts)
 
 
 def main():

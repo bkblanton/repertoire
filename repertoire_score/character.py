@@ -2,6 +2,7 @@
 import argparse
 from collections import defaultdict
 from datetime import datetime, timezone
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -108,6 +109,12 @@ def pawn_properties(board, color):
 
 
 def board_fingerprint(position, color):
+    categories, features = _board_fingerprint(position, color)
+    return dict(categories), dict(features)
+
+
+@lru_cache(maxsize=32768)
+def _board_fingerprint(position, color):
     board = chess.Board(position + ' 0 1')
     own, opponent = pawn_properties(board, color), pawn_properties(board, not color)
     queens = (bool(board.pieces(chess.QUEEN, color)), bool(board.pieces(chess.QUEEN, not color)))
@@ -131,7 +138,7 @@ def board_fingerprint(position, color):
     features = {f'{side}_{feature}': value for side, props in [('own',own),('opponent',opponent)] for feature,value in props.items()}
     features.update(own_bishop_pair=len(board.pieces(chess.BISHOP,color)) >= 2,
                     opponent_bishop_pair=len(board.pieces(chess.BISHOP,not color)) >= 2)
-    return categories, features
+    return tuple(categories.items()), tuple(features.items())
 
 
 def position_profile(stops, color):

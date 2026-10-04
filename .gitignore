@@ -211,3 +211,4 @@ __marimo__/
 .uv-python/
 .cache/
 lichess_token.txt
+reports/data/.build-state.json

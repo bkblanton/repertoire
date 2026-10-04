@@ -1,9 +1,24 @@
 """Generate one consolidated report and summary from saved JSON, offline."""
 import argparse
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from .consolidated import generate
 from .layout import report_directory
+
+
+_deferred = ContextVar('deferred_report_render', default=False)
+
+
+@contextmanager
+def defer_report_outputs():
+    """A batch owns the final render; standalone commands still render eagerly."""
+    token = _deferred.set(True)
+    try:
+        yield
+    finally:
+        _deferred.reset(token)
 
 
 def load_report(path):
@@ -23,6 +38,8 @@ def render_reports(paths, summary_path):
 
 def update_report_outputs(result_path):
     """Register the latest result per color in this folder and refresh all outputs."""
+    if _deferred.get():
+        return
     result_path = Path(result_path)
     report = load_report(result_path)
     directory = result_path.parent

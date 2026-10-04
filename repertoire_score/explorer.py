@@ -5,6 +5,8 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from contextlib import contextmanager
+from contextvars import ContextVar
 import chess
 import httpx
 
@@ -12,6 +14,19 @@ ENDPOINT = "https://explorer.lichess.org/lichess"
 DEFAULT_FILTERS = {"variant": "standard", "speeds": "blitz,rapid,classical",
                    "ratings": "0,1000,1200,1400,1600,1800,2000,2200,2500",
                    "since": "1952-01", "until": "3000-12"}
+
+_cache_observer = ContextVar('explorer_cache_observer', default=None)
+
+
+@contextmanager
+def observe_cache():
+    """Track actual table dependencies, including misses, without storing data."""
+    paths = set()
+    token = _cache_observer.set(paths)
+    try:
+        yield paths
+    finally:
+        _cache_observer.reset(token)
 
 
 def counts(row):
@@ -65,6 +80,9 @@ class Explorer:
         identity = {"endpoint": ENDPOINT, "query": query}
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         path = self.cache / (digest+".json")
+        observer = _cache_observer.get()
+        if observer is not None:
+            observer.add(path.resolve())
         if path.exists() and not self.refresh:
             entry = json.loads(path.read_text(encoding="utf-8"))
             if entry["identity"] != identity:

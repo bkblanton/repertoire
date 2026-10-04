@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import chess
 import chess.pgn
+from .board_cache import geometry
 
 
 def key(board):
@@ -88,10 +89,10 @@ def resolve(graph, color, policy):
     """Explicit overrides, otherwise first PGN move in first chapter order."""
     transitions = {}
     for k, n in graph.nodes.items():
-        board = chess.Board(n.fen)
-        if board.is_checkmate() or board.is_stalemate() or board.is_insufficient_material():
+        facts = geometry(k)
+        if facts.outcome is not None:
             transitions[k] = {}
-        elif board.turn == color:
+        elif facts.turn == color:
             if not n.edges:
                 transitions[k] = {}
                 continue
@@ -106,12 +107,9 @@ def resolve(graph, color, policy):
             # Even the last prepared own move has cached opponent replies.
             # An immediate reply into any known board resumes preparation.
             transitions[k] = {m: (target, None) for m, target in n.edges.items()}
-            for move in board.legal_moves:
-                after = board.copy()
-                after.push(move)
-                target = key(after)
+            for move, target in facts.moves:
                 if target in graph.nodes:
-                    transitions[k][move.uci()] = (target, None)
+                    transitions[k][move] = (target, None)
     return transitions
 
 

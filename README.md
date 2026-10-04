@@ -21,6 +21,16 @@ uv run pytest -q
 
 If Windows prevents uv from accessing its default cache or managed Python folder, set `UV_CACHE_DIR` and `UV_PYTHON_INSTALL_DIR` to writable directories before running uv. A compatible installed interpreter can be specified with `uv sync --python C:/path/to/python.exe`.
 
+For a complete White and Black refresh, use the incremental batch:
+
+```powershell
+./run-repertoires.ps1 -WhitePgn 'C:/path/to/white.pgn' -BlackPgn 'C:/path/to/black.pgn' -TokenFile 'C:/path/to/lichess_token.txt'
+# Reuse cached evidence without a token or network:
+uv run repertoire-build 'C:/path/to/white.pgn' 'C:/path/to/black.pgn' --offline
+```
+
+The batch runs in one Python process, shares immutable board calculations, and renders the consolidated files once after all analyses succeed. Its first run establishes checkpoints. Subsequent runs reuse each unchanged color and analysis separately, checking PGN and configuration contents, numerical settings, program and dependency versions, relevant Explorer cache files (including previously missing tables), supporting analyses, and output contents. Unrelated cache additions do not invalidate results. Presentation changes only require rendering. Failed stages remain pending and successful stages can be resumed. Timings are saved in `reports/data/.build-state.json`. Use `--force` or the wrapper's `-Force` to rebuild every stage; this reuses cached evidence and does not refresh Lichess tables. Standalone analysis commands retain their automatic report updates.
+
 ## Configuration
 
 All ratings are selected explicitly: 0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500. Speeds are blitz, rapid and classical, with the full supported date range. The API covers indexed rated games, not every game ever played on Lichess. These defaults follow the [official Explorer endpoint specification](https://github.com/lichess-org/api/blob/master/doc/specs/tags/openingexplorer/lichess.yaml).

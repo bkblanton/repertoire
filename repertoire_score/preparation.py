@@ -13,6 +13,7 @@ from .graph import key, parse
 from .model import outcome, score
 from .attribution import enrich
 from .insights import depth_distribution, first_entry_examples
+from .board_cache import geometry, owner_outcome
 
 
 class MissingEvidence(ValueError):
@@ -148,17 +149,14 @@ class Evaluator:
 def chess_facts(graph, color, evidence):
     result = {}
     for k,n in graph.nodes.items():
-        board = chess.Board(n.fen)
+        facts = geometry(k)
+        targets = dict(facts.moves)
         afters = {}
-        possible = set()
-        for move in board.legal_moves:
-            after = board.copy(); after.push(move)
-            target = key(after)
-            if target in graph.nodes: possible.add(target)
+        possible = {target for target in targets.values() if target in graph.nodes}
         for row in evidence.get(k, {}).get('moves', []):
-            after = board.copy(); after.push_uci(row['uci'])
-            afters[row['uci']] = key(after), outcome(after, color)
-        result[k] = dict(turn=board.turn, outcome=outcome(board, color), after=afters, possible_targets=possible)
+            target = targets[row['uci']]
+            afters[row['uci']] = target, owner_outcome(target, color)
+        result[k] = dict(turn=facts.turn, outcome=owner_outcome(k, color), after=afters, possible_targets=possible)
     return result
 
 

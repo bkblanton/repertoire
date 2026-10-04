@@ -1165,6 +1165,8 @@ def openings_section(bundle, refs, compact=False):
     reached = {row['id']: row for row in rows}
     catalog = {row['id']: row for row in data['catalog']}
     sparse = bundle['report']['manifest']['sparse_threshold']
+    scope = scope_by_id(bundle.get('character')).get('overall', {})
+    positions = visible_positions(scope)
     for row in rows:
         text += section('#### ' + escape(row['name']) + ' (' + escape(row['eco']) + ')', anchors[row['id']])
         parents = [p for p in row['parent_ids'] if p in reached]
@@ -1184,8 +1186,7 @@ def openings_section(bundle, refs, compact=False):
                        'Entry baseline', 'Baseline CP', 'Repertoire score', 'Score CP', 'Score spread', 'Entry games', 'Evidence source',
                        'Avg opponent rating', 'Rating Δ vs parent'], values)
         origins = []
-        scope = scope_by_id(bundle.get('character')).get('overall', {})
-        for position in visible_positions(scope):
+        for position in positions:
             origin = data['positions'].get(position['position'], {})
             contribution = origin.get('opening_reach_contributions', {}).get(row['id'], 0.)
             if contribution:

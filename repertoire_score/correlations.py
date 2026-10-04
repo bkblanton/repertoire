@@ -95,10 +95,13 @@ def report_rows(path):
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError(f'PGN differs from saved report; reanalyze before clustering: {source}')
     graph = parse(source, manifest['configuration'].get('exclude', []))
-    rows, position_sets = [], []
+    rows, position_sets, policies = [], [], {}
     for chapter in report['chapters']:
-        chapter_transitions = resolve(graph, color=='white', dict(manifest['configuration'].get('policy', {}),
-                                                                  **chapter.get('policy_overrides', {})))
+        overrides = chapter.get('policy_overrides', {})
+        identity = json.dumps(overrides, sort_keys=True)
+        if identity not in policies:
+            policies[identity] = resolve(graph, color=='white', dict(manifest['configuration'].get('policy', {}), **overrides))
+        chapter_transitions = policies[identity]
         score, baseline = chapter['score'], chapter['entry_baseline']
         row = dict(color=color, id=chapter['id'], name=chapter['name'], family=chapter['name'].split(':')[0],
                    depth=score['prepared_depth']['expected_moves'], delta=baseline['difference_pp'],
