@@ -25,6 +25,7 @@ repertoire-character = "repertoire_score.character:main"
 repertoire-ratings = "repertoire_score.ratings:main"
 repertoire-openings = "repertoire_score.openings:main"
 repertoire-attribution = "repertoire_score.attribution:main"
+repertoire-insights = "repertoire_score.report_insights:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -17,9 +17,10 @@ from .correlations import METRICS, cell
 from .report import evidence_date, population_text
 from .layout import report_directory
 from .sharpness import FIELDS as OUTCOME_FIELDS, stopping_wdl, summarize as summarize_outcomes
+from .spread import mixture as spread_mixture
 
 
-FAMILIES = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings')
+FAMILIES = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights')
 LICHESS_WIN_CHANCE_COEFFICIENT = 0.00368208
 
 
@@ -158,6 +159,19 @@ def load(paths, strict=True, require_complete=False):
                         if set(m.get('supporting_sha256', {})) != {'preparation', 'character', 'vulnerabilities'}:
                             reason = 'missing rating provenance'
                             if strict: raise ValueError(f'{companion}: {reason}')
+                    if family == 'insights':
+                        if m.get('schema_version') != 1:
+                            reason = 'unsupported report insight schema'
+                        elif require_complete and m.get('recursive_spread_schema_version') != 1:
+                            reason = 'recursive score spread not generated; use repertoire-insights --refresh-spread'
+                        elif set(m.get('supporting_sha256', {})) != {'preparation', 'character', 'vulnerabilities', 'openings'}:
+                            reason = 'missing report insight provenance'
+                        elif any(name not in bundle or not path.with_suffix(f'.{name}.json').exists()
+                                 or hashlib.sha256(path.with_suffix(f'.{name}.json').read_bytes()).hexdigest() != digest
+                                 for name, digest in m['supporting_sha256'].items()):
+                            reason = 'supporting analysis changed since insight generation'
+                        if reason and strict:
+                            raise ValueError(f'{companion}: {reason}; regenerate report insights')
                     if reason is None:
                         bundle[family] = data
             if reason:
@@ -174,6 +188,7 @@ def load(paths, strict=True, require_complete=False):
             chapter['gap_coverage'] = gap_scopes.get(chapter['id'], {}).get('gap_coverage')
             chapter['score']['outcomes'] = gap_scopes.get(chapter['id'], {}).get('outcomes')
         attach_outcomes(bundle)
+        attach_insights(bundle)
         bundles.append(bundle)
     return sorted(bundles, key=lambda b: b['report']['color'] != 'white')
 
@@ -207,6 +222,7 @@ class Chapters:
         self.entries = {c['id']: (i, c) for i, c in enumerate(self.catalog, 1)}
         self.openings = openings or {}
         self.scope = 'overall'
+        self.compact = False
         self.source_scopes = {s['id']: s for s in self.openings.get('source_scopes', [])}
         self.opening_anchors = {r['id']: f'{self.color}-opening-{i}' for i, r in enumerate(self.openings.get('openings', []), 1)}
 
@@ -271,7 +287,17 @@ class Chapters:
             return 'None'
         if set(ids) == set(self.entries) and len(ids) > 2:
             return prefix + f'[All {len(ids)} {self.color.title()} chapters](#{self.color}-chapters)'
-        return prefix + ', '.join(self.label(cid) for cid in ids)
+        if not self.compact:
+            return prefix + ', '.join(self.label(cid) for cid in ids)
+        ordered = sorted(ids, key=lambda cid: self.entries.get(cid, (float('inf'),))[0])
+        groups = []
+        for cid in ordered:
+            if groups and cid in self.entries and groups[-1][-1] in self.entries and self.entries[cid][0] == self.entries[groups[-1][-1]][0] + 1:
+                groups[-1].append(cid)
+            else:
+                groups.append([cid])
+        return prefix + ', '.join(self.label(g[0]) + ('-' + self.label(g[-1]) if len(g) >= 3 else
+            (', ' + self.label(g[-1]) if len(g) == 2 else '')) for g in groups)
 
 
 def elo_equivalent(score, baseline):
@@ -327,6 +353,9 @@ def combined_overall(bundles):
     outcomes = [r['overall'].get('outcomes') for r in (white, black)]
     combined_outcomes = (summarize_outcomes([average([o[field] for o in outcomes]) for field in OUTCOME_FIELDS])
                          if all(outcomes) else None)
+    spreads = [r['overall'].get('branch_score_spread') for r in (white, black)]
+    combined_spread = (spread_mixture([(.5, spread) for spread in spreads], score)
+                       if all(s and 'within_stop_outcome_variance' in s for s in spreads) else None)
     return {'weights': {'white': .5, 'black': .5}, 'repertoire_score': score, 'starting_baseline': baseline,
             'difference_pp': None if score is None or baseline is None else 100 * (score - baseline),
             'elo_equivalent': elo_equivalent(score, baseline),
@@ -335,6 +364,7 @@ def combined_overall(bundles):
             'centipawn_delta': centipawn_delta(score, baseline),
             'expected_prepared_depth': average([r['overall'].get('prepared_depth', {}).get('expected_moves') for r in (white, black)]),
             'outcomes': combined_outcomes,
+            'branch_score_spread': combined_spread,
             'chapters': sum(len(r['chapters']) for r in (white, black))}
 
 
@@ -342,6 +372,17 @@ def sharpness_display(outcomes):
     if not outcomes:
         return 'unavailable'
     return score_points(outcomes.get('sharpness'))
+
+
+def spread_display(spread, immediate=True):
+    if not spread:
+        return 'unavailable'
+    result = percentage(spread.get('standard_deviation'))
+    if immediate and spread.get('immediate_standard_deviation') is not None:
+        result += '<br>Reply ' + percentage(spread['immediate_standard_deviation'])
+    elif immediate and spread.get('basis') == 'stopping score; no modeled future replies':
+        result += '<br>Prep ends'
+    return result
 
 
 def attach_outcomes(bundle):
@@ -365,7 +406,70 @@ def attach_outcomes(bundle):
                 row['move_outcomes'] = summarize_outcomes(stopping_wdl(row['counts_white_draw_black'], color, fixed))
 
 
-def overview(bundles):
+def attach_insights(bundle):
+    insights = scope_by_id(bundle.get('insights'))
+    characters = scope_by_id(bundle.get('character'))
+    bundle['report']['overall']['branch_score_spread'] = insights.get('overall', {}).get('branch_score_spread')
+    for chapter in bundle['report']['chapters']:
+        chapter['score']['branch_score_spread'] = insights.get(chapter['id'], {}).get('branch_score_spread')
+        chapter['entry_opening_sources'] = insights.get(chapter['id'], {}).get('entry_opening_sources', {})
+    for sid, scope in characters.items():
+        if sid in insights:
+            scope['gap_priorities'] = insights[sid]['gaps']
+            scope['branch_score_spread'] = insights[sid]['branch_score_spread']
+            for row in scope.get('positions', []):
+                row['branch_score_spread'] = insights[sid].get('position_spreads', {}).get(row['position'])
+    for row in bundle.get('openings', {}).get('openings', []):
+        added = bundle.get('insights', {}).get('opening_spreads', {}).get(row['id'], {})
+        row['branch_score_spread'] = added.get('branch_score_spread')
+        for entry in row['entries']:
+            entry['branch_score_spread'] = added.get('entries', {}).get(entry['position'])
+    for scope in [bundle.get('vulnerabilities', {}).get('overall', {}), *bundle.get('vulnerabilities', {}).get('chapters', [])]:
+        added = insights.get(scope.get('id', 'overall'), {}).get('moves', {})
+        rows = list(scope.get('all_signed_rows', [])) + list(scope.get('strengths', []))
+        for values in scope.get('rankings', {}).values():
+            rows.extend(values)
+        for row in rows:
+            row.update(added.get(row['id'], {}))
+
+
+def score_cell(value):
+    return percentage(value) + ' (' + cp(value) + ' cp)'
+
+
+def delta_cell(after, before, *, drag=False):
+    delta = None if after is None or before is None else 100 * (before-after if drag else after-before)
+    return score_points(delta, signed=True) + ' (' + cp_change(after, before) + ' cp)'
+
+
+def interval_cell(bounds):
+    return ' to '.join(score_points(v, signed=True) for v in bounds) if bounds else 'unavailable'
+
+
+def gain_split(row):
+    if row.get('database_move_gain_pp') is None:
+        return 'unavailable'
+    return ('Move ' + score_points(row['database_move_gain_pp'], signed=True) +
+            ' (' + cp_change(row.get('move_database_score'), row.get('reference_score')) + ' cp)<br>' +
+            'Prep ' + score_points(row['continuation_gain_pp'], signed=True) +
+            ' (' + cp_change(row.get('move_score'), row.get('move_database_score')) + ' cp)')
+
+
+def evidence_snapshot(bundles):
+    rows = []
+    for bundle in bundles:
+        overall = bundle['report']['overall']
+        def score_range(bounds):
+            return '<br>'.join(score_cell(v) for v in bounds) if bounds else 'unavailable'
+        rows.append([bundle['report']['color'].title(), score_range(overall.get('posterior', {}).get('credible_interval_95')),
+                     score_range(overall.get('sparse_sensitivity')), percentage(overall.get('sparse_mass'))])
+    return ['### Score uncertainty', '',
+            'Model intervals describe sampling under the saved population and priors. Sparse sensitivity lets flagged outcomes take any score from 0 to 1; '
+            'it is a separate evidence stress test. [Limits and definitions](#methods).', '',
+            *table(['Repertoire', 'Approximate 95% score interval', 'Sparse-evidence sensitivity', 'Sparse probability'], rows)]
+
+
+def overview(bundles, compact=False):
     rows = []
     for b in bundles:
         r = b['report']; o = r['overall']; base = r.get('starting_position_reference', {}).get('owner_score')
@@ -375,16 +479,21 @@ def overview(bundles):
         rows.append([r['color'].title(), percentage(base), cp(base), percentage(score), cp(score), score_points(delta, signed=True),
                      cp_change(score, base),
                      'unavailable' if elo is None else number(elo, signed=True),
-                     number(o.get('prepared_depth', {}).get('expected_moves')), sharpness_display(o.get('outcomes')), len(r['chapters'])])
+                     number(o.get('prepared_depth', {}).get('expected_moves')), spread_display(o.get('branch_score_spread'), False), len(r['chapters'])])
     combined = combined_overall(bundles)
     if combined and 'unavailable' not in combined:
         rows.append(['**Combined**', percentage(combined['starting_baseline']), cp(combined['starting_baseline']),
                      percentage(combined['repertoire_score']), cp(combined['repertoire_score']),
                      score_points(combined['difference_pp'], signed=True), cp_change(combined['repertoire_score'], combined['starting_baseline']),
                      'unavailable' if combined['elo_equivalent'] is None else number(combined['elo_equivalent'], signed=True),
-                     number(combined['expected_prepared_depth']), sharpness_display(combined['outcomes']), combined['chapters']])
+                     number(combined['expected_prepared_depth']), spread_display(combined.get('branch_score_spread'), False), combined['chapters']])
+    if compact:
+        return table(['Repertoire', 'Starting baseline', 'Repertoire score', 'Delta', 'Elo equivalent',
+                      'Prepared depth', 'Score spread', 'Chapters'],
+                     [[r[0], f'{r[1]} ({r[2]} cp)', f'{r[3]} ({r[4]} cp)', f'{r[5]} ({r[6]} cp)',
+                       r[7], r[8], r[9], r[10]] for r in rows])
     return table(['Repertoire', 'Starting baseline', 'Baseline CP', 'Repertoire score', 'Score CP', 'Delta',
-                  'CP delta', 'Elo equivalent', 'Prepared depth (own moves)', 'Sharpness', 'Chapters'], rows)
+                  'CP delta', 'Elo equivalent', 'Prepared depth (own moves)', 'Score spread', 'Chapters'], rows)
 
 
 def overview_notes(bundles):
@@ -396,7 +505,7 @@ def overview_notes(bundles):
             text += 'Combined score unavailable: ' + combined['unavailable'] + '. '
         else:
             text += 'Combined gives White and Black equal weight (50% each), averaging their scores and baselines before both conversions. '
-    return text + 'Prepared depth counts remaining own moves. Sharpness (0%-100%) measures outcome volatility from recursive repertoire WDL: it falls as a draw, win, or loss becomes certain. Mix WDL before calculating sharpness, including for combined colors. Strengths and vulnerability rankings omit sparse rows; scores still include all evidence.'
+    return text + 'Prepared depth counts remaining own moves. Score spread measures recursive variation between prepared branch scores, in percentage points. A second line labeled Reply shows immediate opponent-reply spread using recursive continuation scores. Outcome volatility (formerly sharpness) remains the normalized WDL variance and appears in headlines and detailed breakdowns. Mix entry means and variances before calculating spread, including for combined colors. Strengths and vulnerability rankings omit sparse rows; scores still include all evidence.'
 
 
 def snapshot_notes(bundles):
@@ -453,7 +562,7 @@ def gap_percentage(metrics, weighted=False):
     return ' to '.join(map(percentage, bounds)) + ' (bounds)' if bounds is not None else 'unavailable'
 
 
-def gap_section(scope, level='###'):
+def gap_section(scope, level='###', refs=None, top=10, compact=False):
     metrics = (scope or {}).get('gap_coverage')
     if not metrics:
         return [f'{level} Equivalent gap reach', '', 'Unavailable; regenerate the cache-only character analysis.', '']
@@ -463,13 +572,52 @@ def gap_section(scope, level='###'):
     if metrics.get('unresolved_mass', 0):
         text += [f"First-gap reach is unresolved for {percentage(metrics['unresolved_mass'])} of games in this scope. "
                  'The displayed range bounds the missing response data; it is not a sampling confidence interval.', '']
+    priorities = (scope or {}).get('gap_priorities', {})
+    positions = {r['position']: r for r in (scope or {}).get('positions', [])}
+    selected = priorities.get('priorities', [])[:top]
+    if selected and refs is not None:
+        refs = refs.for_scope(scope.get('id'))
+        rows = []
+        for priority in selected:
+            row = positions[priority['position']]
+            rating = opponent_rating(row.get('opponent_rating'))
+            diff = rating_difference(row.get('opponent_rating'))
+            reach = percentage(priority['reach'])
+            if compact:
+                reach += '<br>1 per ' + games_per_encounter(priority['reach']) + ' games'
+            rows.append([line(row['line']), refs.sources(row), reach,
+                         percentage(priority['repeat_probability_share']), score_cell(row.get('database_score')),
+                         spread_display(row.get('branch_score_spread')), position_games(row), rating + '<br>Δ ' + diff])
+        text += ['**Gaps driving repeat encounters**', '',
+                 *table(['First-gap position', 'Chapter source', reach_label(scope), 'Repeat-gap share',
+                         'Database score', 'Score spread', 'Games', 'Avg opponent rating'], rows),
+                 f"These {len(selected)} gaps account for **{percentage(selected[-1]['cumulative_repeat_probability_share'])}** "
+                 f"of repeat-gap probability ({priorities['share_basis']}). "
+                 + ('[Gap priority definition](#methods).' if compact else
+                    'Share is gap reach squared divided by the sum of all gap reaches squared. All transposed arrivals are combined; sparse gaps retain their probability.'), '']
     return text
 
 
-def chapter_table(report, refs, link=True):
+def branch_spread_section(scope, level='###'):
+    spread = (scope or {}).get('branch_score_spread')
+    if not spread:
+        return []
+    return [f'{level} Branch score spread', '',
+        'Recursive spread of expected scores across preparation branches. Immediate reply differences and deeper continuation variance are combined before taking the square root. '
+        'Shared transpositions reuse their continuation; entry and arrival cohorts retain their weights. Outcome volatility includes game-result variation after preparation ends. '
+        '[Definition](#methods).', '',
+        *table(['Measure', 'Value'], [[name, percentage(spread.get(field))] for name, field in (
+            ('Total branch spread', 'standard_deviation'), ('Between stopping positions', 'between_position_deviation'),
+            ('Between arrival cohorts at the same position', 'within_position_deviation'))]
+            + [['Outcome volatility (0%-100%)', percentage(4 * spread['outcome_variance']) if spread.get('outcome_variance') is not None else 'unresolved'],
+               ['Branch share of outcome variance', percentage(spread['variance'] / spread['outcome_variance'])
+                if spread.get('outcome_variance') and spread.get('variance') is not None else 'n/a']])]
+
+
+def chapter_table(report, refs, link=True, compact=False):
     alternatives = any(c.get('policy_overrides') for c in report['chapters'])
     headers = ['Chapter', 'Chapter reach (incl. transpositions)', 'Entry baseline', 'Baseline CP', 'Repertoire score',
-               'Score CP', 'Delta', 'CP delta', 'Prepared depth', 'Sharpness',
+               'Score CP', 'Delta', 'CP delta', 'Prepared depth', 'Score spread',
                'Weighted gap reach contribution', 'Equivalent gap reach after entry', 'Avg opponent rating']
     if alternatives:
         headers.insert(2, 'Overall-policy reach')
@@ -486,12 +634,27 @@ def chapter_table(report, refs, link=True):
                percentage(s.get('raw_empirical_score')), cp(s.get('raw_empirical_score')), score_points(base.get('difference_pp'), signed=True),
                cp_change(s.get('raw_empirical_score'), base.get('raw_score')),
                number(s.get('prepared_depth', {}).get('expected_moves')),
-               sharpness_display(s.get('outcomes')),
+               spread_display(s.get('branch_score_spread'), False),
                gap_percentage(c.get('gap_coverage'), weighted=True), gap_percentage(c.get('gap_coverage')),
                opponent_rating(c.get('opponent_ratings', {}).get('score_evidence'))]
         if alternatives:
             row.insert(2, percentage(s.get('overall_policy_entry_probability', s.get('entry_probability'))))
         rows.append(row)
+    if compact:
+        cells = []
+        for row, c in zip(rows, report['chapters']):
+            s, base = c['score'], c.get('entry_baseline', {})
+            reach = percentage(s.get('entry_probability'))
+            if alternatives:
+                reach += '<br>Overall ' + percentage(s.get('overall_policy_entry_probability', s.get('entry_probability')))
+            cells.append([row[0], reach, score_cell(base.get('raw_score')), score_cell(s.get('raw_empirical_score')),
+                delta_cell(s.get('raw_empirical_score'), base.get('raw_score')),
+                number(s.get('prepared_depth', {}).get('expected_moves')), spread_display(s.get('branch_score_spread'), False),
+                gap_percentage(c.get('gap_coverage')) + '<br>Weighted ' + gap_percentage(c.get('gap_coverage'), weighted=True),
+                opponent_rating(c.get('opponent_ratings', {}).get('score_evidence'))])
+        return table(['Chapter', 'Chapter reach (incl. transpositions)' + ('<br>Overall-policy reach' if alternatives else ''),
+            'Entry baseline', 'Repertoire score', 'Delta', 'Prepared depth', 'Score spread',
+            'Equivalent gap reach after entry<br>Weighted gap reach contribution', 'Avg opponent rating'], cells)
     return table(headers, rows)
 
 
@@ -548,14 +711,14 @@ def non_sparse_rows(rows):
 def own_move_table(rows, scope, refs, strongest=False):
     refs = refs.for_scope(scope.get('id'))
     field = 'local_gain_pp' if strongest else 'local_drop_pp'
-    return table(['Line', 'Chapter source', reach_label(scope), 'Avg games per encounter', 'Parent database score', 'Parent CP', 'Repertoire score', 'Score CP', 'Sharpness', 'CP delta',
-                  'Gain' if strongest else 'Drag', 'Parent games', 'Avg opponent rating'],
-                 [[line(r['line']), refs.sources(r), percentage(r['branch_reach']), games_per_encounter(r['branch_reach']), percentage(r['reference_score']), cp(r['reference_score']),
-                   percentage(r['move_score']) + (' (sparse endpoint)' if r.get('continuation_endpoint_sparse') else ''), cp(r['move_score']),
-                   sharpness_display(r.get('move_outcomes')),
-                   cp_change(r['move_score'], r['reference_score']), score_points(r[field], signed=strongest),
-                   f"{r['parent_sample_count']:,}" + (' (sparse)' if r.get('parent_sparse') else ''),
-                   opponent_rating(r.get('opponent_rating'))] for r in rows])
+    return table(['Line', 'Chapter source', reach_label(scope), 'Parent database score', 'Move database score',
+                  'Repertoire score', 'Score spread', 'Gain / CP delta' if strongest else 'Drag / CP delta',
+                  'Gain split: move / prep', 'Parent games', 'Avg opponent rating'],
+                 [[line(r['line']), refs.sources(r), percentage(r['branch_reach']), score_cell(r['reference_score']),
+                   score_cell(r.get('move_database_score')), score_cell(r['move_score']),
+                   spread_display(r.get('move_spread')), delta_cell(r['move_score'], r['reference_score'], drag=not strongest)
+                   + '<br>95%: ' + interval_cell(r.get('local_gain_interval_pp' if strongest else 'local_drop_interval_pp')),
+                   gain_split(r), f"{r['parent_sample_count']:,}", opponent_rating(r.get('opponent_rating'))] for r in rows])
 
 
 def vulnerabilities_section(scope, refs, top, level='###'):
@@ -571,15 +734,16 @@ def vulnerabilities_section(scope, refs, top, level='###'):
         if not rows:
             continue
         text += [f'**{name}**', '']
-        text += table(['Line', 'Chapter source / context', reach_label(scope), 'Avg games per encounter', 'Reply frequency at parent',
-                       'Before reply (repertoire)', 'Before CP', 'Before sharpness', 'After reply (repertoire)' if prepared else 'After reply (database)',
-                       'After CP', 'After sharpness', 'CP delta', 'Drag', 'Weighted drag', 'Reply games', 'Avg opponent rating', 'Rating Δ vs parent'],
-                      [[line(r['line']), refs.sources(r), percentage(r['branch_reach']), games_per_encounter(r['branch_reach']), percentage(r['branch_probability']),
-                        percentage(r['reference_score']), cp(r['reference_score']), sharpness_display(r.get('reference_outcomes')),
-                        percentage(r['move_score']), cp(r['move_score']), sharpness_display(r.get('move_outcomes')),
-                        cp_change(r['move_score'], r['reference_score']), score_points(r['local_drop_pp']), score_points(r['weighted_drag_pp'], 4),
-                        f"{r['sample_count']:,}" + (' (sparse)' if r['sparse'] else ''), opponent_rating(r.get('opponent_rating')),
-                        rating_difference(r.get('opponent_rating'))] for r in rows])
+        text += table(['Line', 'Chapter source / context', reach_label(scope), 'Reply frequency at parent',
+                       'Before reply (repertoire)', 'After reply (repertoire)' if prepared else 'After reply (database)',
+                       'Score spread<br>Before / after', 'CP delta', 'Drag', 'Weighted drag', 'Reply games', 'Avg opponent rating'],
+                      [[line(r['line']), refs.sources(r), percentage(r['branch_reach']) + '<br>1 per ' + games_per_encounter(r['branch_reach']) + ' games',
+                        percentage(r['branch_probability']), score_cell(r['reference_score']), score_cell(r['move_score']),
+                        spread_display(r.get('reference_spread'), False) + '<br>' + spread_display(r.get('move_spread'), False),
+                        cp_change(r['move_score'], r['reference_score']), score_points(r['local_drop_pp'])
+                        + '<br>95%: ' + interval_cell(r.get('local_drop_interval_pp')), score_points(r['weighted_drag_pp'], 4),
+                        f"{r['sample_count']:,}", opponent_rating(r.get('opponent_rating'))
+                        + '<br>Δ ' + rating_difference(r.get('opponent_rating'))] for r in rows])
     rows = non_sparse_rows(scope.get('rankings', {}).get('own', []))[:top]
     if rows:
         text += ['**Our selected moves**', '',
@@ -670,9 +834,9 @@ def position_contribution_table(rows, scope, refs):
         return 'Prepared endpoint' if row['kind'] == 'theory_leaf' else 'Prepared position'
 
     return table(['Position (representative line)', 'Chapter source / context', 'Position type', reach_label(scope),
-                  'Avg games per encounter', 'Score', 'Score CP', 'Sharpness', 'Contribution', 'Games at position / reply', 'Avg opponent rating'],
+                  'Avg games per encounter', 'Score', 'Score CP', 'Score spread', 'Contribution', 'Games at position / reply', 'Avg opponent rating'],
                  [[position_label(r, refs.color), refs.sources(r), kind(r), percentage(r['reach']), games_per_encounter(r['reach']), percentage(r['score']),
-                   cp(r['score']), sharpness_display(r.get('outcomes')), score_points(r['contribution_pp'], 4), position_games(r), opponent_rating(r.get('opponent_rating'))]
+                   cp(r['score']), spread_display(r.get('branch_score_spread')), score_points(r['contribution_pp'], 4), position_games(r), opponent_rating(r.get('opponent_rating'))]
                   for r in rows])
 
 
@@ -727,7 +891,7 @@ def methods(bundles):
     text = section('## Definitions and evidence', 'methods')
     text += ['- **Opening names and reach:** use only exact opening names in cached repertoire-position responses. At a named board, all arrivals take its exact current name. At an unnamed board, each incoming route retains its last name and probability; merging routes does not give an opening the other routes’ mass. Unclassified routes stay unclassified. Structural potential labels from recorded alternatives are retained in JSON but never create probability. Reach absorbs flow on the first arrival at an exact opening name or a known named variation; inheritance alone cannot introduce an opening that a route has not entered. Broader categories match existing cached names at colon or comma boundaries, so parent and variation rows overlap; unrelated names are transitions rather than parent relationships. Per-board origin contributions track the joint probability of reaching that board after previously entering each opening, even after a later name reset. Divide by total board reach to obtain that opening’s share of arrivals. These overlapping origins are not an exclusive partition. Opening scores, baselines, depth and gap distributions share the same normalized first-entry weights and overall selected policy. No external dataset or unprepared child queries are used.',
              '- **Repertoire score:** wins count as 1 and draws as 0.5. Your selected moves are forced; opponent replies use all cached database replies, including after the last recorded PGN move. Replies that immediately transpose into a known repertoire board resume preparation. Evaluation stops at an unanswered own-turn board, unprepared reply, terminal result, or unresolved evidence. Unprepared replies use the cached parent move row without fetching the child. Exact transpositions share a position; scores, reach, prepared depth, chapter entries and opening sources follow the same transitions.',
-             '- **Repertoire sharpness:** normalized variance of the eventual game score, `400 * (W + D/4 - (W + D/2)**2)`, on a 0%-100% scale. W, D and L are owner-relative probabilities propagated through the same selected moves, database-weighted opponent replies, canonical transpositions and stopping rules as repertoire score. A prepared reply uses its recursive WDL; an unprepared reply uses the cached parent move row, and an unanswered own-turn endpoint uses its cached result counts. Opponent-turn endpoints expand their cached replies, including transpositions back into preparation. Terminal results are exact. W + D/2 reproduces repertoire score. Chapter first-entry WDL is mixed using the same normalized entry weights before calculating sharpness; child or entry sharpness values are not averaged. Alternative chapters use their comparison policy. Combined sharpness uses the 50/50 owner-relative WDL mixture. Every repertoire-score table includes sharpness. Before and after reply columns use the corresponding parent and continuation WDL. Unprepared replies use their specific cached parent move row; common-position and contribution rows merge transposed unprepared arrivals by modeled incoming reach before calculating sharpness. Sharpness is 100% for 50% wins and 50% losses, 10% for 5% wins, 90% draws and 5% losses, and 0% for a certain win, draw or loss. It measures outcome volatility while following preparation, rather than tactical difficulty or the cost of forgetting a move. Missing outcome evidence or unresolved chapter entry weights leave sharpness unresolved or unavailable; no prior, sparse filter or new query completes it.',
+             '- **Outcome volatility (formerly sharpness):** normalized variance of the eventual game score, `400 * (W + D/4 - (W + D/2)**2)`, on a 0%-100% scale. Owner-relative WDL follows the same selected moves, empirical opponent replies, transpositions and stopping rules as repertoire score; W + D/2 reproduces that score. First-entry and combined-color WDL are mixed before calculating volatility. It is 100% for equal wins and losses, 10% for 5% wins / 90% draws / 5% losses, and zero for a certain result. It describes game-result variation, rather than tactical difficulty or reply sensitivity. Headlines and detailed branch breakdowns retain this secondary metric; the JSON field remains `sharpness` for compatibility. Missing outcome evidence stays unresolved. No prior, sparse filter or new query completes it.',
              '- **Baseline and delta:** overall uses the standard starting-position database score for the same color. Chapter baseline is the weighted database score at first-entry positions, using the same entry weights as chapter score. Delta is repertoire score minus baseline. Score differences and contributions display with %, using percentage points rather than relative percentage changes. These population comparisons do not establish personal or causal improvement.',
              '- **Elo equivalent:** use `E(p) = 400 * log10(p / (1 - p))` and report `E(repertoire score) - E(starting baseline)`, following the [logistic expected-score equation](https://tec.fide.com/wp-content/uploads/2025/07/Statistical_model_for_chess_tournament_simulations.pdf). Combined scores use 50% White and 50% Black with matching filters and standard starting positions. Average the scores first, rather than averaging the separate Elo equivalents. Conversion is unavailable at scores of 0% or 100%; no clipping or prior is substituted. This is a score-scale translation, not a personal rating forecast or a measured causal gain.',
              '- **Centipawn equivalent:** CP columns use `C(p) = ln(p / (1 - p)) / 0.00368208`, the inverse [Lichess score curve](https://lichess.org/page/accuracy), applied directly to the adjacent expected score (wins plus half draws). Positive CP favors the repertoire owner, including Black. CP delta is `C(after) - C(before)`, or score CP minus entry/starting-baseline CP in overview tables. Convert the two scores separately; converting their percentage-point difference is incorrect. Weighted or transposed mixtures, including combined colors and chapter entries, average the scores before conversion. Score intervals convert their endpoints. Missing values and boundaries of 0% or 100% are unavailable. Reach, reply frequency, and contribution percentages are not expected scores and receive no CP conversion. This calibration translates human results to a centipawn scale; it is not an engine evaluation.',
@@ -748,6 +912,12 @@ def methods(bundles):
              '- **Opponent rating:** Explorer averageRating describes the move maker. At an opponent-turn board, local rating is the game-count-weighted mean of its cached response rows, including the Black repertoire’s starting-board row where White is to move. At our turn, it comes from the preceding opponent move row, combining transposed arrivals by modeled reach. At the White starting board there is no preceding opponent move, so its local context is marked n/a. Reply vulnerabilities use the specific reply. Rating Δ vs parent is that opponent reply’s mean minus the parent’s game-weighted opponent response mean; positive values describe a higher-rated reply cohort. Transposed replies combine paired differences by arrival reach, with comparison and parent coverage disclosed when partial. This is a difference between move-maker cohorts, not a White-minus-Black rating gap. Our-move rows use the resulting board’s opponent response mean. An unavailable alternative has no cached child evidence. Chapter averages weight rating evidence at stopping outcomes once per modeled game; entry-baseline ratings use the first-entry mixture. These can describe different populations and do not adjust any score. Partial coverage is shown as a rated percentage; missing ratings and unnamed residual outcomes are not zero. Pawn-group averages are limited to chapters. There are no rating averages for a repertoire color or the combined study.',
              '- **Chapter sources:** numbered chapter links identify every source of the exact final move or stopping position. Unprepared replies show parent context; immediate transpositions identify destination chapters. A representative route may pass through several chapters.',
              '- **Most common opening source:** the last cached opening name carried by the largest share of arrivals, followed by that share in parentheses. An exact cached name replaces earlier names. Unnamed transpositions retain each route’s probability, and unclassified arrivals compete as a separate source. Move comparisons use arrivals through that specific parent move; position rows combine all routes. Chapter tables use their comparison policy, and entry rows use first arrivals. Equal shares use alphabetical order, with named sources before unclassified ones. This is a share of arrivals, not reach in the whole repertoire.', '']
+    text += [
+        '- **Gap priorities:** a canonical gap with reach p contributes p² to repeat-gap probability. Its share is p² divided by the sum over every gap. All transposed arrivals are combined before squaring. Shares sum to 100% over known gaps; when response data are unresolved, they describe known repeat probability only. The five summary rows retain the full-distribution denominator, including sparse gaps.',
+        '- **Move gain and preparation gain:** selected move database score minus parent database score, plus recursive repertoire score after the move minus its database score. The database move score comes from the already cached parent move row. Their sum equals total gain; drag is its negative. CP components subtract the corresponding converted scores and also sum to total CP delta. These compare sampled cohorts and preparation, rather than identifying causal benefits.',
+        '- **Branch score spread:** `B(s) = sum(p_i * (B(child_i) + (score(child_i) - score(s))**2))`, displayed as `100 * sqrt(B(s))` in percentage points. Known stopping scores have B=0; forced own moves inherit their child. The recursion uses the scorer\'s exact empirical replies and shared canonical continuations, including preparation resumed through transpositions. It reproduces the complete stopping-event score variance. First-entry and combined-color mixtures include variance between their mean scores; standard deviations are never averaged. A second cell line labeled **Reply** is immediate opponent-reply spread, using recursive child scores. It is unavailable at own turns, stopping boundaries, or incomplete named reply distributions; pooled residuals still follow the scorer\'s stopping rules. **Prep ends** means no future branch spread is modeled, not a certain game result. Unprepared positions use their saved WDL mixture as a stopping outcome, with no child queries. Sparse samples remain included; unresolved scores or entry weights remain unavailable. The detailed breakdown separates stopping boards and incoming evidence cohorts. Total outcome variance equals branch variance plus weighted outcome variance within stopping events; branch share divides branch variance by total outcome variance. Variances add, standard deviations do not.',
+        '- **Local comparison intervals:** approximate prior-completed 95% model intervals for gain or drag, using the saved simulation count, seed and priors. Opponent move frequencies and outcomes are sampled jointly, with the same sampled continuation value reused across transposed routes. Own move and parent database scores share one joint move/result table. Policies and population are fixed; weighted rankings retain empirical reach. Historical game overlap, selection effects and population mismatch are not modeled. These are local model intervals, not confidence intervals for causal improvement.',
+        '- **Summary opening groups and chapter entries:** opening labels share a summary row only when their weighted first-entry board distributions coincide along guaranteed own moves and their repertoire scores match. This includes successive variations with sibling names. No opponent move is assumed. The downstream member supplies its baseline and delta, and reach is counted once; full reports retain every category. Equality of aggregate reach alone never groups categories. Chapter headlines show leading first-entry boards and their complete first-arrival opening-source mixture under the chapter comparison policy, combining all transposed arrivals. Example lines are individual routes, not exclusive move orders.', '']
     text += ['<details>', '<summary>Saved analysis files and validation</summary>', '']
     for b in bundles:
         r = b['report']; m = r['manifest']; color = r['color'].title()
@@ -791,8 +961,8 @@ def common_positions_for_scope(scope, refs, limit=20, level='###', anchor=None):
         if not rows:
             continue
         text += [f'{level}# {title}', '']
-        text += table(['Position (representative line)', 'Chapter source', reach_label(scope), 'Avg games per encounter', score_label, 'Score CP', 'Sharpness', 'Games at position / reply', 'Avg opponent rating'] + (['Rating Δ vs parent'] if score_key == 'database_score' else []),
-                      [[position_label(r, color), refs.sources(r), percentage(r['reach']), games_per_encounter(r['reach']), percentage(r.get(score_key)), cp(r.get(score_key)), sharpness_display(r.get('outcomes')), position_games(r), opponent_rating(r.get('opponent_rating'))]
+        text += table(['Position (representative line)', 'Chapter source', reach_label(scope), 'Avg games per encounter', score_label, 'Score CP', 'Score spread', 'Games at position / reply', 'Avg opponent rating'] + (['Rating Δ vs parent'] if score_key == 'database_score' else []),
+                      [[position_label(r, color), refs.sources(r), percentage(r['reach']), games_per_encounter(r['reach']), percentage(r.get(score_key)), cp(r.get(score_key)), spread_display(r.get('branch_score_spread')), position_games(r), opponent_rating(r.get('opponent_rating'))]
                        + ([rating_difference(r.get('opponent_rating'))] if score_key == 'database_score' else []) for r in rows[:limit]])
         text += [f'Showing {min(limit, len(rows))} of {len(rows):,} {title.lower()}.', '']
     return text + ['Exact FENs and all position reach data are retained in the character JSON.', '']
@@ -838,7 +1008,7 @@ def depth_section(scope, level='###', anchor=None):
 
 def entry_routes_section(chapter, scope, refs):
     refs = refs.for_scope(chapter['id'])
-    text = ['**Exact first-entry positions**', '',
+    text = [f'<a id="{refs.anchor(chapter["id"])}-entries"></a>', '', '**Exact first-entry positions**', '',
             'The denominator is games first reaching any position in this chapter, through any move order. '
             'Each game counts once for this chapter. Entry-position weight combines every first-arrival route to the same board; '
             'example-route weight belongs only to the displayed route. Both weights are conditional on chapter entry.', '']
@@ -865,20 +1035,77 @@ def entry_routes_section(chapter, scope, refs):
                           opponent_rating(e.get('opponent_rating'))] for e in chapter['entries']])
 
 
+def leading_entries(chapter, scope, refs, top=3):
+    refs = refs.for_scope(chapter['id'])
+    entries = {e['position']: e for e in chapter['entries']}
+    routes = (scope or {}).get('entry_routes', {}).get('positions', [])
+    selected = sorted(routes, key=lambda r: -r['conditional_first_entry_weight'])[:top]
+    if not selected:
+        return []
+    rows = []
+    for route in selected:
+        original = dict(entries[route['position']], _opening_entry=True)
+        cell = refs.sources(original)
+        mixture = chapter.get('entry_opening_sources', {}).get(route['position'], [])
+        if mixture:
+            labels = []
+            for source in mixture:
+                name = escape(source['id']) if source['id'] else 'Unclassified'
+                if source['id'] in refs.opening_anchors:
+                    name = f'[{name}](#{refs.opening_anchors[source["id"]]})'
+                labels.append(name + ' (' + percentage(source['share']) + ')')
+            cell = SourceCell(str(cell), labels[0] + ('<br>Also: ' + '; '.join(labels[1:]) if len(labels) > 1 else ''))
+        rows.append([line(route['example']['line']), percentage(route['conditional_first_entry_weight']),
+                     cell, opponent_rating(original.get('opponent_rating'))])
+    return ['**Where this chapter starts**', '',
+            'Leading first-entry boards, weighted over every transposed arrival. Opening sources describe those first arrivals; '
+            'the example line is one route. Later entry boards can bypass the main defining position.', '',
+            *table(['First-entry example', 'Entry-position weight', 'Chapter source', 'Avg opponent rating'], rows),
+            f'[All entry positions and routes](#{refs.anchor(chapter["id"])}-entries).', '']
+
+
 def summary_own_priorities(rows, refs, strongest=False):
     field, label = ('local_gain_pp', 'Gain') if strongest else ('local_drop_pp', 'Drag')
-    return table(['Line', 'Chapter source', 'Reach in repertoire', 'Avg games per encounter', label,
-                  'CP delta', 'Sharpness', 'Weighted ' + label.lower(), 'Parent games', 'Avg opponent rating'],
-                 [[line(r['line']), refs.sources(r), percentage(r['branch_reach']), games_per_encounter(r['branch_reach']),
-                   score_points(r[field], signed=strongest), cp_change(r['move_score'], r['reference_score']),
-                   sharpness_display(r.get('move_outcomes')),
+    return table(['Line', 'Chapter source', 'Reach in repertoire', 'Repertoire score', 'Score spread', label + ' / CP delta',
+                  'Weighted ' + label.lower(), 'Avg opponent rating'],
+                 [[line(r['line']), refs.sources(r), percentage(r['branch_reach']) + '<br>1 per ' + games_per_encounter(r['branch_reach']) + ' games', score_cell(r['move_score']),
+                   spread_display(r.get('move_spread')),
+                   delta_cell(r['move_score'], r['reference_score'], drag=not strongest)
+                   + ('<br>Move ' + score_points(r['database_move_gain_pp'], signed=True) + '; prep '
+                      + score_points(r['continuation_gain_pp'], signed=True) if r.get('database_move_gain_pp') is not None else '')
+                   + '<br>95%: ' + interval_cell(r.get('local_gain_interval_pp' if strongest else 'local_drop_interval_pp')),
                    score_points(r['branch_reach'] * r[field], 4, signed=strongest),
-                   f"{r['parent_sample_count']:,}", opponent_rating(r.get('opponent_rating'))] for r in rows])
+                   opponent_rating(r.get('opponent_rating'))] for r in rows])
 
 
 def opening_table(rows, refs, anchors, compact=False):
+    if compact:
+        lookup = {r['id']: r for r in refs.openings.get('openings', [])}
+        values = []
+        for row in rows:
+            labels = []
+            previous = None
+            for identity in row.get('_summary_ids', [row['id']]):
+                member = lookup.get(identity, row)
+                name = member['name']
+                short = name
+                if previous:
+                    for separator in (': ', ', '):
+                        if name.startswith(previous + separator):
+                            short = name[len(previous + separator):]
+                            break
+                    if short == name and ': ' in previous and ': ' in name:
+                        family, variation = name.split(': ', 1)
+                        if family == previous.split(': ', 1)[0]:
+                            short = variation
+                labels.append(('↳ ' if previous else '') + f'[{escape(short)}](#{anchors[identity]})')
+                previous = name
+            base, score = row['entry_baseline']['raw_score'], row['repertoire_score']
+            values.append(['<br>'.join(labels), percentage(row['reach']), score_cell(base), score_cell(score),
+                           delta_cell(score, base), spread_display(row.get('branch_score_spread'), False)])
+        return table(['Opening family / variation', 'Reach', 'Entry baseline', 'Repertoire score', 'Delta', 'Score spread'], values)
     headers = ['Opening', 'ECO', 'Reach', 'Entry baseline', 'Baseline CP', 'Repertoire score', 'Score CP',
-               'Delta', 'CP delta', 'Sharpness']
+               'Delta', 'CP delta', 'Score spread']
     if not compact:
         headers += ['Prepared own moves after entry', 'Equivalent gap reach after entry', 'Chapters']
     values = []
@@ -886,7 +1113,7 @@ def opening_table(rows, refs, anchors, compact=False):
         base, repertoire = row['entry_baseline']['raw_score'], row['repertoire_score']
         cells = [f"[{escape(row['name'])}](#{anchors[row['id']]})", escape(row['eco']), percentage(row['reach']),
                  percentage(base), cp(base), percentage(repertoire), cp(repertoire),
-                 score_points(row['difference_pp'], signed=True), cp_change(repertoire, base), sharpness_display(row['outcomes'])]
+                 score_points(row['difference_pp'], signed=True), cp_change(repertoire, base), spread_display(row.get('branch_score_spread'), False)]
         if not compact:
             cells += [number(row['expected_prepared_moves']), gap_percentage(row['gap_coverage']),
                       refs.sources({'chapter_attribution': {'source_ids': row['chapter_ids']}})]
@@ -902,6 +1129,16 @@ def openings_section(bundle, refs, compact=False):
         return text + ['Opening analysis pending. Run `repertoire-openings` with the saved score results.', '']
     rows = data['openings']
     anchors = {row['id']: f'{color}-opening-{i}' for i, row in enumerate(rows, 1)}
+    if compact:
+        text += ['Opening names linked by guaranteed own moves share a row when their complete entry cohorts match. '
+                 'The downstream opening supplies its baseline and delta; reach is counted once. '
+                 'Opening reaches overlap. [Definitions](#methods).', '']
+        lookup = {r['id']: r for r in rows}
+        groups = bundle.get('insights', {}).get('opening_summary_groups') or [dict(ids=[r['id']], representative=r['id']) for r in rows]
+        display = [dict(lookup[g['representative']], _summary_ids=g['ids']) for g in groups]
+        display.sort(key=lambda r: (-r['reach'], r['name']))
+        text += opening_table(display[:5], refs, anchors, True)
+        return text + [f"{len(rows)} opening categories reached. [All openings and entry routes](#{color}-openings).", '']
     text += ['Reach counts first arrival at a named opening or its named variations, across all move orders under the selected repertoire. '
              'At unnamed transpositions, each opening keeps only its own incoming probability. Families and variations overlap; their reaches must not be added. '
              'Scores and entry baselines use the same weighted first entries. Identical names share one row with all cached ECO codes.', '']
@@ -940,11 +1177,11 @@ def openings_section(bundle, refs, compact=False):
                 refs.opening_source({'position': entry['position']}),
                 'Exact' if labels['exact_name'] else 'Inherited', percentage(entry['conditional_weight']),
                 percentage(entry['entry_probability']), percentage(entry['baseline_score']), cp(entry['baseline_score']),
-                percentage(entry['repertoire_score']), cp(entry['repertoire_score']), sharpness_display(entry['outcomes']),
+                percentage(entry['repertoire_score']), cp(entry['repertoire_score']), spread_display(entry.get('branch_score_spread')),
                 f"{entry['games']:,}" + ('†' if len(entry['origins']) > 1 else '') + (' (sparse)' if entry['games'] < sparse else ''),
                 entry['games_source'], opponent_rating(entry.get('opponent_rating')), rating_difference(entry.get('opponent_rating'))])
         text += table(['First-entry example', 'Chapter source / context', 'Most common opening source', 'Name source', 'Entry weight', 'Reach in repertoire',
-                       'Entry baseline', 'Baseline CP', 'Repertoire score', 'Score CP', 'Sharpness', 'Entry games', 'Evidence source',
+                       'Entry baseline', 'Baseline CP', 'Repertoire score', 'Score CP', 'Score spread', 'Entry games', 'Evidence source',
                        'Avg opponent rating', 'Rating Δ vs parent'], values)
         origins = []
         scope = scope_by_id(bundle.get('character')).get('overall', {})
@@ -976,7 +1213,7 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             + ' | [Depth correlations](#correlations) | [Definitions and evidence](#methods)', '',
             *snapshot_notes(bundles),
             *section('## Combined repertoire' if has_combined else '## Score overview', 'combined' if has_combined else 'overview'),
-            *overview(bundles), overview_notes(bundles), '']
+            *overview(bundles), overview_notes(bundles), '', *evidence_snapshot(bundles)]
     for b in bundles:
         r = b['report']; color = r['color']; refs = Chapters(r, b.get('openings')); o = r['overall']
         characters = scope_by_id(b.get('character'))
@@ -994,7 +1231,8 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             ['Sparse-score sensitivity', ' to '.join(map(percentage, o['sparse_sensitivity'])), cp_interval(o['sparse_sensitivity'])]])
         text += table(['Stopping type', 'Probability'], [[k.replace('_', ' ').capitalize(), percentage(v)] for k, v in o['masses'].items()])
         text += ['</details>', '']
-        text += gap_section(characters.get('overall'))
+        text += gap_section(characters.get('overall'), refs=refs, top=top)
+        text += branch_spread_section(characters.get('overall'))
         text += common_positions_section([b], position_top)
         text += openings_section(b, refs)
         text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
@@ -1023,7 +1261,8 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             text += [f"Entry probability **{percentage(s.get('entry_probability'))}**; repertoire score **{percentage(s.get('raw_empirical_score'))} ({cp(s.get('raw_empirical_score'))} cp)**; "
                      f"entry baseline **{percentage(base.get('raw_score'))} ({cp(base.get('raw_score'))} cp)**; delta **{score_points(base.get('difference_pp'), signed=True)} / {cp_change(s.get('raw_empirical_score'), base.get('raw_score'))} cp**; "
                      f"prepared depth **{number(s.get('prepared_depth', {}).get('expected_moves'))} own moves**; "
-                     f"sharpness **{sharpness_display(s.get('outcomes'))}**.", '']
+                     f"outcome volatility **{sharpness_display(s.get('outcomes'))}**.", '']
+            text += leading_entries(c, preparation.get(cid), refs)
             ratings = c.get('opponent_ratings', {})
             text += [f"Score-evidence opponent rating **{opponent_rating(ratings.get('score_evidence'))}**; "
                      f"entry-baseline opponent rating **{opponent_rating(ratings.get('entry_baseline'))}**. "
@@ -1032,6 +1271,8 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             if c.get('policy_overrides'):
                 text += [f"**Alternative comparison.** Region reach under the overall policy: {percentage(s.get('overall_policy_entry_probability'))}.", '']
             char = characters.get(cid)
+            if char and char.get('branch_score_spread'):
+                text += [f"Branch score spread **{percentage(char['branch_score_spread'].get('standard_deviation'))}**. [Definition](#methods).", '']
             text += [f"Equivalent gap reach after entry **{gap_percentage(c.get('gap_coverage'))}**; "
                      f"weighted gap reach contribution **{gap_percentage(c.get('gap_coverage'), weighted=True)}**.", '']
             if char and 'reuse' in char:
@@ -1042,6 +1283,8 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             if interval:
                 text += [f"Approximate 95% score interval: {' to '.join(map(percentage, interval))}; unresolved probability: {percentage(s.get('unresolved_mass'))}; "
                          f"sparse-score sensitivity: {' to '.join(map(percentage, s.get('sparse_sensitivity', [])))}.", '']
+            text += gap_section(char, level='#####', refs=refs, top=chapter_top)
+            text += branch_spread_section(char, level='#####')
             text += common_positions_for_scope(char or {'id': cid}, refs, position_top, level='#####',
                                                anchor=refs.anchor(cid) + '-common-positions')
             text += depth_section(preparation.get(cid), level='#####', anchor=refs.anchor(cid) + '-prepared-depth')
@@ -1065,78 +1308,73 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
 
 def summary_report(bundles, full_path, correlations, correlation_reason):
     text = ['# Repertoire summary', '', f'[Complete report]({Path(full_path).name})', '',
-            *snapshot_notes(bundles), *overview(bundles), overview_notes(bundles), '',
-            'The model follows your selected moves and database-weighted opponent replies. Scores describe the saved Lichess population.', '']
+            *snapshot_notes(bundles), *overview(bundles, compact=True),
+            'Scores include half a point for draws. CP and Elo are score-scale equivalents; Elo is not a measured rating gain. Combined weights White and Black equally (50% each). '
+            f'[Definitions and evidence]({Path(full_path).name}#methods).', '', *evidence_snapshot(bundles)]
     for b in bundles:
         r = b['report']; color = r['color']; refs = Chapters(r, b.get('openings'))
+        refs.compact = True
         char = scope_by_id(b.get('character')).get('overall', {})
         moves = b.get('vulnerabilities', {}).get('overall', {})
-        text += [f'## {color.title()} repertoire', '']
-        text += [f"**Equivalent gap reach: {gap_percentage(char.get('gap_coverage'))}.** "
-                 'One gap with this reach would produce the same repeat probability as all first unprepared positions combined. '
-                 f'[Definition]({Path(full_path).name}#methods).', '']
+        text += [f'## {color.title()} repertoire', '',
+                 f"**Equivalent gap reach: {gap_percentage(char.get('gap_coverage'))}.** "
+                 f"Branch score spread **{percentage((char.get('branch_score_spread') or {}).get('standard_deviation'))}**. "
+                 f"Outcome volatility **{sharpness_display(r['overall'].get('outcomes'))}**. "
+                 f'[Definitions]({Path(full_path).name}#methods).', '']
         text += openings_section(b, refs, compact=True)
+        text += gap_section(char, refs=refs, top=5, compact=True)
+        text += ['Own comparisons rank by reach × gain or drag. Move and prep components sum to the total gain; '
+                 'the components describe historical cohorts and prepared continuations. Local rankings and model limits are in the full report.', '']
         own_bad = own_priorities(moves.get('rankings', {}).get('own', []))
         own_good = own_priorities(moves.get('strengths', []), strongest=True)
-        text += ['Own comparisons below rank by reach × local gain or drag. They include the full prepared continuation and overlap; '
-                 'the full report retains the local rankings. Avg games per encounter is 1 / reach for games with this color.', '']
         if own_good:
             text += ['### Own moves with the largest weighted gain', '', *summary_own_priorities(own_good[:5], refs, strongest=True)]
         if own_bad:
             text += ['### Own moves with the largest weighted drag', '', *summary_own_priorities(own_bad[:5], refs)]
-        for title, rows in [
-                ('Most common unprepared replies', sorted([x for x in char.get('positions', []) if unanswered_position(x, color)], key=lambda x: -x['reach'])[:5]),
-                ('Unprepared replies with the largest weighted drag', [x for x in non_sparse_rows(moves.get('rankings', {}).get('opponent', [])) if not x['prepared']][:5])]:
-            if not rows:
-                continue
-            text += [f'### {title}', '']
-            drag = 'branch_reach' in rows[0]
-            text += table(['Line', 'Chapter context', 'Reach in repertoire', 'Avg games per encounter']
-                          + (['Before reply (repertoire)', 'Before CP', 'Before sharpness'] if drag else [])
-                          + ['After reply (database)' if drag else 'Database score', 'After CP' if drag else 'Score CP', 'After sharpness' if drag else 'Sharpness']
-                          + (['CP delta', 'Drag', 'Weighted drag'] if drag else ['Reply games'])
-                          + ['Avg opponent rating', 'Rating Δ vs parent'],
-                          [[line(x['line']), refs.sources(x), percentage(x['branch_reach'] if drag else x['reach']),
-                            games_per_encounter(x['branch_reach'] if drag else x['reach'])]
-                           + ([percentage(x['reference_score']), cp(x['reference_score']), sharpness_display(x.get('reference_outcomes'))] if drag else [])
-                           + [percentage(x['move_score'] if drag else x.get('database_score')), cp(x['move_score'] if drag else x.get('database_score'))]
-                           + [sharpness_display(x.get('move_outcomes') if drag else x.get('outcomes'))]
-                           + ([cp_change(x['move_score'], x['reference_score']), score_points(x['local_drop_pp']), score_points(x['weighted_drag_pp'], 4)] if drag else
-                              [(f"{x['games']:,}" + ('†' if len(x.get('unprepared_origins', [])) > 1 else '') if x.get('games') is not None else 'unavailable')])
-                           + [
-                            opponent_rating(x.get('opponent_rating')), rating_difference(x.get('opponent_rating'))] for x in rows])
-        contributions = non_sparse_rows(position_contributions(char, color, r['manifest']['sparse_threshold']))
+        replies = [x for x in non_sparse_rows(moves.get('rankings', {}).get('opponent', [])) if not x['prepared']][:5]
+        if replies:
+            text += ['### Unprepared replies with the largest weighted drag', '',
+                     *table(['Line', 'Chapter context', 'Reach in repertoire', 'Scores before / after (CP)',
+                             'Score spread<br>Before / after', 'Drag / CP delta', 'Weighted drag', 'Reply games', 'Avg opponent rating'],
+                            [[line(x['line']), refs.sources(x), percentage(x['branch_reach'])
+                              + '<br>1 per ' + games_per_encounter(x['branch_reach']) + ' games',
+                              score_cell(x['reference_score']) + '<br>' + score_cell(x['move_score']),
+                              spread_display(x.get('reference_spread'), False) + '<br>' + spread_display(x.get('move_spread'), False),
+                              delta_cell(x['move_score'], x['reference_score'], drag=True)
+                              + '<br>95%: ' + interval_cell(x.get('local_drop_interval_pp')),
+                              score_points(x['weighted_drag_pp'], 4), f"{x['sample_count']:,}",
+                              opponent_rating(x.get('opponent_rating')) + '<br>Δ ' + rating_difference(x.get('opponent_rating'))]
+                             for x in replies])]
+        contributions = non_sparse_rows(position_contributions(char, color, r['manifest']['sparse_threshold']))[:5]
         if contributions:
             text += ['### Largest position contributions', '',
-                     'Reach × score across prepared positions and unprepared replies. These rows overlap; do not add them.', '',
-                     *position_contribution_table(contributions[:5], char, refs)]
-        masses = r['overall']['masses']
-        text += [f"Preparation ends at an existing endpoint in **{percentage(masses.get('theory_leaf', 0))}** of modeled games "
-                 f"and after an unprepared opponent reply in **{percentage(masses.get('deviation', 0))}**. "
-                 + (f"Other stopping or unresolved cases account for {percentage(sum(v for k, v in masses.items() if k not in ('theory_leaf', 'deviation')))}."
-                    if any(v > 0 for k, v in masses.items() if k not in ('theory_leaf', 'deviation')) else ''), '']
-        distribution = scope_by_id(b.get('preparation')).get('overall', {}).get('depth_distribution', {})
-        if distribution.get('median_moves') is not None:
-            text += [f"Median prepared depth: **{distribution['median_moves']} own moves**. "
-                     f"[Full prepared-depth distribution]({Path(full_path).name}#{color}-prepared-depth).", '']
+                     'Reach × score carried through prepared positions and first gaps. These overlapping rows are not additive.', '',
+                     *table(['Position', 'Chapter context', 'Reach in repertoire', 'Score', 'Score spread', 'Contribution', 'Avg opponent rating'],
+                            [[position_label(x, color), refs.sources(x), percentage(x['reach']), score_cell(x['score']),
+                              spread_display(x.get('branch_score_spread')), score_points(x['contribution_pp'], 4),
+                              opponent_rating(x.get('opponent_rating'))] for x in contributions])]
+        prep = scope_by_id(b.get('preparation')).get('overall', {}).get('depth_distribution', {})
+        median = prep.get('median_moves')
+        if median is not None:
+            text += [f"Median prepared depth **{median} own moves**. [Full distribution]({Path(full_path).name}#{color}-prepared-depth).", '']
         if 'reuse' in char:
-            reuse, p = char['reuse'], char['predictability']
+            reuse, pred = char['reuse'], char['predictability']
             curve = next((x for x in reuse['curve'] if x['games'] == 100), None)
-            text += [f"{reuse['reachable_distinct_decisions']} distinct own decisions; **{number(p['effective_replies'])} effective opponent replies**. "
-                     + (f"After 100 modeled games, expect to encounter about {number(curve['expected_distinct_decisions'], 0)} of those decisions." if curve else ''), '']
+            text += [f"{reuse['reachable_distinct_decisions']} distinct own decisions; **{number(pred['effective_replies'])} effective opponent replies**. "
+                     + (f"After 100 modeled games, expect about {number(curve['expected_distinct_decisions'], 0)} distinct decisions." if curve else ''), '']
         text += ['<details>', f'<summary>All {len(r["chapters"])} {color.title()} chapters</summary>', '',
-                 'Chapter reach counts first arrival at any chapter position across all transposed routes. Scores, entry baselines, depth, and equivalent gap reach after entry are conditional on that entry. '
-                 'Weighted gap reach contribution multiplies the conditional value by chapter reach. These contributions overlap and are not additive.', '',
-                 *chapter_table(r, refs), '</details>', '']
-    text += ['Positive gain and delta are favorable; positive drag is a deficit. Own-move gains and deficits compare the full prepared continuation with the parent database score. '
-             'Opponent drag weights the drop from its parent repertoire value by reply reach. These overlapping comparisons cannot be added.', '',
-             'Chapter opponent rating describes score evidence at the preparation boundary, weighted once per modeled game. Line ratings describe their local opponent cohort. '
-             'Positive rating Δ means a higher-rated opponent cohort than at the parent; ratings do not adjust scores. Partial coverage and sparse evidence are disclosed in the full report.', '']
+                 'Chapter scores and gap reach are conditional on first entry through any move order. '
+                 'Weighted gap reach contribution multiplies the conditional value by chapter reach; overlapping chapters are not additive.', '',
+                 *chapter_table(r, refs, compact=True), '</details>', '']
+    text += ['Positive gain and delta are favorable; positive drag is a deficit. CP delta is after minus before. '
+             'Avg games per encounter is 1 / reach for games with that color. Line comparisons overlap and cannot be added. '
+             'Ratings describe local opponents and do not adjust scores. Local 95% bands are approximate prior-completed model intervals, not causal gain intervals.', '']
     if any(c.get('policy_overrides') for b in bundles for c in b['report']['chapters']):
-        text += ['**Alternative** chapters prefer their own first moves; overall uses the earliest chapter and first PGN choice. Overall-policy reach is shown separately.', '']
-    text += [f'Per-chapter strengths and vulnerabilities, common positions, preparation character and evidence limits: [complete report]({Path(full_path).name}).', '']
-    text = [re.sub(r'\]\(#((?:white|black)-[^)]+)\)', r'](' + Path(full_path).name + r'#\1)', x) for x in text]
+        text += ['**Alternative** chapters prefer their own first moves; overall uses the earliest chapter and first PGN choice.', '']
+    text += [f'Chapter entry explanations, strengths, vulnerabilities and evidence details: [complete report]({Path(full_path).name}).', '']
+    text = [re.sub(r'\]\(#([^)]+)\)', r'](' + Path(full_path).name + r'#\1)', x) for x in text]
     return '\n'.join(row.rstrip() for row in text)
+
 
 def generate(paths, full_path=None, summary_path=None, *, strict=True, require_complete=False, top=10, chapter_top=5, position_top=20):
     if not paths or min(top, chapter_top, position_top) < 1:

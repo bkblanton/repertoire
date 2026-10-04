@@ -274,8 +274,8 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     summary = (tmp_path/'summary.md').read_text()
     assert '<summary>All 1 White chapters</summary>' in summary and '<summary>All 1 Black chapters</summary>' in summary
     assert 'Posterior mean' not in summary and 'Empirical score' not in summary
-    assert white_row in summary
-    assert black_row in summary
+    assert f'| White | 80.00% ({cp(.8)} cp) | 70.00% ({cp(.7)} cp) | -10.00%' in summary
+    assert f'| Black | 20.00% ({cp(.2)} cp) | 30.00% ({cp(.3)} cp) | +10.00%' in summary
     assert 'Posterior' not in summary and str(tmp_path) not in summary
     assert not (tmp_path/'black.study-description.md').exists()
 

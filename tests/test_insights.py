@@ -142,7 +142,8 @@ def test_own_summary_ranking_weights_reach_filters_sparse_and_preserves_cp():
     assert games_per_encounter(None) == 'unavailable'
     refs = Chapters(dict(color='white', chapters=[]))
     rendered = '\n'.join(summary_own_priorities(ranked, refs, strongest=True))
-    assert '| 10.00% | 10 | +1.00% | ' + cp_change(.6, .5) + ' | unavailable | +0.1000% |' in rendered
+    assert '| 10.00%<br>1 per 10 games |' in rendered
+    assert cp_change(.6, .5) + ' cp)' in rendered and '+0.1000%' in rendered
     assert 'sparse' not in rendered
 
 

@@ -450,6 +450,25 @@ def write_outputs(report, path, refresh_rating_provenance=False):
         for family, digest in m['supporting_sha256'].items():
             if hashlib.sha256(path.with_suffix(f'.{family}.json').read_bytes()).hexdigest() != digest:
                 raise ValueError('Rating supporting analysis changed before comparison refresh')
+    insight_path = path.with_suffix('.insights.json'); insight = None
+    if refresh_rating_provenance and insight_path.exists():
+        from .report_insights import move_decomposition
+        insight = json.loads(insight_path.read_bytes()); m = insight['manifest']
+        if insight['color'] != report['color'] or any(m.get(k) != report['manifest'][k]
+                for k in ('report_sha256', 'input_sha256', 'filters')):
+            raise ValueError('Report insights differ from saved comparison snapshot')
+        for family, digest in m['supporting_sha256'].items():
+            if hashlib.sha256(path.with_suffix(f'.{family}.json').read_bytes()).hexdigest() != digest:
+                raise ValueError('Report insight evidence changed before comparison refresh')
+        scopes = {s['id']: s for s in insight['scopes']}
+        for sid, scope in [('overall', report['overall']), *[(s['id'], s) for s in report['chapters']]]:
+            for row in scope['all_signed_rows']:
+                if row['kind'] != 'own': continue
+                saved = scopes[sid]['moves'][row['id']]
+                for field, value in move_decomposition(row).items():
+                    original = saved.get(field)
+                    if (value is None) != (original is None) or (value is not None and not np.isclose(value, original, atol=1e-10, rtol=0)):
+                        raise ValueError('Comparison values changed; regenerate report insights before combining')
     companion.write_text(json.dumps(report, indent=2, allow_nan=False), encoding='utf-8')
     if rating is not None:
         # Only own score comparisons changed; all move identities and rating
@@ -457,6 +476,12 @@ def write_outputs(report, path, refresh_rating_provenance=False):
         rating['manifest']['supporting_sha256']['vulnerabilities'] = hashlib.sha256(companion.read_bytes()).hexdigest()
         rating['manifest']['comparison_provenance_updated_at'] = datetime.now(timezone.utc).isoformat()
         rating_path.write_text(json.dumps(rating, indent=2, allow_nan=False), encoding='utf-8')
+    if insight is not None:
+        # Only metadata changed. Numeric comparisons and their sampled intervals
+        # were proved identical before writing, so their provenance can follow.
+        insight['manifest']['supporting_sha256']['vulnerabilities'] = hashlib.sha256(companion.read_bytes()).hexdigest()
+        insight['manifest']['comparison_provenance_updated_at'] = datetime.now(timezone.utc).isoformat()
+        insight_path.write_text(json.dumps(insight, indent=2, allow_nan=False), encoding='utf-8')
 
 
 def main():

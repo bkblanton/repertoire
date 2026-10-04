@@ -11,9 +11,10 @@ from repertoire_score.character import analyze as character
 from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_equivalent, common_positions_for_scope, common_positions_section,
     combined_overall, cp, cp_change, elo_equivalent, generate, line, load, non_sparse_rows,
     position_contributions, strengths_section, summary_report, vulnerabilities_section)
-from repertoire_score.consolidated import sharpness_display
+from repertoire_score.consolidated import sharpness_display, spread_display
 from repertoire_score.preparation import analyze as preparation
 from repertoire_score.vulnerabilities import analyze as vulnerabilities
+from repertoire_score.report_insights import analyze as report_insights
 from test_chapter_policies import run_fixture
 
 
@@ -21,7 +22,7 @@ from test_chapter_policies import run_fixture
 def complete(tmp_path, monkeypatch):
     report, cache = run_fixture(tmp_path, monkeypatch, common_entry=True)
     path = tmp_path / 'white.json'
-    for name, analyze in [('vulnerabilities', vulnerabilities), ('preparation', preparation), ('character', character), ('ratings', ratings), ('openings', openings)]:
+    for name, analyze in [('vulnerabilities', vulnerabilities), ('preparation', preparation), ('character', character), ('ratings', ratings), ('openings', openings), ('insights', report_insights)]:
         data = analyze(path, cache)
         path.with_suffix(f'.{name}.json').write_text(json.dumps(data))
     return path, report
@@ -35,7 +36,7 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     prefix = f'| White | 50.00% | +0.00 | 40.00% | {cp(.4)} | -10.00% | {cp_change(.4, .5)} |'
     assert prefix in full
-    assert prefix in summary
+    assert f'| White | 50.00% (+0.00 cp) | 40.00% ({cp(.4)} cp) | -10.00% ({cp_change(.4, .5)} cp) |' in summary
     assert not re.search(r'^\| Black \|', full, flags=re.M) and '[Black](#black)' not in full
     assert prefix + ' -70.44 |' in full
     assert '[Combined](#combined)' not in full
@@ -107,8 +108,9 @@ def test_recursive_sharpness_in_overall_and_every_chapter(complete):
     bundle = generate([path])[0]
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
-    assert '| Sharpness |' in full and '| Sharpness |' in summary
-    assert '**Repertoire sharpness:**' in full
+    assert '| Score spread |' in full and '| Score spread |' in summary
+    assert '| Sharpness |' not in full + summary
+    assert '**Outcome volatility (formerly sharpness):**' in full
     scopes = {s['id']: s for s in bundle['character']['scopes']}
     for sid, score in [('overall', bundle['report']['overall']),
                        *[(c['id'], c['score']) for c in bundle['report']['chapters']]]:
@@ -116,7 +118,7 @@ def test_recursive_sharpness_in_overall_and_every_chapter(complete):
         assert outcomes == scopes[sid]['outcomes']
         assert outcomes['win_probability'] + outcomes['draw_probability'] / 2 == pytest.approx(score['raw_empirical_score'])
         if sid != 'overall':
-            assert f"sharpness **{number(outcomes['sharpness'])}%**" in full
+            assert f"outcome volatility **{number(outcomes['sharpness'])}%**" in full
 
 
 @pytest.mark.parametrize('field', ['report_sha256', 'input_sha256', 'filters', 'color'])
@@ -208,14 +210,14 @@ def test_destinations_and_relative_links(complete):
 
 def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch):
     import sys
-    from repertoire_score import vulnerabilities, preparation, character, ratings, correlations, attribution, openings
+    from repertoire_score import vulnerabilities, preparation, character, ratings, correlations, attribution, openings, report_insights
     directory = tmp_path / 'reports'
     data = directory / 'data'
     data.mkdir(parents=True)
     report, cache = run_fixture(data, monkeypatch)
     path = data / 'white.json'
     original = path.read_bytes()
-    for module in [vulnerabilities, preparation, character, ratings, openings]:
+    for module in [vulnerabilities, preparation, character, ratings, openings, report_insights]:
         monkeypatch.setattr(sys, 'argv', ['analysis', str(path), '--cache', str(cache)])
         module.main()
     monkeypatch.setattr(sys, 'argv', ['correlations', str(path), '--bootstrap-samples', '1000'])
@@ -276,9 +278,10 @@ def check_score_tables(text):
         if bounded:
             return (-1 if bounded[1] == '-' else 1) * float(bounded[2]) / 2
         return float(value)
-    score_headers = {'Starting baseline', 'Entry baseline', 'Parent database score', 'Repertoire score',
+    score_headers = {'Starting baseline', 'Entry baseline', 'Parent database score', 'Move database score', 'Repertoire score',
                      'Before reply (repertoire)', 'After reply (repertoire)', 'After reply (database)',
-                     'Score at stop', 'Score', 'Database score', 'Approximate 95% score interval'}
+                     'Score at stop', 'Score', 'Database score', 'Approximate 95% score interval',
+                     'Sparse-evidence sensitivity', 'Scores before / after (CP)'}
     checked = 0
     for block in re.findall(r'(?m)(?:^\|.*\|\n)+', text):
         rows = [[cell.strip() for cell in row.strip().strip('|').split('|')] for row in block.splitlines()]
@@ -289,6 +292,15 @@ def check_score_tables(text):
                 score = header in score_headers or (header == 'Value' and row[0] in (
                     'Approximate model-based 95% score interval', 'Conditional score bounds', 'Sparse-score sensitivity'))
                 if not score: continue
+                if ' cp)' in row[i]:
+                    pairs = re.findall(r'([\d.]+)% \(([+-]?(?:<)?[\d.]+|unavailable) cp\)', row[i])
+                    for percent, equivalent in pairs:
+                        if equivalent == 'unavailable': continue
+                        reproduced = 100 / (1 + math.exp(-.00368208 * numeric(equivalent)))
+                        assert reproduced == pytest.approx(float(percent), abs=.0055)
+                    assert pairs or 'unresolved' in row[i]
+                    checked += 1
+                    continue
                 assert 'CP' in headers[i + 1].upper() or 'CENTIPAWN' in headers[i + 1].upper()
                 percentages = re.findall(r'([\d.]+)%', row[i])
                 values = row[i + 1].split(' to ')
@@ -326,7 +338,7 @@ def test_every_score_table_has_direct_cp_and_comparisons_have_cp_delta(complete)
         check_score_tables((path.parent/name).read_text(encoding='utf-8'))
 
 
-def test_all_repertoire_score_tables_show_matching_sharpness(complete):
+def test_all_repertoire_score_tables_show_spread_without_extra_columns(complete):
     path, _ = complete
     bundles = generate([path])
     for filename in ('report.md', 'summary.md'):
@@ -334,16 +346,19 @@ def test_all_repertoire_score_tables_show_matching_sharpness(complete):
         for block in re.findall(r'(?m)(?:^\|.*\|\n)+', text):
             rows = [[c.strip() for c in row.strip().strip('|').split('|')] for row in block.splitlines()]
             headers = rows[0]
-            for score_header, sharpness_header in [('Repertoire score', 'Sharpness'),
-                    ('Before reply (repertoire)', 'Before sharpness'), ('After reply (repertoire)', 'After sharpness')]:
+            for score_header, spread_header in [('Repertoire score', 'Score spread'),
+                    ('Before reply (repertoire)', 'Score spread<br>Before / after'),
+                    ('After reply (repertoire)', 'Score spread<br>Before / after')]:
                 if score_header not in headers:
                     continue
-                assert sharpness_header in headers
+                assert spread_header in headers
                 for row in rows[2:]:
                     if re.search(r'\d+\.\d+%', row[headers.index(score_header)]):
-                        assert re.fullmatch(r'\d+\.\d+%', row[headers.index(sharpness_header)])
+                        assert re.match(r'\d+\.\d+%', row[headers.index(spread_header)])
             if 'Position type' in headers and 'Score' in headers:
-                assert 'Sharpness' in headers
+                assert 'Score spread' in headers
+            if filename == 'summary.md' and headers[0] == 'Chapter':
+                assert len(headers) == 9
     for scope in [bundles[0]['vulnerabilities']['overall'], *bundles[0]['vulnerabilities']['chapters']]:
         for row in scope['all_signed_rows']:
             if row['move_outcomes']:
@@ -363,14 +378,16 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     scope = dict(id='overall', rankings={'own': [], 'opponent': [
         dict(common, line='Prepared reply', prepared=True), dict(common, line='Unprepared reply', prepared=False)]})
     full = '\n'.join(vulnerabilities_section(scope, refs, 10))
-    expected = f"| 57.50% | {cp(.575)} | {sharpness_display(common.get('reference_outcomes'))} | 52.50% | {cp(.525)} | {sharpness_display(common.get('move_outcomes'))} | {cp_change(.525, .575)} | 5.00% | 0.1000% |"
-    assert full.count(expected) == 2
+    expected = (f"| 57.50% ({cp(.575)} cp) | 52.50% ({cp(.525)} cp) | "
+                f"{spread_display(common.get('reference_spread'), False)}<br>{spread_display(common.get('move_spread'), False)} | "
+                f"{cp_change(.525, .575)} | 5.00%<br>95%:")
+    assert full.count(expected) == 2 and full.count('0.1000%') == 2
     assert full.count('| CP delta | Drag | Weighted drag |') == 2
     assert centipawn_delta(.525, .575) < 0
     check_score_tables(full)
     bundle['vulnerabilities']['overall'] = scope
     summary = summary_report([bundle], path.parent/'report.md', None, None)
-    assert expected in summary and 'Prepared reply |' not in summary
+    assert f'{cp(.575)} cp)' in summary and f'{cp(.525)} cp)' in summary and 'Prepared reply |' not in summary
     check_score_tables(summary)
 
 
@@ -491,14 +508,20 @@ def test_incompatible_color_scopes_are_not_combined():
 
 def test_combined_sharpness_uses_owner_relative_wdl_mixture():
     from repertoire_score.sharpness import summarize
+    from repertoire_score.spread import stopping_counts
     white = score_bundle('white', 1., .5, 1, 1, 1000)
     black = score_bundle('black', 0., .5, 1, 1, 1)
     white['report']['overall']['outcomes'] = summarize([1., 0., 0., 0.])
     black['report']['overall']['outcomes'] = summarize([0., 0., 1., 0.])
-    outcomes = combined_overall([white, black])['outcomes']
+    white['report']['overall']['branch_score_spread'] = stopping_counts([0, 0, 0], True, 1.)
+    black['report']['overall']['branch_score_spread'] = stopping_counts([0, 0, 0], False, 0.)
+    combined = combined_overall([white, black])
+    outcomes = combined['outcomes']
     assert outcomes['win_probability'] == outcomes['loss_probability'] == .5
     assert outcomes['sharpness'] == 100.  # both separate sharpness values are zero
     assert outcomes['resolved_score'] == .5
+    assert combined['branch_score_spread']['variance'] == .25
+    assert combined['branch_score_spread']['standard_deviation'] == .5  # separate spreads are zero
 
 
 def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypatch):
@@ -515,9 +538,16 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
     prefix = f"| **Combined** | {100*result['starting_baseline']:.2f}% | {cp(result['starting_baseline'])} | {100*result['repertoire_score']:.2f}% | {cp(result['repertoire_score'])} | {result['difference_pp']:+.2f}% | {cp_change(result['repertoire_score'], result['starting_baseline'])} | {result['elo_equivalent']:+.2f} |"
     for filename in ['report.md', 'summary.md']:
         text = (path.parent/filename).read_text(encoding='utf-8')
-        assert prefix in text
+        if filename == 'report.md':
+            assert prefix in text
+        else:
+            assert f"| **Combined** | {100*result['starting_baseline']:.2f}% ({cp(result['starting_baseline'])} cp) | {100*result['repertoire_score']:.2f}% ({cp(result['repertoire_score'])} cp) |" in text
+            assert f"| {result['elo_equivalent']:+.2f} |" in text
         assert 'Elo equivalent' in text and '50% each' in text
-        assert 'Score CP' in text and 'Baseline CP' in text and 'CP delta' in text
+        if filename == 'report.md':
+            assert 'Score CP' in text and 'Baseline CP' in text and 'CP delta' in text
+        else:
+            assert 'Starting baseline' in text and 'Repertoire score' in text and ' cp)' in text
         assert 'not a measured rating gain' in text
     full = (path.parent/'report.md').read_text(encoding='utf-8')
     assert '[Combined](#combined)' in full and '<a id="combined"></a>' in full
@@ -543,8 +573,10 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     assert full.index('## White repertoire') < full.index('### Most common positions') < full.index('### Vulnerabilities')
     assert not re.search(r'^## Most common positions$',full,flags=re.M)
     block = full.split('### Most common positions', 1)[1].split('### White chapters', 1)[0]
-    assert '| Position (representative line) | Chapter source | Most common opening source | Reach in repertoire | Avg games per encounter | Repertoire score | Score CP | Sharpness | Games at position / reply |' in block
-    assert '| 1. e4 |' in block and f"| 100.00% | 1.0 | 40.00% | {cp(.4)} | {sharpness_display(bundles[0]['report']['overall']['outcomes'])} | 100 |" in block
+    assert '| Position (representative line) | Chapter source | Most common opening source | Reach in repertoire | Avg games per encounter | Repertoire score | Score CP | Score spread | Games at position / reply |' in block
+    scope = bundles[0]['character']['scopes'][0]
+    e4 = next(r for r in scope['positions'] if r['line'] == '1.e4')
+    assert '| 1. e4 |' in block and f"| 100.00% | 1.0 | 40.00% | {cp(.4)} | {spread_display(e4['branch_score_spread'])} | 100 |" in block
     assert '(PGN root)' not in block
     assert '1. e4' in block and '100.00%' in block
     assert '| 1. e4 e6 |' not in block
@@ -586,8 +618,8 @@ def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoi
     assert 'e4 c5' in unprepared and 'e4 e5 Nf3' not in unprepared
     assert 'e4 d5<br>White to move; no prepared reply' in unprepared
     assert 'e4 d5' not in prepared
-    assert '| Repertoire score | Score CP | Sharpness | Games at position / reply |' in prepared and f'| 60.00% | {cp(.6)} | unavailable | 1,234 |' in prepared
-    assert '| Database score | Score CP | Sharpness | Games at position / reply |' in unprepared and f'| 45.00% | {cp(.45)} | unavailable | 1,234† |' in unprepared
+    assert '| Repertoire score | Score CP | Score spread | Games at position / reply |' in prepared and f'| 60.00% | {cp(.6)} | unavailable | 1,234 |' in prepared
+    assert '| Database score | Score CP | Score spread | Games at position / reply |' in unprepared and f'| 45.00% | {cp(.45)} | unavailable | 1,234† |' in unprepared
     # Filter before the limit: the lower-frequency unprepared reply still appears.
     limited = '\n'.join(common_positions_section([bundle],1))
     assert 'e4 e5 Nf3' in limited and 'e4 c5' in limited and 'e4 e6 d4' not in limited
@@ -635,7 +667,7 @@ def test_first_pass_places_snapshot_notice_first_and_hides_chapter_tables(comple
         assert content.index('snapshot notice') < content.index('| Repertoire |')
         assert 'source PGN has changed' in content
         assert 'scored ' in content and 'database evidence retrieved' in content
-        assert content.count('| White | 50.00% |') == 1
+        assert content.count('| White | 50.00%' + (' |' if name == 'report.md' else ' (+0.00 cp) |')) == 1
         assert content.count('<details>') == content.count('</details>')
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
