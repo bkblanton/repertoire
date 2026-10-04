@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from repertoire_score.ratings import analyze as ratings
+from repertoire_score.openings import analyze as openings
 from repertoire_score.character import analyze as character
 from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_equivalent, common_positions_for_scope, common_positions_section,
     combined_overall, cp, cp_change, elo_equivalent, generate, line, load, non_sparse_rows,
@@ -20,7 +21,7 @@ from test_chapter_policies import run_fixture
 def complete(tmp_path, monkeypatch):
     report, cache = run_fixture(tmp_path, monkeypatch, common_entry=True)
     path = tmp_path / 'white.json'
-    for name, analyze in [('vulnerabilities', vulnerabilities), ('preparation', preparation), ('character', character), ('ratings', ratings)]:
+    for name, analyze in [('vulnerabilities', vulnerabilities), ('preparation', preparation), ('character', character), ('ratings', ratings), ('openings', openings)]:
         data = analyze(path, cache)
         path.with_suffix(f'.{name}.json').write_text(json.dumps(data))
     return path, report
@@ -54,6 +55,12 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     assert 'Exact first-entry positions' in full
     assert 'Posterior mean' not in full and 'Empirical score' not in full
     assert 'Study description' not in full + summary and '\u2014' not in full + summary
+    for rendered in (full, summary):
+        assert 'Most common opening source' in rendered and 'Unclassified (100.00%)' in rendered
+        for header in rendered.splitlines():
+            if header.startswith('| ') and any(label in header for label in
+                    ('Chapter source', 'Chapter context', 'Entry-position sources')):
+                assert 'Most common opening source' in header
     assert not bundles[0]['unavailable'] and bundles[0]['current_source']
     for p, content in originals.items():
         assert p.read_bytes() == content
@@ -201,14 +208,14 @@ def test_destinations_and_relative_links(complete):
 
 def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch):
     import sys
-    from repertoire_score import vulnerabilities, preparation, character, ratings, correlations, attribution
+    from repertoire_score import vulnerabilities, preparation, character, ratings, correlations, attribution, openings
     directory = tmp_path / 'reports'
     data = directory / 'data'
     data.mkdir(parents=True)
     report, cache = run_fixture(data, monkeypatch)
     path = data / 'white.json'
     original = path.read_bytes()
-    for module in [vulnerabilities, preparation, character, ratings]:
+    for module in [vulnerabilities, preparation, character, ratings, openings]:
         monkeypatch.setattr(sys, 'argv', ['analysis', str(path), '--cache', str(cache)])
         module.main()
     monkeypatch.setattr(sys, 'argv', ['correlations', str(path), '--bootstrap-samples', '1000'])
@@ -264,6 +271,11 @@ def test_centipawn_equivalent_is_direct_and_delta_subtracts_converted_scores():
 def check_score_tables(text):
     """Round-trip displayed CP back to its adjacent score and verify delta signs."""
     import math
+    def numeric(value):
+        bounded = re.fullmatch(r'([+-]?)<(\d+(?:\.\d+)?)', value)
+        if bounded:
+            return (-1 if bounded[1] == '-' else 1) * float(bounded[2]) / 2
+        return float(value)
     score_headers = {'Starting baseline', 'Entry baseline', 'Parent database score', 'Repertoire score',
                      'Before reply (repertoire)', 'After reply (repertoire)', 'After reply (database)',
                      'Score at stop', 'Score', 'Database score', 'Approximate 95% score interval'}
@@ -286,7 +298,7 @@ def check_score_tables(text):
                     assert len(percentages) == len(values)
                     for percent, equivalent in zip(percentages, values):
                         if equivalent == 'unavailable': continue  # exact boundary or missing evidence
-                        reproduced = 100 / (1 + math.exp(-.00368208 * float(equivalent)))
+                        reproduced = 100 / (1 + math.exp(-.00368208 * numeric(equivalent)))
                         assert reproduced == pytest.approx(float(percent), abs=.0055)
                 checked += 1
             if 'CP delta' in headers and any(h in headers for h in ('Before CP', 'Parent CP', 'Baseline CP')):
@@ -296,8 +308,15 @@ def check_score_tables(text):
                 if 'unavailable' in (before, after):
                     assert delta == 'unavailable'
                 else:
-                    assert float(delta) == pytest.approx(float(after) - float(before), abs=.0151)
+                    assert numeric(delta) == pytest.approx(numeric(after) - numeric(before), abs=.0151)
     assert checked > 0
+
+
+@pytest.mark.parametrize('sign', ['+', '-'])
+def test_score_table_checker_accepts_bounded_small_equivalents(sign):
+    check_score_tables('| Entry baseline | Baseline CP | Repertoire score | Score CP | CP delta |\n'
+                       '| --- | --- | --- | --- | --- |\n'
+                       f'| 50.00% | +0.00 | 50.00% | {sign}<0.01 | {sign}<0.01 |\n')
 
 
 def test_every_score_table_has_direct_cp_and_comparisons_have_cp_delta(complete):
@@ -524,7 +543,7 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     assert full.index('## White repertoire') < full.index('### Most common positions') < full.index('### Vulnerabilities')
     assert not re.search(r'^## Most common positions$',full,flags=re.M)
     block = full.split('### Most common positions', 1)[1].split('### White chapters', 1)[0]
-    assert '| Position (representative line) | Chapter source | Reach in repertoire | Avg games per encounter | Repertoire score | Score CP | Sharpness | Games at position / reply |' in block
+    assert '| Position (representative line) | Chapter source | Most common opening source | Reach in repertoire | Avg games per encounter | Repertoire score | Score CP | Sharpness | Games at position / reply |' in block
     assert '| 1. e4 |' in block and f"| 100.00% | 1.0 | 40.00% | {cp(.4)} | {sharpness_display(bundles[0]['report']['overall']['outcomes'])} | 100 |" in block
     assert '(PGN root)' not in block
     assert '1. e4' in block and '100.00%' in block

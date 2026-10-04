@@ -23,6 +23,7 @@ repertoire-vulnerabilities = "repertoire_score.vulnerabilities:main"
 repertoire-preparation = "repertoire_score.preparation:main"
 repertoire-character = "repertoire_score.character:main"
 repertoire-ratings = "repertoire_score.ratings:main"
+repertoire-openings = "repertoire_score.openings:main"
 repertoire-attribution = "repertoire_score.attribution:main"
 
 [build-system]
