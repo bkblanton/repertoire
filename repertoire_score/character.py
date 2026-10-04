@@ -63,7 +63,7 @@ def predictability_metrics(evaluator, reach, lines):
     opportunities = recorded_opportunities = bits = sparse_opportunities = 0.0
     for k, mass in reach.items():
         node = evaluator.graph.nodes[k]
-        if mass <= 0 or not node.edges or evaluator.facts[k]['turn'] == evaluator.color or evaluator.facts[k]['outcome'] is not None:
+        if mass <= 0 or evaluator.facts[k]['turn'] == evaluator.color or evaluator.facts[k]['outcome'] is not None:
             continue
         opportunities += mass
         data = evaluator.evidence[k]
@@ -189,7 +189,7 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
             kind = 'terminal'
         elif any(s[2] == 'unresolved_distribution' for s in evaluator.stops[k]):
             kind = 'unresolved_distribution'
-        elif not evaluator.graph.nodes[k].edges:
+        elif evaluator.facts[k]['turn'] == evaluator.color and not evaluator.graph.nodes[k].edges:
             kind = 'theory_leaf'
         else:
             kind = 'own_move' if evaluator.facts[k]['turn'] == evaluator.color else 'opponent_reply'
@@ -269,14 +269,24 @@ def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probabili
         profiles[kind] = position_profile([r for r in stops if r['type'] == kind], evaluator.color)
     unknown = sum(r['reach'] for r in stops if r['type'] == 'unresolved_distribution')
     wdl_values = recursive_wdl(evaluator)
-    return dict(positions=position_reach_rows(evaluator,starts,reach,lines,wdl_values),
+    positions = position_reach_rows(evaluator, starts, reach, lines, wdl_values)
+    gaps = gap_distribution(evaluator, starts, entry_probability)
+    unanswered = {r['position']: r['reach'] for r in positions
+        if r['to_move'] == ('white' if evaluator.color else 'black')
+        and r['kind'] in ('theory_leaf', 'unprepared_reply')}
+    first_gaps = {r['position']: r['reach'] for r in gaps['gaps']}
+    if set(unanswered) != set(first_gaps) or any(
+            not math.isclose(mass, first_gaps[k], abs_tol=1e-10) for k, mass in unanswered.items()):
+        raise AssertionError('Unanswered position reach must equal canonical first-gap reach')
+    return dict(positions=positions,
                 outcomes=scope_outcomes(evaluator, starts, wdl_values),
-                gap_coverage=gap_distribution(evaluator, starts, entry_probability),
+                gap_coverage=gaps,
                 reuse=reuse, predictability=predictability_metrics(evaluator,reach,lines),
                 position_profiles=profiles, stopping_outcomes=stops,
                 unresolved_opponent_distribution_mass=unknown,
                 validation=dict(resolved_score=float(value[0]), unresolved_score_mass=float(value[1]),
-                                stopping_mass=sum(r['reach'] for r in stops), depth_reproduced=True))
+                                stopping_mass=sum(r['reach'] for r in stops), depth_reproduced=True,
+                                unanswered_reach_matches_first_gaps=True))
 
 
 def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
@@ -338,7 +348,7 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
                 input_path=str(source),input_sha256=manifest['input_sha256'],filters=manifest['filters'],
                 cache_only=True,network_requests=0,evidence=explorer.provenance,uncached_positions=missing,
                 games=list(games),source_pgn_unchanged=True, gap_schema_version=1, outcome_schema_version=1,
-                position_outcome_schema_version=1,
+                position_outcome_schema_version=1, traversal_schema_version=2,
                 outcome_definition='Owner-relative WDL propagated through the exact score policy and stopping rules, including transpositions, cached parent-row deviations and weighted first entries. Missing outcomes remain unresolved.',
                 sharpness_definition='400 * (W + D/4 - (W + D/2)**2), normalized outcome variance on a 0-100 scale. Mix WDL before calculating sharpness; no priors or new API requests.',
                 gap_definition='First unanswered own-turn board under the selected policy, including cached opponent replies after prepared endpoints and all exact transpositions. Aggregate first-exit mass by board before sqrt(sum(p**2)); unknown distributions remain bounded.',

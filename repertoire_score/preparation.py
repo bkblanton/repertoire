@@ -41,10 +41,10 @@ class Evaluator:
             self.checking.remove(k)
             raise MissingEvidence(k)
         targets = set()
-        if node.edges:
-            if self.facts[k]['turn'] == self.color:
+        if self.facts[k]['outcome'] is None:
+            if node.edges and self.facts[k]['turn'] == self.color:
                 targets = {node.edges[m] for m in self.own_choices(k)}
-            else:
+            elif self.facts[k]['turn'] != self.color:
                 targets = set(node.edges.values()) | (self.facts[k]['possible_targets'] & self.graph.nodes.keys())
         try:
             for target in targets: self.check_structure(target)
@@ -97,9 +97,9 @@ class Evaluator:
                 raise MissingEvidence(k)
             data = self.evidence[k]
             total = sum(counts(data))
-            if not node.edges or not total:
+            if turn == self.color or not total:
                 value = self.stopping(counts(data))
-                stops.append((None, 1., 'theory_leaf' if not node.edges else 'unresolved_distribution', counts(data), None))
+                stops.append((None, 1., 'theory_leaf' if turn == self.color else 'unresolved_distribution', counts(data), None))
             else:
                 value, accounted = np.zeros(5), [0,0,0]
                 for row in data['moves']:
@@ -110,7 +110,6 @@ class Evaluator:
                         continue
                     move = row['uci']
                     target, fixed = self.facts[k]['after'][move]
-                    # The original scorer recognizes immediate transpositions only at nonleaves.
                     target = node.edges.get(move, target if target in self.graph.nodes else None)
                     if target:
                         value += p*self.value(target)
@@ -285,6 +284,7 @@ def analyze(path, cache='.cache/explorer'):
             report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(), input_sha256=manifest['input_sha256'],
             input_path=str(source), filters=manifest['filters'], evidence=explorer.provenance,
             cache_only=True, network_requests=0, uncached_positions=missing, insights_schema_version=1,
+            traversal_schema_version=2,
             depth_distribution_definition='Remaining own moves from the same scope entry mixture; survival probabilities and exact stopping depths retain transposed elapsed-depth histories. Missing reply distributions have finite structural bounds. Missing leaf scores do not affect depth.',
             entry_example_definition='Highest-probability single root-to-first-arrival path for each entry board. All routes contribute to entry weights; example probabilities are subsets, conditional on chapter entry.'),
         validation=dict(original_scores_reproduced=True, stopping_contributions_reproduced=True,

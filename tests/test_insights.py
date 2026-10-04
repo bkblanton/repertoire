@@ -22,7 +22,7 @@ def test_survival_and_stopping_depths_reproduce_expected_depth(tmp_path):
     result = depth_distribution(evaluator(g, evidence), {g.roots[0]: 1.})
     endings = {r['own_moves']: r for r in result['endings']}
     assert endings[2]['unprepared_reply'] == pytest.approx(.2)
-    assert endings[3]['prepared_endpoint'] == pytest.approx(.8)
+    assert endings[3]['other_stop'] == pytest.approx(.8)  # no recorded reply rows
     assert [r['probability'] for r in result['survival']] == pytest.approx([1, 1, 1, .8])
     assert result['expected_moves'] == pytest.approx(2.8)
     assert result['median_moves'] == 3
@@ -60,8 +60,8 @@ def test_transposed_arrivals_retain_different_elapsed_depths(tmp_path):
     endings = {r['own_moves']: r for r in result['endings']}
     assert endings[0]['unprepared_reply'] == pytest.approx(.1)
     assert endings[1]['unprepared_reply'] == pytest.approx(.1)
-    assert endings[1]['prepared_endpoint'] == pytest.approx(.4)
-    assert endings[2]['prepared_endpoint'] == pytest.approx(.4)
+    assert endings[1]['other_stop'] == pytest.approx(.4)
+    assert endings[2]['other_stop'] == pytest.approx(.4)
     assert result['expected_moves'] == pytest.approx(1.3)
     assert result['median_moves'] == 1
 

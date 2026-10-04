@@ -51,9 +51,9 @@ At our turn, select the first recorded move: main PGN variation before side vari
 
 All included PGN variations are assumed to represent repertoire content. Allow explicit exclusions for illustrative lines or annotated mistakes; do not infer exclusions from prose comments.
 
-At an opponent node with theory continuations, an unlisted move that immediately reaches a known position counts as a transposition into theory. Otherwise, it is a deviation, and evaluation stops there. Do not search through unknown positions for later re-entry.
+At every prepared opponent-turn position, including after the last move recorded in the PGN, expand its cached opponent response table. An unlisted move that immediately reaches a known position counts as a transposition into theory. Otherwise, it is a deviation, and evaluation stops there. Do not search through unknown positions for later re-entry or fetch their response tables.
 
-A position with no continuation in the merged repertoire is a theory leaf.
+A position with no prepared continuation at our turn is a theory leaf. An opponent-turn position with no recorded PGN continuation still uses its cached replies and can transpose back into preparation. Score, position reach, prepared depth, chapter entries, and opening sources all follow these same transitions. The reach of an unanswered own-turn board equals its first-gap probability, summed over all transposed arrivals.
 
 Detect reachable graph cycles after resolving our policy. For the initial implementation, fail with an actionable cycle report. Do not silently treat a repeated position as a draw. Exact repetition handling requires history beyond the canonical position key.
 

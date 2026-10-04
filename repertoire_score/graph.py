@@ -89,9 +89,12 @@ def resolve(graph, color, policy):
     transitions = {}
     for k, n in graph.nodes.items():
         board = chess.Board(n.fen)
-        if not n.edges:
+        if board.is_checkmate() or board.is_stalemate() or board.is_insufficient_material():
             transitions[k] = {}
         elif board.turn == color:
+            if not n.edges:
+                transitions[k] = {}
+                continue
             chosen = policy.get(k)
             if chosen is None:
                 chosen = next(iter(n.edges))
@@ -100,6 +103,8 @@ def resolve(graph, color, policy):
                 raise ValueError(f"Invalid policy at {k}: {weights}")
             transitions[k] = {m: (n.edges[m], w) for m, w in weights.items() if w > 0}
         else:
+            # Even the last prepared own move has cached opponent replies.
+            # An immediate reply into any known board resumes preparation.
             transitions[k] = {m: (target, None) for m, target in n.edges.items()}
             for move in board.legal_moves:
                 after = board.copy()

@@ -118,7 +118,7 @@ def test_transposition_incoming_mass_and_first_entry(tmp_path):
     m,o,r,s,v,p = setup(g,True,evidence,policy)
     flow,_ = forward(m,o,r,{root:1})
     leaf = position('Nf3 d5 g3 Nf6 Bg2')
-    assert flow[leaf,0][0] == pytest.approx(1)
+    assert sum(mass[0] for (k, _), mass in flow.items() if k == leaf) == pytest.approx(1)
     chapter = chapter_score(m,o,r,s,v,p,{root:1},[position('Nf3'),position('g3'),leaf],1000)
     assert chapter['entry_probability'] == pytest.approx(1)
     assert chapter['first_entry_weights'][leaf] == 0

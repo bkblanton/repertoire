@@ -34,7 +34,7 @@ def depth_distribution(evaluator, starts):
         if k in active: raise ValueError('Repertoire contains a reachable cycle')
         active.add(k)
         node, fact = evaluator.graph.nodes[k], evaluator.facts[k]
-        if not node.edges or fact['outcome'] is not None:
+        if fact['outcome'] is not None or (fact['turn'] == evaluator.color and not node.edges):
             result = 0
         elif fact['turn'] == evaluator.color:
             result = 1 + max(remaining(node.edges[m]) for m in evaluator.own_choices(k))

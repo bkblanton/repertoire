@@ -227,6 +227,8 @@ def analyze(args):
                            "positions": len(graph.nodes), "evaluated_positions": len({k for p in profiles for k in p['order']}),
                            "overall_policy_evaluated_positions": len(order), "root_weights": root_weights,
                            "conflict_resolution": "explicit policy overrides, otherwise first PGN move in first chapter order",
+                           "traversal_schema_version": 2,
+                           "traversal_rule": "At every prepared opponent-turn board, expand cached reply rows, including after the last recorded PGN move. Immediate transpositions into any known repertoire board resume preparation. Stop at an unanswered own-turn board, unprepared reply, terminal outcome, or unresolved evidence.",
                            "chapter_policy_semantics": "chapter first choices from roots, overall policy elsewhere; chapter comparison reach is separate from overall-policy region reach",
                            "policy_profile_count": len(profiles),
                            "overall_basis": "supplied root weights" if "root_weights" in config else "standard starting position" if absolute_reach else "conditional on custom PGN root",

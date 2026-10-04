@@ -45,7 +45,7 @@ def prepare(graph, transitions, order, color, evidence):
             data = evidence[k]
             residual = validate(data, k)
             total = sum(counts(data))
-            if not selected:
+            if board.turn == color:
                 model[k] = ModelNode("stop", [Branch(counts=counts(data), kind="theory_leaf")], total)
             elif not total:
                 model[k] = ModelNode("stop", [Branch(kind="unresolved_distribution")], 0,

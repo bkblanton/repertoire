@@ -33,9 +33,12 @@ def test_known_branching_entropy_and_depth(tmp_path):
     assert p['mean_entropy_bits'] == pytest.approx(entropy([.8,.2])/2)
     assert p['effective_replies'] == pytest.approx(2**(entropy([.8,.2])/2))
     assert p['expected_reply_information_bits'] == pytest.approx(entropy([.8,.2]))
-    assert p['recorded_reply_coverage'] == 1
+    # The final prepared move creates another opponent opportunity, but this
+    # fixture supplies only aggregate counts for it, without reply rows.
+    assert p['expected_opponent_opportunities'] == pytest.approx(2.8)
+    assert p['recorded_reply_coverage'] == pytest.approx(2 / 2.8)
     assert result['position_profiles']['deviation']['scope_mass'] == pytest.approx(.2)
-    assert result['position_profiles']['theory_leaf']['scope_mass'] == pytest.approx(.8)
+    assert result['position_profiles']['no_recorded_continuation']['scope_mass'] == pytest.approx(.8)
     deviation=next(r for r in result['stopping_outcomes'] if r['type']=='deviation')
     assert deviation['position'] == position('e4 e5 Nf3 d6')
     ranked = {r['position']:r for r in result['positions']}
@@ -54,7 +57,7 @@ def test_known_branching_entropy_and_depth(tmp_path):
     assert parent['database_score'] == pytest.approx(.38)  # unconstrained database games
     assert parent['games'] == 100
     leaf = ranked[position('e4 e5 Nf3 Nc6 Bb5')]
-    assert leaf['kind'] == 'theory_leaf' and leaf['reach'] == pytest.approx(.8)
+    assert leaf['kind'] == 'opponent_reply' and leaf['reach'] == pytest.approx(.8)
     assert leaf['repertoire_score'] == pytest.approx(.2) and leaf['games'] == 100
 
     for distribution in result['position_profiles']['all']['distributions'].values():
@@ -128,13 +131,14 @@ def test_unrecorded_and_zero_data_are_not_invented_replies(tmp_path,total,record
 
 
 
-def test_no_opponent_opportunity_is_unavailable_not_perfect_predictability(tmp_path):
+def test_endpoint_without_recorded_replies_is_unavailable_not_perfect_predictability(tmp_path):
     g=graph(tmp_path,'1. e4 *')
     evidence={k:data(100,0,0) for k in g.nodes}
     result=scope_metrics(Evaluator(g,True,evidence,chess_facts(g,True,evidence)),
                          {g.roots[0]:1},{k:'' for k in g.nodes})
     assert result['predictability']['effective_replies'] is None
-    assert result['predictability']['recorded_reply_coverage'] is None
+    assert result['predictability']['expected_opponent_opportunities'] == 1
+    assert result['predictability']['recorded_reply_coverage'] == 0
     assert result['reuse']['reachable_distinct_decisions'] == 1
     assert all(row['expected_distinct_decisions']==1 for row in result['reuse']['curve'])
 
