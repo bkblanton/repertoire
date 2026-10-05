@@ -179,7 +179,8 @@ def report_navigation(text):
                 parent = anchor
             headings.append((level, title, anchor, parent))
         body.append(item)
-    main_labels = {'combined': 'Combined', 'white': 'White', 'black': 'Black', 'correlations': 'Depth correlations'}
+    main_labels = {'combined': 'Combined', 'white': 'White', 'black': 'Black', 'correlations': 'Depth correlations',
+                   'rating-correlations': 'Rating correlations'}
     navigation = ['[Summary](summary.md) | ' + ' | '.join(
         f'[{main_labels.get(anchor, title)}](#{anchor})'
         for level, title, anchor, _ in headings if level == '##'), '']
@@ -314,6 +315,31 @@ def load_correlations(bundles, strict=True, require_complete=False):
         if strict:
             raise ValueError(f'{path}: correlations belong to different score snapshots; regenerate them before combining')
         return None, 'belongs to different score snapshots'
+    return result, None
+
+
+def load_rating_correlations(bundles, strict=True):
+    path = bundles[0]['path'].parent / 'opponent-rating-score-correlation.json'
+    if not path.exists():
+        return None, 'not generated'
+    result = json.loads(path.read_text(encoding='utf-8'))
+    expected = {b['report']['color']: b for b in bundles}
+    matches = set(result.get('results', {})) == set(expected)
+    for color, bundle in expected.items():
+        provenance = result.get('results', {}).get(color, {}).get('provenance', {})
+        hashes = provenance.get('hashes', {})
+        matches &= (hashes.get('score') == bundle['digest']
+                    and provenance.get('input_sha256') == bundle['report']['manifest']['input_sha256']
+                    and provenance.get('filters') == bundle['report']['manifest']['filters']
+                    and provenance.get('sparse_threshold') == bundle['report']['manifest']['sparse_threshold'])
+        for family in ('ratings', 'vulnerabilities'):
+            companion = bundle['path'].with_suffix(f'.{family}.json')
+            matches &= (family in bundle and companion.exists()
+                        and hashes.get(family) == hashlib.sha256(companion.read_bytes()).hexdigest())
+    if not matches:
+        if strict:
+            raise ValueError(f'{path}: rating correlations belong to different analysis snapshots; regenerate them before combining')
+        return None, 'belongs to different analysis snapshots'
     return result, None
 
 
@@ -566,10 +592,11 @@ def evidence_snapshot(bundles):
             return '<br>'.join(score_cell(v) for v in bounds) if bounds else 'unavailable'
         rows.append([bundle['report']['color'].title(), score_range(overall.get('posterior', {}).get('credible_interval_95')),
                      score_range(overall.get('sparse_sensitivity')), percentage(overall.get('sparse_mass'))])
-    return ['### Score uncertainty', '',
+    return ['<details>', '<summary>Score uncertainty</summary>', '',
             'Model intervals describe sampling under the saved population and priors. Sparse sensitivity lets flagged outcomes take any score from 0 to 1; '
             'it is a separate evidence stress test. [Limits and definitions](#methods).', '',
-            *table(['Repertoire', 'Approximate 95% score interval', 'Sparse-evidence sensitivity', 'Sparse probability'], rows)]
+            *table(['Repertoire', 'Approximate 95% score interval', 'Sparse-evidence sensitivity', 'Sparse probability'], rows),
+            '</details>', '']
 
 
 def overview(bundles, compact=False):
@@ -990,6 +1017,40 @@ def correlations_section(result, reason):
     return text
 
 
+def rating_correlations_section(result, reason):
+    from .rating_correlations import cell as rating_cell
+    text = section('## Opponent rating and score improvement', 'rating-correlations')
+    if not result:
+        return text + [f'Rating correlation analysis unavailable: {reason}. '
+                       'Generate it with `uv run python -m repertoire_score.rating_correlations` and the saved score files.', '']
+    text += ['This compares opponent replies from the same parent position. Rating delta is the reply cohort\'s average opponent rating minus the '
+             'reach-weighted mean rating of eligible replies at that parent. Score delta is its continuation score minus the '
+             'corresponding reach-weighted mean continuation score. Prepared replies use the recursive repertoire score; '
+             'unprepared replies use their cached parent move results. Weights are parent reach × reply frequency. '
+             'Canonical parent/reply pairs are counted once across transpositions; sparse replies are excluded.', '',
+             'Negative correlation means that higher-rated reply cohorts tend to leave the repertoire with lower continuation scores. '
+             'The slope expresses the associated score difference for +100 rating, in percentage points.', '']
+    headers = ['Repertoire', 'Replies / parent positions', 'Linear correlation (95% interval)',
+               'Score Δ per +100 rating (95% interval)']
+    def row(color, estimate):
+        return [color.title(), f"{estimate['replies']:,} / {estimate['parents']:,}", rating_cell(estimate),
+                rating_cell(estimate, 'slope_percent_per_100_rating', True)]
+    text += table(headers, [row(color, data['reply_associations']['all']) for color, data in result['results'].items()])
+    text += ['<details>', '<summary>Prepared replies, unprepared replies, and larger samples</summary>', '']
+    labels = {'prepared': 'Prepared replies', 'unprepared': 'Unprepared replies',
+              'at_least_1000_games': 'Replies with at least 1,000 games'}
+    text += table([headers[0], 'Reply set', *headers[1:]],
+                  [[color.title(), label, *row(color, data['reply_associations'][key])[1:]]
+                   for color, data in result['results'].items() for key, label in labels.items()])
+    text += ['</details>', '',
+             f"Brackets contain approximate 95% parent-bootstrap confidence intervals from {result['bootstrap_repetitions']:,} replicates. "
+             'Each replicate keeps all replies from a parent board together. Shared downstream evidence and overlapping historical games can '
+             'still link different parents. Intervals condition on the saved scores and ratings; they do not propagate database count uncertainty. '
+             'This describes associations between move-maker cohorts, rather than the effect of changing an individual opponent\'s rating. '
+             'The baseline is the local reply mean, and these scores are from the repertoire owner\'s perspective.', '']
+    return text
+
+
 def methods(bundles):
     text = section('## Definitions and evidence', 'methods')
     text += ['- **Opening names and reach:** use only exact opening names in cached repertoire-position responses. At a named board, all arrivals take its exact current name. At an unnamed board, each incoming route retains its last name and probability; merging routes does not give an opening the other routes’ mass. Unclassified routes stay unclassified. Structural potential labels from recorded alternatives are retained in JSON but never create probability. Reach absorbs flow on the first arrival at an exact opening name or a known named variation; inheritance alone cannot introduce an opening that a route has not entered. Broader categories match existing cached names at colon or comma boundaries, so parent and variation rows overlap; unrelated names are transitions rather than parent relationships. Per-board origin contributions track the joint probability of reaching that board after previously entering each opening, even after a later name reset. Divide by total board reach to obtain that opening’s share of arrivals. These overlapping origins are not an exclusive partition. Opening scores, baselines, depth and gap distributions share the same normalized first-entry weights and overall selected policy. No external dataset or unprepared child queries are used.',
@@ -1304,7 +1365,8 @@ def openings_section(bundle, refs, compact=False):
     return text + ['</details>', '']
 
 
-def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5, position_top=20):
+def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5, position_top=20,
+                rating_correlations=None, rating_correlation_reason='not generated'):
     combined = combined_overall(bundles)
     has_combined = combined is not None and 'unavailable' not in combined
     text = ['# Repertoire report', '',
@@ -1313,48 +1375,26 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             '<!-- report-navigation -->', '',
             *snapshot_notes(bundles),
             *section('## Combined repertoire' if has_combined else '## Score overview', 'combined' if has_combined else 'overview'),
-            *overview(bundles), overview_notes(bundles), '', *evidence_snapshot(bundles)]
+            *overview(bundles), overview_notes(bundles), '']
     for b in bundles:
         r = b['report']; color = r['color']; refs = Chapters(r, b.get('openings')); o = r['overall']
         characters = scope_by_id(b.get('character'))
         preparation = scope_by_id(b.get('preparation'))
         vulnerabilities = scope_by_id(b.get('vulnerabilities'), 'chapters')
         text += section(f'## {color.title()} repertoire', color)
-        text += ['### Score and evidence limits', '']
-        interval = o.get('posterior', {}).get('credible_interval_95')
-        text += ['<details>', '<summary>Score and evidence limits</summary>', '']
-        text += table(['Measure', 'Value', 'Centipawn equivalent (cp)'], [
-            ['Approximate model-based 95% score interval', ' to '.join(map(percentage, interval)) if interval else 'unavailable', cp_interval(interval)],
-            ['Unresolved probability', percentage(o['unresolved_mass']), 'n/a'],
-            ['Conditional score bounds', ' to '.join(map(percentage, o['conditional_bounds'])), cp_interval(o['conditional_bounds'])],
-            ['Sparse probability', percentage(o['sparse_mass']), 'n/a'],
-            ['Sparse-score sensitivity', ' to '.join(map(percentage, o['sparse_sensitivity'])), cp_interval(o['sparse_sensitivity'])]])
-        text += table(['Stopping type', 'Probability'], [[k.replace('_', ' ').capitalize(), percentage(v)] for k, v in o['masses'].items()])
-        text += ['</details>', '']
-        text += gap_section(characters.get('overall'), refs=refs, top=top)
-        text += branch_spread_section(characters.get('overall'))
-        text += common_positions_section([b], position_top)
-        text += openings_section(b, refs)
-        text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
         text += section(f'### {color.title()} chapters ({len(r["chapters"])})', f'{color}-chapters')
         text += ['Entry probability is the chance of first reaching any position in a chapter through any move order. Scores, baselines, depth, and equivalent gap reach after entry are conditional on that entry. '
                  'Weighted gap reach contribution is chapter entry probability times equivalent gap reach after entry. '
                  'Alternative chapters use their own comparison policy. Chapters and gap positions can overlap, so weighted contributions are not additive.', '', *chapter_table(r, refs)]
+        text += common_positions_section([b], position_top)
+        text += openings_section(b, refs)
         text += vulnerabilities_section(b.get('vulnerabilities', {}).get('overall'), refs, top)
         text += strengths_section(b.get('vulnerabilities', {}).get('overall'), characters.get('overall'), refs, top,
                                   sparse_threshold=r['manifest']['sparse_threshold'])
+        text += gap_section(characters.get('overall'), refs=refs, top=top)
+        text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
+        text += branch_spread_section(characters.get('overall'))
         text += character_section(characters.get('overall'), refs, min(top, 5))
-        text += section('### Uncertainty priorities and prior sensitivity', f'{color}-uncertainty-prior-sensitivity')
-        text += ['<details>', '<summary>Uncertainty priorities and prior sensitivity</summary>', '',
-                 'Priority is posterior mean reach multiplied by the stopping-score interval width. This is a review heuristic, not additive variance attribution.', '']
-        text += table(['Stopping route', 'Chapter source / context', 'Priority', 'Games', 'Avg opponent rating', 'Rating Δ vs parent'],
-                      [[line(' '.join(e['representative_path_san'])), refs.sources(e), score_points(100 * e['uncertainty_priority'], 4),
-                        f"{e['sample_count']:,}", opponent_rating(e.get('opponent_rating')), rating_difference(e.get('opponent_rating'))] for e in sorted(r['events'], key=lambda e: e['uncertainty_priority'], reverse=True)[:top]])
-        text += table(['Owner W/D/L prior', 'Approximate 95% score interval', 'Centipawn interval (cp)'],
-                      [[str(p['prior']), ' to '.join(map(percentage, p['overall']['posterior']['credible_interval_95'])),
-                        cp_interval(p['overall']['posterior']['credible_interval_95'])]
-                       for p in r.get('prior_sensitivity', [])])
-        text += ['</details>', '']
         text += section('### Chapter-by-chapter analysis', f'{color}-chapter-analysis')
         for c in r['chapters']:
             cid = c['id']; s = c['score']; base = c.get('entry_baseline', {})
@@ -1381,18 +1421,14 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
                 text += [f"{char['reuse']['reachable_distinct_decisions']} distinct own decisions; {number(char['predictability']['effective_replies'])} effective replies; "
                          f"{number(char['position_profiles']['all']['effective_pawn_structures'])} effective boundary pawn structures.", '']
             text += ['<details>', f'<summary>Analysis, lines, and entry routes for {color[0].upper()}{refs.entries[cid][0]}</summary>', '']
-            interval = s.get('posterior', {}).get('credible_interval_95')
-            if interval:
-                text += [f"Approximate 95% score interval: {' to '.join(map(percentage, interval))}; unresolved probability: {percentage(s.get('unresolved_mass'))}; "
-                         f"sparse-score sensitivity: {' to '.join(map(percentage, s.get('sparse_sensitivity', [])))}.", '']
-            text += gap_section(char, level='#####', refs=refs, top=chapter_top)
-            text += branch_spread_section(char, level='#####')
             text += common_positions_for_scope(char or {'id': cid}, refs, position_top, level='#####',
                                                anchor=refs.anchor(cid) + '-common-positions')
-            text += depth_section(preparation.get(cid), level='#####', anchor=refs.anchor(cid) + '-prepared-depth')
             text += vulnerabilities_section(vulnerabilities.get(cid), refs, chapter_top, level='#####')
             text += strengths_section(vulnerabilities.get(cid), char, refs, chapter_top, level='#####',
                                       sparse_threshold=r['manifest']['sparse_threshold'])
+            text += gap_section(char, level='#####', refs=refs, top=chapter_top)
+            text += depth_section(preparation.get(cid), level='#####', anchor=refs.anchor(cid) + '-prepared-depth')
+            text += branch_spread_section(char, level='#####')
             text += character_section(char, refs, chapter_top, level='#####')
             transitions = [t for t in r.get('chapter_transitions', []) if t['source_id'] == cid
                            and t.get('conditional_probability') is not None and t['conditional_probability'] > 0]
@@ -1403,8 +1439,36 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
                               [[refs.label(t['destination_id'], True), percentage(t['conditional_probability'])]
                                for t in sorted(transitions, key=lambda t: t['conditional_probability'], reverse=True)[:5]])
             text += entry_routes_section(c, preparation.get(cid), refs)
+            interval = s.get('posterior', {}).get('credible_interval_95')
+            if interval:
+                text += ['##### Score interval and evidence limits', '',
+                         f"Approximate 95% score interval: {' to '.join(map(percentage, interval))}; unresolved probability: {percentage(s.get('unresolved_mass'))}; "
+                         f"sparse-score sensitivity: {' to '.join(map(percentage, s.get('sparse_sensitivity', [])))}.", '']
             text += ['</details>', '']
-    text += correlations_section(correlations, correlation_reason) + methods(bundles)
+        text += ['### Score and evidence limits', '']
+        interval = o.get('posterior', {}).get('credible_interval_95')
+        text += ['<details>', '<summary>Score and evidence limits</summary>', '']
+        text += table(['Measure', 'Value', 'Centipawn equivalent (cp)'], [
+            ['Approximate model-based 95% score interval', ' to '.join(map(percentage, interval)) if interval else 'unavailable', cp_interval(interval)],
+            ['Unresolved probability', percentage(o['unresolved_mass']), 'n/a'],
+            ['Conditional score bounds', ' to '.join(map(percentage, o['conditional_bounds'])), cp_interval(o['conditional_bounds'])],
+            ['Sparse probability', percentage(o['sparse_mass']), 'n/a'],
+            ['Sparse-score sensitivity', ' to '.join(map(percentage, o['sparse_sensitivity'])), cp_interval(o['sparse_sensitivity'])]])
+        text += table(['Stopping type', 'Probability'], [[k.replace('_', ' ').capitalize(), percentage(v)] for k, v in o['masses'].items()])
+        text += ['</details>', '']
+        text += section('### Uncertainty priorities and prior sensitivity', f'{color}-uncertainty-prior-sensitivity')
+        text += ['<details>', '<summary>Uncertainty priorities and prior sensitivity</summary>', '',
+                 'Priority is posterior mean reach multiplied by the stopping-score interval width. This is a review heuristic, not additive variance attribution.', '']
+        text += table(['Stopping route', 'Chapter source / context', 'Priority', 'Games', 'Avg opponent rating', 'Rating Δ vs parent'],
+                      [[line(' '.join(e['representative_path_san'])), refs.sources(e), score_points(100 * e['uncertainty_priority'], 4),
+                        f"{e['sample_count']:,}", opponent_rating(e.get('opponent_rating')), rating_difference(e.get('opponent_rating'))] for e in sorted(r['events'], key=lambda e: e['uncertainty_priority'], reverse=True)[:top]])
+        text += table(['Owner W/D/L prior', 'Approximate 95% score interval', 'Centipawn interval (cp)'],
+                      [[str(p['prior']), ' to '.join(map(percentage, p['overall']['posterior']['credible_interval_95'])),
+                        cp_interval(p['overall']['posterior']['credible_interval_95'])]
+                       for p in r.get('prior_sensitivity', [])])
+        text += ['</details>', '']
+    text += correlations_section(correlations, correlation_reason)
+    text += rating_correlations_section(rating_correlations, rating_correlation_reason) + methods(bundles)
     return '\n'.join(report_navigation(text)) + '\n'
 
 
@@ -1419,18 +1483,15 @@ def summary_report(bundles, full_path, correlations, correlation_reason):
         char = scope_by_id(b.get('character')).get('overall', {})
         moves = b.get('vulnerabilities', {}).get('overall', {})
         text += [f'## {color.title()} repertoire', '',
-                 f"**Equivalent gap reach: {gap_percentage(char.get('gap_coverage'))}.** "
-                 f"Branch score spread **{percentage((char.get('branch_score_spread') or {}).get('standard_deviation'))}**. "
-                 f"Outcome volatility **{sharpness_display(r['overall'].get('outcomes'))}**. "
-                 f'[Definitions]({Path(full_path).name}#methods).', '']
+                 '<details>', f'<summary>All {len(r["chapters"])} {color.title()} chapters</summary>', '',
+                 'Chapter scores and gap reach are conditional on first entry through any move order. '
+                 'Weighted gap reach contribution multiplies the conditional value by chapter reach; overlapping chapters are not additive.', '',
+                 *chapter_table(r, refs, compact=True), '</details>', '']
         text += openings_section(b, refs, compact=True)
-        text += gap_section(char, refs=refs, top=5, compact=True)
         text += ['Own comparisons rank by reach × gain or drag. Move and prep components sum to the total gain; '
                  'the components describe historical cohorts and prepared continuations. Local rankings and model limits are in the full report.', '']
         own_bad = own_priorities(moves.get('rankings', {}).get('own', []))
         own_good = own_priorities(moves.get('strengths', []), strongest=True)
-        if own_good:
-            text += ['### Own moves with the largest weighted gain', '', *summary_own_priorities(own_good[:5], refs, strongest=True)]
         if own_bad:
             text += ['### Own moves with the largest weighted drag', '', *summary_own_priorities(own_bad[:5], refs)]
         replies = [x for x in non_sparse_rows(moves.get('rankings', {}).get('opponent', [])) if not x['prepared']][:5]
@@ -1447,6 +1508,8 @@ def summary_report(bundles, full_path, correlations, correlation_reason):
                               score_points(x['weighted_drag_pp'], 4), f"{x['sample_count']:,}",
                               opponent_rating(x.get('opponent_rating')) + '<br>Δ ' + rating_difference(x.get('opponent_rating'))]
                              for x in replies])]
+        if own_good:
+            text += ['### Own moves with the largest weighted gain', '', *summary_own_priorities(own_good[:5], refs, strongest=True)]
         contributions = non_sparse_rows(position_contributions(char, color, r['manifest']['sparse_threshold']))[:5]
         if contributions:
             text += ['### Largest position contributions', '',
@@ -1455,6 +1518,11 @@ def summary_report(bundles, full_path, correlations, correlation_reason):
                             [[position_label(x, color), refs.sources(x), percentage(x['reach']), score_cell(x['score']),
                               spread_display(x.get('branch_score_spread')), score_points(x['contribution_pp'], 4),
                               opponent_rating(x.get('opponent_rating'))] for x in contributions])]
+        text += [f"**Equivalent gap reach: {gap_percentage(char.get('gap_coverage'))}.** "
+                 f"Branch score spread **{percentage((char.get('branch_score_spread') or {}).get('standard_deviation'))}**. "
+                 f"Outcome volatility **{sharpness_display(r['overall'].get('outcomes'))}**. "
+                 f'[Definitions]({Path(full_path).name}#methods).', '']
+        text += gap_section(char, refs=refs, top=5, compact=True)
         prep = scope_by_id(b.get('preparation')).get('overall', {}).get('depth_distribution', {})
         median = prep.get('median_moves')
         if median is not None:
@@ -1464,10 +1532,6 @@ def summary_report(bundles, full_path, correlations, correlation_reason):
             curve = next((x for x in reuse['curve'] if x['games'] == 100), None)
             text += [f"{reuse['reachable_distinct_decisions']} distinct own decisions; **{number(pred['effective_replies'])} effective opponent replies**. "
                      + (f"After 100 modeled games, expect about {number(curve['expected_distinct_decisions'], 0)} distinct decisions." if curve else ''), '']
-        text += ['<details>', f'<summary>All {len(r["chapters"])} {color.title()} chapters</summary>', '',
-                 'Chapter scores and gap reach are conditional on first entry through any move order. '
-                 'Weighted gap reach contribution multiplies the conditional value by chapter reach; overlapping chapters are not additive.', '',
-                 *chapter_table(r, refs, compact=True), '</details>', '']
     text += ['Positive gain and delta are favorable; positive drag is a deficit. CP delta is after minus before. '
              'Avg games per encounter is 1 / reach for games with that color. Line comparisons overlap and cannot be added. '
              'Ratings describe local opponents and do not adjust scores. Local 95% bands are approximate prior-completed model intervals, not causal gain intervals.', '']
@@ -1483,13 +1547,15 @@ def generate(paths, full_path=None, summary_path=None, *, strict=True, require_c
         raise ValueError('Supply reports and positive table lengths')
     bundles = load(paths, strict, require_complete)
     correlations, reason = load_correlations(bundles, strict, require_complete)
+    rating_correlations, rating_reason = load_rating_correlations(bundles, strict)
     full_path = Path(full_path) if full_path else report_directory(bundles[0]['path']) / 'report.md'
     summary_path = Path(summary_path) if summary_path else full_path.parent / 'summary.md'
     if full_path.resolve() == summary_path.resolve():
         raise ValueError('Report and summary must be different files')
     if any(p.suffix.lower() != '.md' for p in (full_path, summary_path)):
         raise ValueError('Report and summary destinations must be Markdown (.md) files')
-    full_text = full_report(bundles, correlations, reason, top, chapter_top, position_top)
+    full_text = full_report(bundles, correlations, reason, top, chapter_top, position_top,
+                            rating_correlations, rating_reason)
     summary_text = summary_report(bundles, full_path, correlations, reason)
     full_text = full_text.replace('[Summary](summary.md)', f'[Summary]({summary_path.name})')
     # Use relative paths even when callers place the two outputs in different folders.

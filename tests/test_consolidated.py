@@ -178,6 +178,37 @@ def test_stale_correlations_rejected_and_matching_intervals_shown(complete):
     assert 'Correlation analysis unavailable: belongs to different score snapshots' in (path.parent / 'report.md').read_text()
 
 
+def test_rating_correlation_intervals_render_beside_depth_and_reject_stale_inputs(complete):
+    from repertoire_score import rating_correlations
+    path, _ = complete
+    result = rating_correlations.analyze([path], repetitions=1000, seed=7)
+    rows = [dict(position=str(i), rating=x + 400*i, score=y + .1*i, weight=w)
+            for i in range(4) for x, y, w in ((1500, .6, 1), (1600, .55, 2), (1700, .5, 1))]
+    result['results']['white']['reply_associations']['all'] = rating_correlations.within_parent(rows, 1000, 7)
+    target = path.parent / 'opponent-rating-score-correlation.json'
+    target.write_text(json.dumps(result), encoding='utf-8')
+    generate([path])
+    full = (path.parent / 'report.md').read_text(encoding='utf-8')
+    assert full.index('## Prepared depth and score improvement') < full.index('## Opponent rating and score improvement') < full.index('## Definitions and evidence')
+    assert '[Rating correlations](#rating-correlations)' in full
+    assert '| -1.000 [-1.000, -1.000] | -5.000% [-5.000%, -5.000%] |' in full
+    assert 'reach-weighted mean continuation score' in full and '1,000 replicates' in full
+    assert 'parent-bootstrap confidence intervals' in full
+    assert '<summary>Prepared replies, unprepared replies, and larger samples</summary>' in full
+    originals = {name: (path.parent / name).read_bytes() for name in ('report.md', 'summary.md')}
+    hashes = result['results']['white']['provenance']['hashes']
+    for family in ('score', 'ratings', 'vulnerabilities'):
+        original = hashes[family]
+        hashes[family] = 'wrong'
+        target.write_text(json.dumps(result), encoding='utf-8')
+        with pytest.raises(ValueError, match='rating correlations belong to different analysis snapshots'):
+            generate([path])
+        assert all((path.parent / name).read_bytes() == value for name, value in originals.items())
+        hashes[family] = original
+    generate([path], strict=False)
+    assert 'Rating correlation analysis unavailable: belongs to different analysis snapshots' in (path.parent / 'report.md').read_text()
+
+
 def test_compact_chapter_sources_and_readable_notation(complete):
     _, report = complete
     refs = Chapters(report)
@@ -211,7 +242,7 @@ def test_destinations_and_relative_links(complete):
 
 def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch):
     import sys
-    from repertoire_score import vulnerabilities, preparation, character, ratings, correlations, attribution, openings, report_insights
+    from repertoire_score import vulnerabilities, preparation, character, ratings, correlations, rating_correlations, attribution, openings, report_insights
     directory = tmp_path / 'reports'
     data = directory / 'data'
     data.mkdir(parents=True)
@@ -226,6 +257,8 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     generate([path], require_complete=True)
     assert path.read_bytes() == original
     attribution.regenerate([path])
+    rating_result = rating_correlations.analyze([path], repetitions=1000)
+    (data / 'opponent-rating-score-correlation.json').write_text(json.dumps(rating_result), encoding='utf-8')
     generate([path], require_complete=True)
     assert set(p.relative_to(directory).as_posix() for p in directory.rglob('*.md')) == {'report.md', 'summary.md'}
     full = (directory / 'report.md').read_text()
@@ -237,6 +270,7 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     assert 'not generated' not in full
     assert (data / '.report-index.json').exists()
     assert (data / 'depth-delta-correlation.json').exists()
+    assert (data / 'opponent-rating-score-correlation.json').exists()
     assert load([path], require_complete=True)[0]['current_source']
 
 
@@ -620,10 +654,19 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
     assert full.count('| **Combined** |') == 1
     for bundle in bundles:
         report = bundle['report']; color = report['color']
-        subsection = full.split(f'<a id="{color}"></a>', 1)[1]
+        subsection = re.split(r'^## ', full.split(f'<a id="{color}"></a>', 1)[1], flags=re.M)[1]
+        headings = re.findall(r'^### (.+)$', subsection, flags=re.M)
+        expected = [
+            f'{color.title()} chapters ({len(report["chapters"])})', 'Most common positions', 'Openings reached',
+            'Vulnerabilities', 'Strengths', 'Equivalent gap reach', 'Prepared-depth distribution',
+            'Branch score spread', 'Preparation, replies, and resulting positions', 'Chapter-by-chapter analysis',
+            'Score and evidence limits', 'Uncertainty priorities and prior sensitivity']
+        assert headings == [heading for heading in expected if heading in headings]
+        if not bundle['unavailable']:
+            assert headings == expected
         elo = elo_equivalent(report['overall']['raw_empirical_score'], report['starting_position_reference']['owner_score'])
         assert f'| {color.title()} |' in full and f'| {elo:+.2f} |' in full
-        assert subsection.index(f'## {color.title()} repertoire') < subsection.index(f'<a id="{color}-common-positions"')
+        assert subsection.index(f'{color.title()} repertoire') < subsection.index(f'<a id="{color}-common-positions"')
         if '### Vulnerabilities' in subsection:
             assert subsection.index('### Most common positions') < subsection.index('### Vulnerabilities')
     generate([path])
@@ -637,7 +680,7 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     assert '[Most common positions](#white-common-positions)' in full
     assert full.index('## White repertoire') < full.index('### Most common positions') < full.index('### Vulnerabilities')
     assert not re.search(r'^## Most common positions$',full,flags=re.M)
-    block = full.split('### Most common positions', 1)[1].split('### White chapters', 1)[0]
+    block = full.split('### Most common positions', 1)[1].split('### Openings reached', 1)[0]
     assert '| Position (representative line) | Chapter source | Most common opening source | Reach in repertoire<br>Avg games per encounter | Repertoire score | Score spread | Games at position / reply |' in block
     scope = bundles[0]['character']['scopes'][0]
     e4 = next(r for r in scope['positions'] if r['line'] == '1.e4')
@@ -718,7 +761,7 @@ def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(t
     block = text.split('<a id="white-chapter-2-common-positions"></a>', 1)[1].split('##### Strengths', 1)[0]
     assert '| 1. e4 e6 2. d4 d5 3. Nd2 Nf6 4. e5 |' in block
     assert f'| 100.00%<br>1 per 1.0 games | 90.00% ({cp(.9)} cp) |' in block  # conditional on entry, not multiplied by the 60% chapter reach
-    overall = text.split('### Most common positions', 1)[1].split('### White chapters', 1)[0]
+    overall = text.split('### Most common positions', 1)[1].split('### Openings reached', 1)[0]
     assert '3. Nd2 Nf6' not in overall  # overall still selects the Advance
     assert all(p.read_bytes() == data for p, data in before.items())
 
@@ -738,6 +781,12 @@ def test_first_pass_places_snapshot_notice_first_and_hides_chapter_tables(comple
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     assert full.index('### White chapters') < full.index('### Vulnerabilities')
     assert '<summary>All 3 White chapters</summary>' in summary
+    assert summary.index('<summary>All 3 White chapters</summary>') < summary.index('### Openings reached')
+    summary_headings = re.findall(r'^### (.+)$', summary.split('## White repertoire', 1)[1], flags=re.M)
+    expected = ['Openings reached', 'Own moves with the largest weighted drag',
+                'Unprepared replies with the largest weighted drag', 'Own moves with the largest weighted gain',
+                'Largest position contributions', 'Equivalent gap reach']
+    assert summary_headings == [heading for heading in expected if heading in summary_headings]
     assert 'Depth and improvement' not in summary and 'cluster-bootstrap' not in summary
     assert 'Strongest and weakest' not in full
 

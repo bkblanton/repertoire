@@ -149,17 +149,19 @@ def batch(tmp_path, monkeypatch):
 def test_batch_renders_once_and_reuses_unchanged_color(batch):
     run, white, black, renders = batch
     first = run()
-    assert first['built'] == 16 and renders == [1]
+    assert first['built'] == 17 and renders == [1]
     data_dir = white.parent / 'data'
+    assert (data_dir / 'opponent-rating-score-correlation.json').is_file()
+    assert '## Opponent rating and score improvement' in (white.parent / 'report.md').read_text(encoding='utf-8')
     old = build.file_inputs(data_dir.glob('white*.json'))
     second = run()
-    assert second['built'] == 0 and second['reused'] == 16 and renders == [1]
+    assert second['built'] == 0 and second['reused'] == 17 and renders == [1]
     black.write_text(black.read_text().replace('e4 e5', 'e4 {new comment} e5'))
     changed = run()
-    assert changed['reused'] == 7 and changed['built'] == 9 and renders == [1, 1]
+    assert changed['reused'] == 7 and changed['built'] == 10 and renders == [1, 1]
     assert build.file_inputs(data_dir.glob('white*.json')) == old
     forced = run(force=True)
-    assert forced['built'] == 16 and renders == [1, 1, 1]
+    assert forced['built'] == 17 and renders == [1, 1, 1]
 
 
 def test_failed_batch_preserves_readable_reports_and_resumes(batch, monkeypatch):
@@ -173,7 +175,7 @@ def test_failed_batch_preserves_readable_reports_and_resumes(batch, monkeypatch)
     assert renders == [] and full.read_text() == 'previous successful report'
     monkeypatch.setattr(build.preparation, 'analyze', original)
     resumed = run()
-    assert resumed['reused'] == 4 and resumed['built'] == 12 and renders == [1]
+    assert resumed['reused'] == 4 and resumed['built'] == 13 and renders == [1]
 
 
 def test_presentation_change_only_renders_and_missing_analysis_rebuilds_dependants(batch, monkeypatch):
@@ -183,9 +185,9 @@ def test_presentation_change_only_renders_and_missing_analysis_rebuilds_dependan
     monkeypatch.setattr(build, 'code_inputs', lambda presentation=False:
         dict(original(presentation), presentation_revision='new') if presentation else original(False))
     changed = run()
-    assert changed['built'] == 1 and changed['reused'] == 15
+    assert changed['built'] == 1 and changed['reused'] == 16
     assert changed['steps'][-1]['step'] == 'render' and renders == [1, 1]
     (black.parent / 'data' / 'black.character.json').unlink()
     recovered = run()
     assert {s['step'] for s in recovered['steps'] if s['status'] == 'built'} == {
-        'black.character', 'black.ratings', 'black.insights', 'render'}
+        'black.character', 'black.ratings', 'black.insights', 'rating-correlations', 'render'}

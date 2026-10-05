@@ -8,7 +8,7 @@ import time
 from types import SimpleNamespace
 
 from . import __main__ as scoring
-from . import character, correlations, openings, preparation, ratings, report_insights, vulnerabilities
+from . import character, correlations, openings, preparation, rating_correlations, ratings, report_insights, vulnerabilities
 from .consolidated import generate
 from .explorer import observe_cache
 from .layout import report_directory
@@ -131,8 +131,15 @@ def build(white_pgn, black_pgn, *, white_config='configs/white.json', black_conf
         runner.step('correlations',
             lambda: dict(code=analysis_code, files=file_inputs(paths), repetitions=repetitions, seed=20260929),
             [correlation], lambda: correlations.analyze(paths, correlation, repetitions=repetitions))
+        rating_correlation = directory / 'opponent-rating-score-correlation.json'
+        rating_inputs = paths + [path.with_suffix(f'.{family}.json') for path in paths
+                                for family in ('ratings', 'vulnerabilities')]
+        runner.step('rating-correlations',
+            lambda: dict(code=analysis_code, files=file_inputs(rating_inputs), repetitions=repetitions, seed=20261004),
+            [rating_correlation], lambda: write_json(rating_correlation,
+                rating_correlations.analyze(paths, repetitions=repetitions, seed=20261004)))
     folder = report_directory(paths[0])
-    render_inputs = paths + [path.with_suffix(f'.{family}.json') for path in paths for family in FAMILIES] + [correlation]
+    render_inputs = paths + [path.with_suffix(f'.{family}.json') for path in paths for family in FAMILIES] + [correlation, rating_correlation]
     registry = directory / '.report-index.json'
     def render():
         generate(paths, require_complete=True)
