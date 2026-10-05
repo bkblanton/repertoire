@@ -1,0 +1,117 @@
+import json
+
+import httpx
+import numpy as np
+import pytest
+
+from repertoire_score.correlations import correlation
+from repertoire_score.evaluate import COMPLETED, backward
+from repertoire_score.model import Branch, ModelNode
+from repertoire_score.position_correlations import analyze, depths, metrics, reaches, weighted_rank
+from test_consolidated import complete
+from test_model import position
+
+
+def test_depth_and_reach_merge_transposed_continuations_in_each_joint_draw():
+    model = {
+        'root': ModelNode('own', [Branch(target='left', weight=.5), Branch(target='right', weight=.5)]),
+        'left': ModelNode('opponent', [Branch(target='shared'), Branch(counts=[50, 0, 50])]),
+        'right': ModelNode('opponent', [Branch(target='shared'), Branch(counts=[50, 0, 50])]),
+        'shared': ModelNode('own', [Branch(target='end', weight=1.)]),
+        'end': ModelNode('stop', [Branch(counts=[50, 0, 50])]),
+    }
+    order = ['end', 'shared', 'left', 'right', 'root']
+    p, q = np.array([.6, .8]), np.array([.2, .4])
+    outcome = np.array([.7, .9])
+    sampled = {'root': [(.5, None), (.5, None)], 'left': [(p, None), (1-p, .5)],
+               'right': [(q, None), (1-q, .5)], 'shared': [(1., None)], 'end': [(1., outcome)]}
+    depth = depths(model, order, sampled, 2)
+    reach = reaches(model, order, sampled, {'root': 1.}, 2)
+    assert np.allclose(depth['root'], [1.4, 1.6])
+    assert np.allclose(depth['left'], p)  # future depth excludes the root's selected move
+    assert np.allclose(depth['shared'], 1)
+    assert np.allclose(depth['end'], 0)
+    assert np.allclose(reach['shared'], [.4, .6])
+    assert np.allclose(reach['end'], reach['shared'])
+    values = backward(model, order, sampled, 30, 2)
+    assert np.allclose(values['root'][COMPLETED], reach['shared'] * outcome + (1-reach['shared']) * .5)
+
+
+def test_weighted_ranks_and_correlations_ignore_artificial_branch_duplication():
+    x, y, w = np.array([0., 1., 2.]), np.array([3., 1., 5.]), np.array([1., 2., 7.])
+    assert weighted_rank(x, w) == pytest.approx([.05, .2, .65])
+    original = metrics(x, y, w)
+    split = metrics([0., 1., 1., 2.], [3., 1., 1., 5.], [1., 1., 1., 7.])
+    for key in ('reach_weighted_pearson', 'reach_weighted_spearman', 'slope_pp_per_move'):
+        assert original[key] == pytest.approx(split[key])
+    assert original['reach_weighted_pearson'] == pytest.approx(correlation(x, y, w))
+    assert original['reach_weighted_pearson'] != pytest.approx(original['pearson'])
+    assert metrics([1., 1.], [2., 3.], [1., 1.])['reach_weighted_pearson'] is None
+    assert all(value is None for value in metrics([], [], []).values())
+    assert all(value is None for value in metrics([0., 1.], [0., 1.], [0., 0.]).values())
+
+
+def test_saved_analysis_is_cache_only_reproducible_and_uses_overall_policy(complete, monkeypatch):
+    path, report = complete
+    monkeypatch.setattr(httpx.Client, 'request', lambda *a, **k: pytest.fail('Must use cached evidence'))
+    original = {p: p.read_bytes() for p in path.parent.glob('*.json')}
+    source = path.parent / 'fixture.pgn'
+    pgn = source.read_bytes()
+    output = path.parent / 'prepared-depth-gain-correlation.json'
+    first = analyze([path], output, path.parent / 'cache', simulations=200, seed=7)
+    second = analyze([path], output, path.parent / 'cache', simulations=200, seed=7)
+    assert first['network_requests'] == 0
+    assert first['results'] == second['results']
+    result = first['results']['white']
+    assert result['validation']['root_depth_reproduced'] == pytest.approx(report['overall']['prepared_depth']['expected_moves'])
+    assert result['validation']['root_score_reproduced']
+    assert len({r['id'] for r in result['decisions']}) == result['n']
+    # Alternative Tarrasch decisions belong in their chapter report, not in this overall-policy correlation.
+    assert all(r['move'] != 'b1d2' for r in result['decisions'])
+    assert result['position_depths'][position('')] == pytest.approx(report['overall']['prepared_depth']['expected_moves'])
+    saved = json.loads(path.with_suffix('.vulnerabilities.json').read_bytes())
+    rows = {r['id']: r for r in saved['overall']['all_signed_rows']}
+    for row in result['decisions']:
+        assert row['depth'] == result['position_depths'][row['target']]
+        assert row['reach'] == pytest.approx(rows[row['id']]['branch_reach'])
+        assert row['future_preparation_gain_pp'] == pytest.approx(100*(row['repertoire_score']-row['move_database_score']))
+        # Total gain is immediate move gain plus future preparation gain.
+        total = 100*(row['repertoire_score']-rows[row['id']]['reference_score'])
+        immediate = 100*(row['move_database_score']-rows[row['id']]['reference_score'])
+        assert total == pytest.approx(immediate+row['future_preparation_gain_pp'])
+    for key, interval in result['confidence_intervals_95'].items():
+        assert interval['valid_replicates']+interval['invalid_replicates'] == 200
+        if result[key] is not None:
+            assert interval['bounds'] is not None
+            assert interval['bounds'][0] <= interval['bounds'][1]
+    assert source.read_bytes() == pgn
+    assert all(p.read_bytes() == content for p, content in original.items())
+
+
+def test_sparse_samples_and_stale_inputs_are_rejected(complete):
+    path, _ = complete
+    cache, output = path.parent / 'cache', path.parent / 'prepared-depth-gain-correlation.json'
+    companion = path.with_suffix('.vulnerabilities.json')
+    saved = json.loads(companion.read_bytes())
+    own = [r for r in saved['overall']['all_signed_rows'] if r['kind'] == 'own']
+    for row in own:
+        row['parent_sparse'] = True
+    companion.write_text(json.dumps(saved), encoding='utf-8')
+    result = analyze([path], output, cache, simulations=2)['results']['white']
+    assert result['n'] == 0 and result['exclusions']['sparse'] == len(own)
+    assert result['reach_weighted_pearson'] is None
+    assert result['confidence_intervals_95']['reach_weighted_pearson']['bounds'] is None
+    saved['manifest']['report_sha256'] = 'wrong'
+    companion.write_text(json.dumps(saved), encoding='utf-8')
+    with pytest.raises(ValueError, match='snapshot'):
+        analyze([path], output, cache, simulations=2)
+    (path.parent / 'fixture.pgn').write_text('changed source')
+    with pytest.raises(ValueError, match='PGN changed'):
+        analyze([path], output, cache, simulations=2)
+
+
+def test_invalid_sample_count_does_not_write_output(tmp_path):
+    output = tmp_path / 'out.json'
+    with pytest.raises(ValueError, match='positive simulation count'):
+        analyze([], output, simulations=0)
+    assert not output.exists()

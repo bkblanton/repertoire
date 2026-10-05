@@ -8,7 +8,7 @@ import time
 from types import SimpleNamespace
 
 from . import __main__ as scoring
-from . import character, correlations, openings, preparation, rating_correlations, ratings, report_insights, vulnerabilities
+from . import character, openings, position_correlations, preparation, rating_correlations, ratings, report_insights, vulnerabilities
 from .consolidated import generate
 from .explorer import observe_cache
 from .layout import report_directory
@@ -127,10 +127,13 @@ def build(white_pgn, black_pgn, *, white_config='configs/white.json', black_conf
                 runner.step(f'{path.stem}.{family}',
                     lambda required=required: dict(code=analysis_code, files=file_inputs(required), cache=cache),
                     [path.with_suffix(f'.{family}.json')], analyze)
-        correlation = directory / 'depth-delta-correlation.json'
+        correlation = directory / 'prepared-depth-gain-correlation.json'
+        preparation_inputs = paths + [path.with_suffix('.vulnerabilities.json') for path in paths]
         runner.step('correlations',
-            lambda: dict(code=analysis_code, files=file_inputs(paths), repetitions=repetitions, seed=20260929),
-            [correlation], lambda: correlations.analyze(paths, correlation, repetitions=repetitions))
+            lambda: dict(code=analysis_code, files=file_inputs(preparation_inputs), cache=cache,
+                         simulations=simulations, seed=20261005),
+            [correlation], lambda: position_correlations.analyze(paths, correlation, cache=cache,
+                                                               simulations=simulations, seed=20261005))
         rating_correlation = directory / 'opponent-rating-score-correlation.json'
         rating_inputs = paths + [path.with_suffix(f'.{family}.json') for path in paths
                                 for family in ('ratings', 'vulnerabilities')]

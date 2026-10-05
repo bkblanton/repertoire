@@ -38,9 +38,9 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     prefix = f'| White | 50.00% (+0.00 cp) | 40.00% ({cp(.4)} cp) | -10.00% ({cp_change(.4, .5)} cp) |'
     assert prefix in full
     assert f'| White | 50.00% (+0.00 cp) | 40.00% ({cp(.4)} cp) | -10.00% ({cp_change(.4, .5)} cp) |' in summary
-    assert not re.search(r'^\| Black \|', full, flags=re.M) and '[Black](#black)' not in full
+    assert not re.search(r'^\| Black \|', full, flags=re.M) and '[Black repertoire](#black)' not in full
     assert prefix + ' -70.44 |' in full
-    assert '[Combined](#combined)' not in full
+    assert '[Combined repertoire](#combined)' not in full
     assert 'Chapter reach (incl. transpositions)' in summary and 'Overall-policy reach' in summary
     assert 'Tarrasch Nf6' in summary and '**(alternative)**' in summary
     assert 'Prepared opponent replies' in full
@@ -157,23 +157,24 @@ def test_saved_snapshot_and_missing_analyses_are_explicit(tmp_path, monkeypatch)
 
 
 def test_stale_correlations_rejected_and_matching_intervals_shown(complete):
-    from repertoire_score.correlations import METRICS
+    from repertoire_score.position_correlations import analyze
     path, _ = complete
-    correlations = path.parent / 'depth-delta-correlation.json'
-    bundle = load([path])[0]
-    result = dict(n=3, cluster_count=2, **{k: .3 for k in METRICS},
-                  confidence_intervals_95={k: {'bounds': [.1, .5]} for k in METRICS})
-    correlations.write_text(json.dumps(dict(results={'white': result}, bootstrap={'repetitions': 1000},
-        provenance={'white': dict(report_sha256=bundle['digest'],
-            input_sha256=bundle['report']['manifest']['input_sha256'], filters=bundle['report']['manifest']['filters'])})))
+    correlations = path.parent / 'prepared-depth-gain-correlation.json'
+    analyze([path], correlations, path.parent / 'cache', simulations=100)
     generate([path], require_complete=True)
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
-    assert '95% cluster-bootstrap confidence intervals' in full and 'Rank correlation' in full
+    assert '95% model-based intervals' in full and 'Reach-weighted rank correlation' in full
+    assert '[Correlations](#correlations)' in full
+    assert '[Reach-weighted future preparation gain correlation](#preparation-correlation)' in full
+    assert 'Prepared depth and score improvement' not in full
     data = json.loads(correlations.read_text())
-    data['provenance']['white']['report_sha256'] = 'wrong'
-    correlations.write_text(json.dumps(data))
-    with pytest.raises(ValueError, match='different score snapshots'):
-        generate([path])
+    original = dict(data['provenance']['white'])
+    for key in ('report_sha256', 'vulnerabilities_sha256', 'prior', 'sparse_threshold'):
+        data['provenance']['white'][key] = 'wrong'
+        correlations.write_text(json.dumps(data))
+        with pytest.raises(ValueError, match='different score snapshots'):
+            generate([path])
+        data['provenance']['white'][key] = original[key]
     generate([path], strict=False)
     assert 'Correlation analysis unavailable: belongs to different score snapshots' in (path.parent / 'report.md').read_text()
 
@@ -189,8 +190,8 @@ def test_rating_correlation_intervals_render_beside_depth_and_reject_stale_input
     target.write_text(json.dumps(result), encoding='utf-8')
     generate([path])
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
-    assert full.index('## Prepared depth and score improvement') < full.index('## Opponent rating and score improvement') < full.index('## Definitions and evidence')
-    assert '[Rating correlations](#rating-correlations)' in full
+    assert full.index('\n## Correlations\n') < full.index('\n### Reach-weighted future preparation gain correlation\n') < full.index('\n### Opponent rating and score improvement\n') < full.index('\n## Definitions and evidence\n')
+    assert '[Opponent rating and score improvement](#rating-correlations)' in full
     assert '| -1.000 [-1.000, -1.000] | -5.000% [-5.000%, -5.000%] |' in full
     assert 'reach-weighted mean continuation score' in full and '1,000 replicates' in full
     assert 'parent-bootstrap confidence intervals' in full
@@ -242,7 +243,7 @@ def test_destinations_and_relative_links(complete):
 
 def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch):
     import sys
-    from repertoire_score import vulnerabilities, preparation, character, ratings, correlations, rating_correlations, attribution, openings, report_insights
+    from repertoire_score import vulnerabilities, preparation, character, ratings, position_correlations, rating_correlations, attribution, openings, report_insights
     directory = tmp_path / 'reports'
     data = directory / 'data'
     data.mkdir(parents=True)
@@ -252,11 +253,12 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     for module in [vulnerabilities, preparation, character, ratings, openings, report_insights]:
         monkeypatch.setattr(sys, 'argv', ['analysis', str(path), '--cache', str(cache)])
         module.main()
-    monkeypatch.setattr(sys, 'argv', ['correlations', str(path), '--bootstrap-samples', '1000'])
-    correlations.main()
+    monkeypatch.setattr(sys, 'argv', ['correlations', str(path), '--cache', str(cache), '--simulations', '100'])
+    position_correlations.main()
     generate([path], require_complete=True)
     assert path.read_bytes() == original
     attribution.regenerate([path])
+    position_correlations.analyze([path], data / 'prepared-depth-gain-correlation.json', cache, simulations=100)
     rating_result = rating_correlations.analyze([path], repetitions=1000)
     (data / 'opponent-rating-score-correlation.json').write_text(json.dumps(rating_result), encoding='utf-8')
     generate([path], require_complete=True)
@@ -264,12 +266,12 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     full = (directory / 'report.md').read_text()
     assert '[Scores](data/white.json)' in full
     assert '(data/white.vulnerabilities.json)' in full
-    assert '95% cluster-bootstrap confidence intervals' in full
+    assert '95% model-based intervals' in full
     assert '### Strengths' in full
     assert 'Strongest and weakest stopping outcomes' not in full
     assert 'not generated' not in full
     assert (data / '.report-index.json').exists()
-    assert (data / 'depth-delta-correlation.json').exists()
+    assert (data / 'prepared-depth-gain-correlation.json').exists()
     assert (data / 'opponent-rating-score-correlation.json').exists()
     assert load([path], require_complete=True)[0]['current_source']
 
@@ -415,7 +417,9 @@ def test_top_navigation_covers_all_major_sections_and_preserves_existing_anchors
     anchors = re.findall(r'<a id="([^"]+)"></a>\n\n#{2,3} ', rendered)
     assert set(anchors) <= set(re.findall(r'\]\(#([^)]+)\)', navigation))
     assert len(anchors) == len(set(anchors))
-    assert '[Chapter-by-chapter table](#white-chapters)' in navigation
+    assert '**Table of contents**\n\n- [Summary](summary.md)' in navigation
+    assert '\n- [White repertoire](#white)\n    - [Equivalent gap reach](#white-equivalent-gap-reach)' in navigation
+    assert '\n    - [Chapter-by-chapter table](#white-chapters)' in navigation
     assert 'white-equivalent-gap-reach' in anchors and 'black-equivalent-gap-reach' in anchors
     assert rendered.count('<a id="white-chapters">') == 1
     assert '#### W1. Test' in rendered and 'W1. Test' not in navigation
@@ -649,7 +653,7 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
             assert 'Starting baseline' in text and 'Repertoire score' in text and ' cp)' in text
         assert 'not a measured rating gain' in text
     full = (path.parent/'report.md').read_text(encoding='utf-8')
-    assert '[Combined](#combined)' in full and '<a id="combined"></a>' in full
+    assert '[Combined repertoire](#combined)' in full and '<a id="combined"></a>' in full
     assert '## Combined repertoire' in full and '50% each' in full
     assert full.count('| **Combined** |') == 1
     for bundle in bundles:

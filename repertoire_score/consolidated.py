@@ -13,7 +13,7 @@ from pathlib import Path
 
 import chess
 from .attribution import write_text
-from .correlations import METRICS, cell
+from .correlations import cell
 from .report import evidence_date, population_text
 from .layout import report_directory
 from .sharpness import FIELDS as OUTCOME_FIELDS, stopping_wdl, summarize as summarize_outcomes
@@ -156,7 +156,7 @@ def section(title, anchor=None):
 
 
 def report_navigation(text):
-    """Link every actual second- and third-level section from the report top."""
+    """Build a nested contents list from actual second- and third-level headings."""
     existing = set(re.findall(r'<a id="([^"]+)"', '\n'.join(text)))
     body, headings, parent = [], [], None
     for item in text:
@@ -179,25 +179,12 @@ def report_navigation(text):
                 parent = anchor
             headings.append((level, title, anchor, parent))
         body.append(item)
-    main_labels = {'combined': 'Combined', 'white': 'White', 'black': 'Black', 'correlations': 'Depth correlations',
-                   'rating-correlations': 'Rating correlations'}
-    navigation = ['[Summary](summary.md) | ' + ' | '.join(
-        f'[{main_labels.get(anchor, title)}](#{anchor})'
-        for level, title, anchor, _ in headings if level == '##'), '']
-    for level, title, anchor, _ in headings:
-        if level != '##':
-            continue
-        children = [(name, target) for child_level, name, target, group in headings
-                    if child_level == '###' and group == anchor]
-        if not children:
-            continue
-        label = main_labels.get(anchor, title)
-        links = []
-        for name, target in children:
-            if target in ('white-chapters', 'black-chapters'):
-                name = 'Chapter-by-chapter table'
-            links.append(f'[{name}](#{target})')
-        navigation += [f'**{label} sections:** ' + ' | '.join(links), '']
+    navigation = ['**Table of contents**', '', '- [Summary](summary.md)']
+    for level, title, anchor, parent in headings:
+        label = 'Chapter-by-chapter table' if anchor in ('white-chapters', 'black-chapters') else title
+        indent = '    ' if level == '###' and parent else ''
+        navigation.append(f'{indent}- [{label}](#{anchor})')
+    navigation.append('')
     index = body.index('<!-- report-navigation -->')
     body[index:index+1] = navigation
     return body
@@ -298,18 +285,24 @@ def load(paths, strict=True, require_complete=False):
 
 
 def load_correlations(bundles, strict=True, require_complete=False):
-    path = bundles[0]['path'].parent / 'depth-delta-correlation.json'
+    path = bundles[0]['path'].parent / 'prepared-depth-gain-correlation.json'
     if not path.exists():
         if require_complete:
-            raise ValueError('Generate depth-delta correlations before combining the reports')
+            raise ValueError('Generate future preparation gain correlations before combining the reports')
         return None, 'not generated'
     result = json.loads(path.read_text(encoding='utf-8'))
     expected = {b['report']['color']: b for b in bundles}
     provenance = result.get('provenance', {})
-    matches = set(provenance) == set(expected) and all(
+    matches = result.get('schema_version') == 1 and set(result.get('results', {})) == set(expected)
+    matches &= set(provenance) == set(expected) and all(
         p.get('report_sha256') == expected[c]['digest']
         and p.get('input_sha256') == expected[c]['report']['manifest']['input_sha256']
         and p.get('filters') == expected[c]['report']['manifest']['filters']
+        and p.get('prior') == expected[c]['report']['manifest']['prior']
+        and p.get('sparse_threshold') == expected[c]['report']['manifest']['sparse_threshold']
+        and expected[c]['path'].with_suffix('.vulnerabilities.json').exists()
+        and p.get('vulnerabilities_sha256') == hashlib.sha256(
+            expected[c]['path'].with_suffix('.vulnerabilities.json').read_bytes()).hexdigest()
         for c, p in provenance.items())
     if not matches:
         if strict:
@@ -997,29 +990,45 @@ def scope_by_id(data, key='scopes'):
 
 
 def correlations_section(result, reason):
-    text = section('## Prepared depth and score improvement', 'correlations')
+    text = section('### Reach-weighted future preparation gain correlation', 'preparation-correlation')
     if not result:
         return text + [f'Correlation analysis unavailable: {reason}.', '']
-    text += ['Depth and delta are both measured from chapter entry. These correlations compare chapters, rather than estimating the effect of adding one move. '
-             'Brackets contain approximate 95% cluster-bootstrap confidence intervals.', '']
-    primary = list(METRICS)[:4]
-    text += table(['Repertoire', 'Chapters / groups', *[METRICS[k] for k in primary]],
-                  [[color.title(), f"{r['n']} / {r['cluster_count']}", *[cell(r, k) for k in primary]] for color, r in result['results'].items()])
-    text += ['<details>', '<summary>Other correlation variants and sensitivity checks</summary>', '']
-    text += table(['Measure', *[c.title() for c in result['results']]],
-                  [[label, *[cell(r, metric) for r in result['results'].values()]] for metric, label in list(METRICS.items())[4:]])
-    for name, r in result.get('sensitivity', {}).items():
-        text += [f"{escape(name.replace('_', ' ').capitalize())}: linear correlation {cell(r, 'pearson')}; rank correlation {cell(r, 'spearman')}.", '']
-    text += ['</details>', '',
-             'Baseline adjustment correlates the residuals after fitting both depth and delta against entry baseline and an intercept; pooled fits also include color. '
-             'It is a sensitivity check for a different question. The bootstrap resamples transposition groups within each color, recomputing ranks, weights, and adjustments. '
-             f"{result['bootstrap']['repetitions']:,} replicates were used. Intervals describe chapter-group variation conditional on the saved estimates; they do not propagate Explorer count uncertainty or establish causation.", '']
+    text += ['Does more preparation after our selected move tend to improve its score? Each observation is one selected own move under the overall repertoire policy. '
+             '**Future depth** is the expected number of prepared own moves remaining after that move, excluding the move itself. '
+             '**Future preparation gain** is the recursive repertoire score after the move minus that move\'s database score from the cached parent response table. '
+             'Both scores use the repertoire owner\'s perspective.', '',
+             'Observations are weighted by their probability of being played. Canonical decisions are counted once and incoming reach is merged across transpositions, '
+             'so many rare branches do not outweigh common decisions simply because the tree branches. A game can encounter several decisions, so these weights need not sum to 100%. '
+             'Sparse parent/move samples or continuation endpoints, unresolved scores and unreachable decisions are excluded. '
+             'Points use observed database counts; brackets contain approximate 95% model-based intervals.', '']
+    primary = ('reach_weighted_pearson', 'reach_weighted_spearman', 'slope_pp_per_move')
+    text += table(['Repertoire', 'Own decisions', 'Reach-weighted linear correlation', 'Reach-weighted rank correlation',
+                   'Gain slope (% per future own move)'],
+                  [[color.title(), f"{r['n']:,}", *[cell(r, k) for k in primary]] for color, r in result['results'].items()])
+    text += ['Positive correlation means decisions with deeper future preparation tend to have larger gains over their own move baseline. '
+             'The slope is the associated gain per additional expected future own move; it does not estimate the effect of adding a move.', '',
+             '<details>', '<summary>Unweighted and positive-depth sensitivity checks</summary>', '']
+    text += table(['Repertoire', 'Unweighted linear correlation', 'Unweighted rank correlation',
+                   'Positive-depth decisions', 'Reach-weighted linear, excluding zero depth'],
+                  [[color.title(), cell(r, 'pearson'), cell(r, 'spearman'),
+                    f"{r['sensitivity_without_zero_depth']['n']:,}",
+                    ('undefined' if r['sensitivity_without_zero_depth']['reach_weighted_pearson'] is None else
+                     f"{r['sensitivity_without_zero_depth']['reach_weighted_pearson']:.3f}")]
+                   for color, r in result['results'].items()])
+    text += ['The positive-depth check excludes decisions with no remaining prepared own moves and is a point estimate only. '
+             'Weighted ranks use the cumulative reach distribution with midpoint ranks for ties.', '', '</details>', '',
+             f"Intervals use {result['simulations']:,} joint Dirichlet evidence draws for this fixed repertoire, with the score model's saved prior. "
+             'Each canonical table is sampled once per draw and reused at every transposition and shared continuation; scores, depths, reach weights and selected-move baselines are recomputed together. '
+             'The 2.5th and 97.5th percentiles describe finite-database uncertainty under this model. Distinct board tables are still treated as independent, '
+             'although their historical games can overlap. These are individual model-based intervals, not chapter-bootstrap intervals or evidence of causal improvement.', '']
+    text += ['The interval describes correlations of jointly sampled underlying tables. Uncertainty in continuation scores and the saved prior can shift this nonlinear statistic, '
+             'so the interval need not contain the observed-count point estimate.', '']
     return text
 
 
 def rating_correlations_section(result, reason):
     from .rating_correlations import cell as rating_cell
-    text = section('## Opponent rating and score improvement', 'rating-correlations')
+    text = section('### Opponent rating and score improvement', 'rating-correlations')
     if not result:
         return text + [f'Rating correlation analysis unavailable: {reason}. '
                        'Generate it with `uv run python -m repertoire_score.rating_correlations` and the saved score files.', '']
@@ -1467,6 +1476,7 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
                         cp_interval(p['overall']['posterior']['credible_interval_95'])]
                        for p in r.get('prior_sensitivity', [])])
         text += ['</details>', '']
+    text += section('## Correlations', 'correlations')
     text += correlations_section(correlations, correlation_reason)
     text += rating_correlations_section(rating_correlations, rating_correlation_reason) + methods(bundles)
     return '\n'.join(report_navigation(text)) + '\n'
