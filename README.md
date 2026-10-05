@@ -256,6 +256,14 @@ Explorer `averageRating` is the move maker's rating. At our turn, use the previo
 
 Chapter score-evidence averages weight ratings once at the stopping outcomes. Entry-baseline context instead uses the chapter's first-entry mixture, including the incoming edges under its comparison policy. Local line ratings describe the exact position or move context. Chapter pawn groups can combine stopping evidence; whole-repertoire groups show only the individual example's rating. Missing ratings and residual outcome buckets remain unavailable, and partial coverage is disclosed. These descriptive ratings do not modify scores or rankings. There is no White, Black, combined-study or whole-study baseline rating average.
 
+To analyze the association between opponent rating and score using saved evidence:
+
+```powershell
+uv run python -m repertoire_score.rating_correlations reports/data/white.json reports/data/black.json
+```
+
+This writes `reports/comparisons/opponent-rating-score.md` and ignored supporting JSON in `reports/data/`. It compares replies within canonical parent boards, using reach weights, recursive prepared scores, cached unprepared reply scores, and parent-bootstrap intervals. It also compares chapter scores and baseline deltas with chapter stopping-evidence opponent ratings, grouping overlapping chapter regions for bootstrap intervals. Sparse replies are excluded, and a 1,000-game sensitivity check is included. These are descriptive cohort associations, not causal rating effects or predictions at a target rating. No Lichess requests are made.
+
 
 Opponent reply rows also show **Rating Δ vs parent**: the reply's move-maker average minus the parent's game-weighted opponent response average. Transposed replies combine these paired differences by modeled arrival reach. Missing comparisons remain unavailable; a current-position response average without a specific opponent reply to compare is marked n/a. Partial parent-rating and paired-arrival coverage are disclosed. This describes the reply cohort and does not change any score or ranking.
 
