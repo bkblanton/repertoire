@@ -245,7 +245,8 @@ def test_opening_tables_show_cp_spread_baselines_and_entry_details(tmp_path):
                     positions={k: dict(exact_name=exact.get(k), current_ids=sorted(ids)) for k, ids in labels.items()}))
     text = '\n'.join(openings_section(bundle, Chapters(bundle['report'])))
     assert 'Family: One' in text and 'First-entry example' in text
-    assert 'Entry baseline' in text and 'CP delta' in text and 'Score spread' in text
+    assert '| Entry baseline | Repertoire score | Delta | Score spread |' in text
+    assert ' cp)' in text and '| Score CP |' not in text
     assert 'white-opening-1' in text and '[W1]' in text
     assert 'no aggregate opponent rating' in text
     assert '\u2014' not in text

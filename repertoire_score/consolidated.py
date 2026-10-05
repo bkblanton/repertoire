@@ -78,9 +78,65 @@ class SourceCell(str):
         return result
 
 
+def compressed_columns(headers, rows):
+    """Keep related values together without discarding any table evidence."""
+    headers, rows = list(headers), [list(row) for row in rows]
+    if any(len(row) != len(headers) for row in rows):
+        raise ValueError('Table header and row lengths differ')
+
+    def combine(primary, secondary, title, format_cell):
+        if primary not in headers or secondary not in headers:
+            return
+        first, second = headers.index(primary), headers.index(secondary)
+        headers[first] = title
+        for row in rows:
+            row[first] = format_cell(row[first], row[second])
+            del row[second]
+        del headers[second]
+
+    def paired_cp(value, equivalent):
+        if equivalent == 'n/a':
+            return value
+        first, separator, rest = str(value).partition('<br>')
+        endpoints, converted = first.split(' to '), str(equivalent).split(' to ')
+        combined = (' to '.join(f'{p} ({c} cp)' for p, c in zip(endpoints, converted))
+                    if len(endpoints) > 1 and len(endpoints) == len(converted)
+                    else first + f' ({equivalent} cp)')
+        return combined + (separator + rest if separator else '')
+
+    for secondary, primaries in (
+            ('Baseline CP', ('Starting baseline', 'Entry baseline')),
+            ('Score CP', ('Repertoire score', 'Database score', 'Score')),
+            ('Before CP', ('Before reply (repertoire)',)),
+            ('After CP', ('After reply (repertoire)', 'After reply (database)')),
+            ('Parent CP', ('Parent database score',)),
+            ('Centipawn equivalent (cp)', ('Value',)),
+            ('Centipawn interval (cp)', ('Approximate 95% score interval',))):
+        for primary in primaries:
+            combine(primary, secondary, primary, paired_cp)
+    if 'Delta' in headers:
+        combine('Delta', 'CP delta', 'Delta', paired_cp)
+    elif 'Drag' in headers:
+        combine('Drag', 'CP delta', 'Drag / CP delta', paired_cp)
+    combine('Opening', 'ECO', 'Opening / ECO', lambda opening, eco: f'{opening}<br>{eco}')
+    combine('Chapter reach (incl. transpositions)', 'Overall-policy reach',
+            'Chapter reach (incl. transpositions)<br>Overall-policy reach',
+            lambda reach, overall: f'{reach}<br>Overall {overall}')
+    combine('Equivalent gap reach after entry', 'Weighted gap reach contribution',
+            'Equivalent gap reach after entry<br>Weighted gap reach contribution',
+            lambda reach, weighted: f'{reach}<br>Weighted {weighted}')
+    for reach in ('Reach in repertoire', 'Reach after chapter entry'):
+        combine(reach, 'Avg games per encounter', reach + '<br>Avg games per encounter',
+                lambda probability, games: f'{probability}<br>1 per {games} games')
+    combine('Avg opponent rating', 'Rating Δ vs parent', 'Avg opponent rating<br>Rating Δ vs parent',
+            lambda rating, difference: f'{rating}<br>Δ {difference}')
+    return headers, rows
+
+
 def table(headers, rows):
     if not rows:
         return []
+    headers, rows = compressed_columns(headers, rows)
     if 'Most common opening source' not in headers:
         source_columns = [i for i in range(len(headers)) if any(isinstance(row[i], SourceCell) for row in rows)
                           and headers[i] != 'Chapters']
@@ -97,6 +153,53 @@ def table(headers, rows):
 
 def section(title, anchor=None):
     return ([f'<a id="{anchor}"></a>', ''] if anchor else []) + [title, '']
+
+
+def report_navigation(text):
+    """Link every actual second- and third-level section from the report top."""
+    existing = set(re.findall(r'<a id="([^"]+)"', '\n'.join(text)))
+    body, headings, parent = [], [], None
+    for item in text:
+        heading = re.fullmatch(r'(##|###) (.+)', item)
+        if heading:
+            level, title = heading.groups()
+            previous = next((line for line in reversed(body) if line.strip()), '')
+            explicit = re.fullmatch(r'<a id="([^"]+)"></a>', previous)
+            if explicit:
+                anchor = explicit[1]
+            else:
+                slug = re.sub(r'[^a-z0-9]+', '-', html.unescape(title).lower()).strip('-')
+                stem = f'{parent}-{slug}' if level == '###' and parent else slug
+                anchor, suffix = stem, 2
+                while anchor in existing:
+                    anchor, suffix = f'{stem}-{suffix}', suffix + 1
+                existing.add(anchor)
+                body += [f'<a id="{anchor}"></a>', '']
+            if level == '##':
+                parent = anchor
+            headings.append((level, title, anchor, parent))
+        body.append(item)
+    main_labels = {'combined': 'Combined', 'white': 'White', 'black': 'Black', 'correlations': 'Depth correlations'}
+    navigation = ['[Summary](summary.md) | ' + ' | '.join(
+        f'[{main_labels.get(anchor, title)}](#{anchor})'
+        for level, title, anchor, _ in headings if level == '##'), '']
+    for level, title, anchor, _ in headings:
+        if level != '##':
+            continue
+        children = [(name, target) for child_level, name, target, group in headings
+                    if child_level == '###' and group == anchor]
+        if not children:
+            continue
+        label = main_labels.get(anchor, title)
+        links = []
+        for name, target in children:
+            if target in ('white-chapters', 'black-chapters'):
+                name = 'Chapter-by-chapter table'
+            links.append(f'[{name}](#{target})')
+        navigation += [f'**{label} sections:** ' + ' | '.join(links), '']
+    index = body.index('<!-- report-navigation -->')
+    body[index:index+1] = navigation
+    return body
 
 
 def load(paths, strict=True, require_complete=False):
@@ -498,7 +601,7 @@ def overview(bundles, compact=False):
 
 def overview_notes(bundles):
     text = 'Delta is repertoire score minus its starting baseline. Score differences use % for percentage points: 55% minus 50% is +5%, rather than a relative percentage change. Elo equivalent converts that score difference to the 400-point logistic Elo scale; it is not a measured rating gain. '
-    text += 'CP is the direct centipawn equivalent of the adjacent score using the inverse [Lichess score curve](https://lichess.org/page/accuracy). CP delta is score CP minus baseline CP; positive values favor the repertoire owner. Scores include half a point for draws. These are score-scale conversions rather than engine evaluations. '
+    text += 'CP appears in parentheses beside its score, using the inverse [Lichess score curve](https://lichess.org/page/accuracy). CP delta appears beside delta or drag and subtracts before from after; positive values favor the repertoire owner. Scores include half a point for draws. These are score-scale conversions rather than engine evaluations. '
     combined = combined_overall(bundles)
     if combined:
         if 'unavailable' in combined:
@@ -894,7 +997,7 @@ def methods(bundles):
              '- **Outcome volatility (formerly sharpness):** normalized variance of the eventual game score, `400 * (W + D/4 - (W + D/2)**2)`, on a 0%-100% scale. Owner-relative WDL follows the same selected moves, empirical opponent replies, transpositions and stopping rules as repertoire score; W + D/2 reproduces that score. First-entry and combined-color WDL are mixed before calculating volatility. It is 100% for equal wins and losses, 10% for 5% wins / 90% draws / 5% losses, and zero for a certain result. It describes game-result variation, rather than tactical difficulty or reply sensitivity. Headlines and detailed branch breakdowns retain this secondary metric; the JSON field remains `sharpness` for compatibility. Missing outcome evidence stays unresolved. No prior, sparse filter or new query completes it.',
              '- **Baseline and delta:** overall uses the standard starting-position database score for the same color. Chapter baseline is the weighted database score at first-entry positions, using the same entry weights as chapter score. Delta is repertoire score minus baseline. Score differences and contributions display with %, using percentage points rather than relative percentage changes. These population comparisons do not establish personal or causal improvement.',
              '- **Elo equivalent:** use `E(p) = 400 * log10(p / (1 - p))` and report `E(repertoire score) - E(starting baseline)`, following the [logistic expected-score equation](https://tec.fide.com/wp-content/uploads/2025/07/Statistical_model_for_chess_tournament_simulations.pdf). Combined scores use 50% White and 50% Black with matching filters and standard starting positions. Average the scores first, rather than averaging the separate Elo equivalents. Conversion is unavailable at scores of 0% or 100%; no clipping or prior is substituted. This is a score-scale translation, not a personal rating forecast or a measured causal gain.',
-             '- **Centipawn equivalent:** CP columns use `C(p) = ln(p / (1 - p)) / 0.00368208`, the inverse [Lichess score curve](https://lichess.org/page/accuracy), applied directly to the adjacent expected score (wins plus half draws). Positive CP favors the repertoire owner, including Black. CP delta is `C(after) - C(before)`, or score CP minus entry/starting-baseline CP in overview tables. Convert the two scores separately; converting their percentage-point difference is incorrect. Weighted or transposed mixtures, including combined colors and chapter entries, average the scores before conversion. Score intervals convert their endpoints. Missing values and boundaries of 0% or 100% are unavailable. Reach, reply frequency, and contribution percentages are not expected scores and receive no CP conversion. This calibration translates human results to a centipawn scale; it is not an engine evaluation.',
+             '- **Centipawn equivalent:** CP values appear in parentheses beside their scores and use `C(p) = ln(p / (1 - p)) / 0.00368208`, the inverse [Lichess score curve](https://lichess.org/page/accuracy), applied directly to the expected score (wins plus half draws). Positive CP favors the repertoire owner, including Black. CP delta is `C(after) - C(before)`, or score CP minus entry/starting-baseline CP in overview tables. Convert the two scores separately; converting their percentage-point difference is incorrect. Weighted or transposed mixtures, including combined colors and chapter entries, average the scores before conversion. Score intervals convert their endpoints. Missing values and boundaries of 0% or 100% are unavailable. Reach, reply frequency, and contribution percentages are not expected scores and receive no CP conversion. This calibration translates human results to a centipawn scale; it is not an engine evaluation.',
              '- **Position reach:** probability of visiting a canonical repertoire board before preparation ends, under the overall selected policy. Incoming probabilities from every transposed route are combined into one row. Prepared endpoints and all first unprepared opponent replies are included, even after the last recorded PGN move. An unanswered own-turn board has the same reach as its first-gap probability, summed over all transposed arrivals. Unprepared reply reach comes from the cached parent response table; incoming mass from transposed routes is combined, and parent chapters provide context. No child queries are needed. Prepared rows include the repertoire continuation score; unprepared rows show cached database outcomes. Games count board or parent-move observations and are not the sample size of a continuation score. For merged unprepared arrivals, scores use incoming reach weights; pooled parent counts (†) may overlap. The displayed ranking omits boards immediately before a prepared own move, retaining the board after the reply; own-turn endpoints with no reply are labeled. Missing opponent distributions leave only known incoming mass, with downstream reach unresolved. The representative route follows selected own moves and observed opponent replies. Source links identify chapters containing the board, including shared introductory positions.',
              '- **Entry probability:** first arrival anywhere in the chapter region before the model stops, counting each modeled game once per chapter, including transpositions. Chapters overlap; entry probabilities, scores, and deltas are not additive. Representative lines show one route; reach combines all modeled routes.',
              '- **Alternative chapters:** overall uses the first PGN move in the earliest chapter unless explicitly overridden. An alternative chapter prefers its own first moves, with the overall policy elsewhere. Its score, reach, baseline, and depth use that comparison policy. Overall-policy reach is disclosed separately and does not mean an alternative move was selected.',
@@ -1207,11 +1310,7 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
     text = ['# Repertoire report', '',
             'Scores, chapter comparisons, vulnerabilities, position contributions, and repertoire character in one place. '
             'All scores are from the repertoire owner\'s perspective.', '',
-            '[Summary](summary.md) | ' + ('[Combined](#combined) | ' if has_combined else '')
-            + ' | '.join(f'[{b["report"]["color"].title()}](#{b["report"]["color"]})' for b in bundles)
-            + ' | ' + ' | '.join(f'[{b["report"]["color"].title()} positions](#{b["report"]["color"]}-common-positions)' for b in bundles)
-            + ' | ' + ' | '.join(f'[{b["report"]["color"].title()} openings](#{b["report"]["color"]}-openings)' for b in bundles)
-            + ' | [Depth correlations](#correlations) | [Definitions and evidence](#methods)', '',
+            '<!-- report-navigation -->', '',
             *snapshot_notes(bundles),
             *section('## Combined repertoire' if has_combined else '## Score overview', 'combined' if has_combined else 'overview'),
             *overview(bundles), overview_notes(bundles), '', *evidence_snapshot(bundles)]
@@ -1245,6 +1344,7 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
         text += strengths_section(b.get('vulnerabilities', {}).get('overall'), characters.get('overall'), refs, top,
                                   sparse_threshold=r['manifest']['sparse_threshold'])
         text += character_section(characters.get('overall'), refs, min(top, 5))
+        text += section('### Uncertainty priorities and prior sensitivity', f'{color}-uncertainty-prior-sensitivity')
         text += ['<details>', '<summary>Uncertainty priorities and prior sensitivity</summary>', '',
                  'Priority is posterior mean reach multiplied by the stopping-score interval width. This is a review heuristic, not additive variance attribution.', '']
         text += table(['Stopping route', 'Chapter source / context', 'Priority', 'Games', 'Avg opponent rating', 'Rating Δ vs parent'],
@@ -1255,6 +1355,7 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
                         cp_interval(p['overall']['posterior']['credible_interval_95'])]
                        for p in r.get('prior_sensitivity', [])])
         text += ['</details>', '']
+        text += section('### Chapter-by-chapter analysis', f'{color}-chapter-analysis')
         for c in r['chapters']:
             cid = c['id']; s = c['score']; base = c.get('entry_baseline', {})
             title = f"{color[0].upper()}{refs.entries[cid][0]}. {escape(c['name'])}"
@@ -1304,7 +1405,7 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
             text += entry_routes_section(c, preparation.get(cid), refs)
             text += ['</details>', '']
     text += correlations_section(correlations, correlation_reason) + methods(bundles)
-    return '\n'.join(text) + '\n'
+    return '\n'.join(report_navigation(text)) + '\n'
 
 
 def summary_report(bundles, full_path, correlations, correlation_reason):
