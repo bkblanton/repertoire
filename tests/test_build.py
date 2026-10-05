@@ -154,7 +154,7 @@ def test_batch_renders_once_and_reuses_unchanged_color(batch):
     assert (data_dir / 'opponent-rating-score-correlation.json').is_file()
     assert (data_dir / 'prepared-depth-gain-correlation.json').is_file()
     assert '\n## Correlations\n' in (white.parent / 'report.md').read_text(encoding='utf-8')
-    assert '\n### Reach-weighted future preparation gain correlation\n' in (white.parent / 'report.md').read_text(encoding='utf-8')
+    assert '\n### Future preparation gain\n' in (white.parent / 'report.md').read_text(encoding='utf-8')
     assert '\n### Opponent rating and score improvement\n' in (white.parent / 'report.md').read_text(encoding='utf-8')
     old = build.file_inputs(data_dir.glob('white*.json'))
     second = run()

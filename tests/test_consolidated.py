@@ -163,9 +163,10 @@ def test_stale_correlations_rejected_and_matching_intervals_shown(complete):
     analyze([path], correlations, path.parent / 'cache', simulations=100)
     generate([path], require_complete=True)
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
-    assert '95% model-based intervals' in full and 'Reach-weighted rank correlation' in full
+    assert '95% model-based intervals' in full and 'Rank correlation (95% interval)' in full
     assert '[Correlations](#correlations)' in full
-    assert '[Reach-weighted future preparation gain correlation](#preparation-correlation)' in full
+    assert '[Future preparation gain](#preparation-correlation)' in full
+    assert 'Both main analyses are reach-weighted' in full
     assert 'Prepared depth and score improvement' not in full
     data = json.loads(correlations.read_text())
     original = dict(data['provenance']['white'])
@@ -190,7 +191,7 @@ def test_rating_correlation_intervals_render_beside_depth_and_reject_stale_input
     target.write_text(json.dumps(result), encoding='utf-8')
     generate([path])
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
-    assert full.index('\n## Correlations\n') < full.index('\n### Reach-weighted future preparation gain correlation\n') < full.index('\n### Opponent rating and score improvement\n') < full.index('\n## Definitions and evidence\n')
+    assert full.index('\n## Correlations\n') < full.index('\n### Future preparation gain\n') < full.index('\n### Opponent rating and score improvement\n') < full.index('\n## Definitions and evidence\n')
     assert '[Opponent rating and score improvement](#rating-correlations)' in full
     assert '| -1.000 [-1.000, -1.000] | -5.000% [-5.000%, -5.000%] |' in full
     assert 'reach-weighted mean continuation score' in full and '1,000 replicates' in full

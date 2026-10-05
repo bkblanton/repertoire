@@ -990,7 +990,7 @@ def scope_by_id(data, key='scopes'):
 
 
 def correlations_section(result, reason):
-    text = section('### Reach-weighted future preparation gain correlation', 'preparation-correlation')
+    text = section('### Future preparation gain', 'preparation-correlation')
     if not result:
         return text + [f'Correlation analysis unavailable: {reason}.', '']
     text += ['Does more preparation after our selected move tend to improve its score? Each observation is one selected own move under the overall repertoire policy. '
@@ -1002,7 +1002,7 @@ def correlations_section(result, reason):
              'Sparse parent/move samples or continuation endpoints, unresolved scores and unreachable decisions are excluded. '
              'Points use observed database counts; brackets contain approximate 95% model-based intervals.', '']
     primary = ('reach_weighted_pearson', 'reach_weighted_spearman', 'slope_pp_per_move')
-    text += table(['Repertoire', 'Own decisions', 'Reach-weighted linear correlation', 'Reach-weighted rank correlation',
+    text += table(['Repertoire', 'Own decisions', 'Linear correlation (95% interval)', 'Rank correlation (95% interval)',
                    'Gain slope (% per future own move)'],
                   [[color.title(), f"{r['n']:,}", *[cell(r, k) for k in primary]] for color, r in result['results'].items()])
     text += ['Positive correlation means decisions with deeper future preparation tend to have larger gains over their own move baseline. '
@@ -1477,6 +1477,8 @@ def full_report(bundles, correlations, correlation_reason, top=10, chapter_top=5
                        for p in r.get('prior_sensitivity', [])])
         text += ['</details>', '']
     text += section('## Correlations', 'correlations')
+    text += ['Both main analyses are reach-weighted: each selected move or opponent reply is weighted by its probability of being encountered under the repertoire policy. '
+             'Unweighted sensitivity checks are labeled explicitly.', '']
     text += correlations_section(correlations, correlation_reason)
     text += rating_correlations_section(rating_correlations, rating_correlation_reason) + methods(bundles)
     return '\n'.join(report_navigation(text)) + '\n'
