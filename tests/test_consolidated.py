@@ -193,14 +193,15 @@ def test_saved_snapshot_and_missing_analyses_are_explicit(tmp_path, monkeypatch)
         generate([path], require_complete=True)
 
 
-def test_stale_correlations_rejected_and_matching_intervals_shown(complete):
+def test_stale_correlations_rejected_and_matching_estimates_shown(complete):
     from repertoire_score.position_correlations import analyze
     path, _ = complete
     correlations = path.parent / 'prepared-depth-gain-correlation.json'
-    analyze([path], correlations, path.parent / 'cache', simulations=100)
+    analyze([path], correlations, path.parent / 'cache')
     generate([path], require_complete=True)
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
-    assert '95% model-based intervals' in full and 'Rank correlation (95% interval)' in full
+    assert 'point estimates from the observed database counts' in full and '| Rank correlation |' in full
+    assert '95% interval' not in full.split('### Future preparation gain', 1)[1].split('## Definitions', 1)[0]
     assert '[Correlations](#correlations)' in full
     assert '[Future preparation gain](#preparation-correlation)' in full
     assert 'Both main analyses are reach-weighted' in full
@@ -217,22 +218,21 @@ def test_stale_correlations_rejected_and_matching_intervals_shown(complete):
     assert 'Correlation analysis unavailable: belongs to different score snapshots' in (path.parent / 'report.md').read_text()
 
 
-def test_rating_correlation_intervals_render_beside_depth_and_reject_stale_inputs(complete):
+def test_rating_correlations_render_beside_depth_and_reject_stale_inputs(complete):
     from repertoire_score import rating_correlations
     path, _ = complete
-    result = rating_correlations.analyze([path], repetitions=1000, seed=7)
+    result = rating_correlations.analyze([path])
     rows = [dict(position=str(i), rating=x + 400*i, score=y + .1*i, weight=w)
             for i in range(4) for x, y, w in ((1500, .6, 1), (1600, .55, 2), (1700, .5, 1))]
-    result['results']['white']['reply_associations']['all'] = rating_correlations.within_parent(rows, 1000, 7)
+    result['results']['white']['reply_associations']['all'] = rating_correlations.within_parent(rows)
     target = path.parent / 'opponent-rating-score-correlation.json'
     target.write_text(json.dumps(result), encoding='utf-8')
     generate([path])
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     assert full.index('\n## Correlations\n') < full.index('\n### Future preparation gain\n') < full.index('\n### Opponent rating and score improvement\n') < full.index('\n## Definitions and evidence\n')
     assert '[Opponent rating and score improvement](#rating-correlations)' in full
-    assert '| -1.000 [-1.000, -1.000] | -5.000% [-5.000%, -5.000%] |' in full
-    assert 'reach-weighted mean continuation score' in full and '1,000 replicates' in full
-    assert 'parent-bootstrap confidence intervals' in full
+    assert '| -1.000 | -5.000% |' in full
+    assert 'reach-weighted mean continuation score' in full and 'These are point estimates.' in full
     assert '<summary>Prepared replies, unprepared replies, and larger samples</summary>' in full
     originals = {name: (path.parent / name).read_bytes() for name in ('report.md', 'summary.md')}
     hashes = result['results']['white']['provenance']['hashes']
@@ -294,12 +294,12 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     for module in [vulnerabilities, preparation, character, ratings, openings, report_insights]:
         monkeypatch.setattr(sys, 'argv', ['analysis', str(path), '--cache', str(cache)])
         module.main()
-    monkeypatch.setattr(sys, 'argv', ['correlations', str(path), '--cache', str(cache), '--simulations', '100'])
+    monkeypatch.setattr(sys, 'argv', ['correlations', str(path), '--cache', str(cache)])
     position_correlations.main()
     generate([path], require_complete=True)
     assert path.read_bytes() == original
-    position_correlations.analyze([path], data / 'prepared-depth-gain-correlation.json', cache, simulations=100)
-    rating_result = rating_correlations.analyze([path], repetitions=1000)
+    position_correlations.analyze([path], data / 'prepared-depth-gain-correlation.json', cache)
+    rating_result = rating_correlations.analyze([path])
     (data / 'opponent-rating-score-correlation.json').write_text(json.dumps(rating_result), encoding='utf-8')
     generate([path], require_complete=True)
     assert set(p.relative_to(directory).as_posix() for p in directory.rglob('*.md')) == {
@@ -318,7 +318,7 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     assert f"PGN: `{source.relative_to(directory).as_posix()}`" in full
     assert str(tmp_path) not in full and tmp_path.as_posix() not in full
     assert '(data/white.vulnerabilities.json)' in full
-    assert '95% model-based intervals' in full
+    assert 'point estimates from the observed database counts' in full
     assert '### Strengths' in full
     assert 'Strongest and weakest stopping outcomes' not in full
     assert 'not generated' not in full

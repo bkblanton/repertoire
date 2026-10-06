@@ -27,7 +27,7 @@ Optional configuration:
 
 - Our move choices where the repertoire contains alternatives.
 - Chapter entry positions or paths.
-- Prior parameters, simulation count, random seed, and cache policy.
+- Prior parameters and cache policy.
 - Reporting tolerance for uncertainty, expressed in score percentage points.
 
 Analyze White and Black repertoires separately. Combine them only when explicit color weights are supplied.
@@ -139,18 +139,18 @@ S=\theta_W+\frac12\theta_D
 
 Use configurable priors. A weak default of \((0.5,0.5,0.5)\) is acceptable, but document it and expose prior sensitivity. Do not automatically back off to the parent’s score.
 
-Propagate uncertainty with Monte Carlo:
+Propagate uncertainty analytically rather than by simulation. A score is a sum over paths of products of probabilities from distinct positions, so:
 
-1. Sample stopping-score parameters.
-2. Sample opponent move probabilities.
-3. Evaluate overall and chapter scores.
-4. Summarize the resulting distributions.
+1. Its posterior mean is exact: evaluate it once with each table at its posterior mean.
+2. Its variance is approximated to first order: each table's posterior variance, weighted by the squared influence of that table on the score. Interactions between tables are omitted.
+3. Chapter scores divide by uncertain first-entry weights; their influence includes the effect of each upstream table on those weights.
+4. Intervals match a Beta distribution to the mean and variance.
 
-At opponent nodes, sample a joint move-by-result table and derive move probabilities and deviation scores from it. This preserves their shared local evidence. Give the prior a controlled total strength so positions with more legal moves do not accidentally receive much stronger smoothing.
+At opponent nodes, use a joint move-by-result table and derive move probabilities and deviation scores from it. This preserves their shared local evidence. Give the prior a controlled total strength so positions with more legal moves do not accidentally receive much stronger smoothing.
 
 Represent legal but unobserved moves explicitly or in an auditable unresolved bucket. Never silently assume they are impossible.
 
-Within each simulation, reuse the same sampled quantity wherever the same evidence is referenced, including transpositions. Do not sample individual game outcomes: the target is uncertainty in expected score.
+Treat the same evidence as one quantity wherever it is referenced, including transpositions. The target is uncertainty in expected score, not in individual game outcomes.
 
 Explorer aggregates do not expose all overlap between historical games at different positions. Label intervals as approximate, model-based credible intervals. They do not cover all population mismatch, player dependence, or repertoire-selection bias.
 
@@ -230,6 +230,6 @@ Required invariants:
 - Weighted stopping contributions reproduce the root value.
 - Duplicating a chapter does not change the overall result.
 - Equivalent transposing PGNs produce equivalent results.
-- Monte Carlo results are reproducible with a fixed seed.
+- Exact posterior means and first-order variances agree with a brute-force Dirichlet simulation.
 
 Keep parsing, graph construction, explorer access, statistical estimation, evaluation, and reporting separate. The evaluator must run entirely against cached or synthetic data without network access.

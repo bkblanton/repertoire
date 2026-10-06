@@ -11,8 +11,9 @@ from . import SCHEMA_VERSION
 from .graph import parse, conflicts, resolve, topology, infer_entries, key, chapter_region, region_entries, chapter_policy_overrides
 from .board_cache import STARTING_POSITION, owner_outcome, turn
 from .explorer import Explorer, DEFAULT_FILTERS, add_token_option, apply_token_file
-from .model import prepare, empirical, draws
-from .evaluate import backward, forward, summarize, chapter_score, COMPLETED, KNOWN
+from .model import prepare, empirical
+from .evaluate import backward, forward, summarize, chapter_score, KNOWN
+from .uncertainty import METHOD as UNCERTAINTY_METHOD, Posterior
 from .ledger import events, starting_position_reference
 from .attribution import enrich
 from .baseline import chapter_entry_baseline
@@ -139,16 +140,16 @@ def analyze(args):
         profile['depth'] = prepared_depth_values(profile['model'], profile['order'], profile['raw'])
         profile['reachable'] = set(topology(profile['transitions'], list(root_weights)))
 
-    def conditional(profile, c, post_sample, post_values):
+    def conditional(profile, c, posterior):
         positions = entries[c['id']]
         if not positions:
             summary = {'status': 'entry_configuration_required'}
         elif all(p not in profile['reachable'] for p in positions) and c['root'] not in profile['reachable'] and len(positions) == 1:
-            summary = summarize(profile['values'][positions[0]], post_values[positions[0]])
+            summary = summarize(profile['values'][positions[0]], posterior.mixture({positions[0]: 1.}))
             summary.update(entry_probability=None, conditional_basis='disconnected custom-FEN chapter; no absolute root weight')
         else:
-            summary = chapter_score(profile['model'], profile['order'], profile['raw'], post_sample,
-                                    profile['values'], post_values, root_weights, positions, args.simulations)
+            summary = chapter_score(profile['model'], profile['order'], profile['raw'],
+                                    profile['values'], root_weights, positions, posterior)
         if not absolute_reach:
             summary['probability_conditional_on_custom_root'] = summary.get('entry_probability')
             summary['entry_probability'] = None
@@ -160,24 +161,21 @@ def analyze(args):
     model, raw_sample, raw_values, depth_values = (global_profile[k] for k in ('model', 'raw', 'values', 'depth'))
     raw_root = sum(w*raw_values[k] for k, w in root_weights.items())
     for index, profile in enumerate(profiles):
-        # Evaluate one posterior profile at a time to bound memory use.
-        post_sample = draws(profile['model'], color, args.simulations, args.seed, args.prior)
-        post_values = backward(profile['model'], profile['order'], post_sample, args.sparse_threshold, args.simulations)
+        posterior = Posterior(profile['model'], profile['order'], color, args.prior, args.sparse_threshold)
         if index == 0:
-            post_root = sum(w*post_values[k] for k, w in root_weights.items())
+            overall_posterior = posterior.mixture(root_weights)
             raw_flow, _ = forward(model, order, raw_sample, root_weights)
-            post_flow, _ = forward(model, order, post_sample, root_weights, args.simulations)
-            ledger = events(graph, model, raw_sample, post_sample, raw_flow, post_flow, color, sum(args.prior))
+            post_flow, _ = forward(model, order, posterior.sample, root_weights)
+            ledger = events(graph, model, raw_sample, posterior, raw_flow, post_flow, color, sum(args.prior))
             if not np.isclose(sum(e['contribution'] or 0 for e in ledger), raw_root[KNOWN, 0], atol=1e-9):
                 raise AssertionError('Raw weighted stopping contributions differ from root value')
-            decomposition = sum((post_flow[k,j]*post_sample[k][j][1] for k,j in post_flow), np.zeros(args.simulations))
-            if not np.allclose(decomposition, post_root[COMPLETED], atol=1e-9):
+            if not np.isclose(sum(e['posterior_contribution_mean'] for e in ledger), overall_posterior['mean'], atol=1e-9):
                 raise AssertionError('Posterior weighted stopping contributions differ from root value')
         for c in graph.chapters:
             if c['id'] not in profile['chapters']:
                 continue
             positions = entries[c['id']]
-            summary = conditional(profile, c, post_sample, post_values)
+            summary = conditional(profile, c, posterior)
             summary['prepared_depth'] = chapter_prepared_depth(profile['depth'], positions, summary)
             destination = set(regions[c['id']]['positions']) if c['id'] in regions else set(positions)
             actual_hits = hitting_bounds(model, order, raw_sample, destination)
@@ -193,7 +191,6 @@ def analyze(args):
                 'entries': [{'position': p, 'path': graph.nodes[p].path,
                              'conditional_first_entry_weight': summary.get('first_entry_weights', {}).get(p)} for p in positions],
                 'score': summary, 'entry_baseline': chapter_entry_baseline(positions, summary, evidence, color, explorer.provenance)}
-        del post_sample, post_values
     chapters = [chapter_results[c['id']] for c in graph.chapters]
     destination_sets = {cid: region['positions'] if (region := regions.get(cid)) else positions
                         for cid, positions in entries.items()}
@@ -207,24 +204,22 @@ def analyze(args):
     for prior in ([0.1, 0.1, 0.1], [2., 2., 2.]):
         item = {'prior': prior, 'chapters': {}}
         for index, profile in enumerate(profiles):
-            alt_samples = draws(profile['model'], color, args.simulations, args.seed, prior)
-            alt_values = backward(profile['model'], profile['order'], alt_samples, args.sparse_threshold, args.simulations)
+            alternative = Posterior(profile['model'], profile['order'], color, prior, args.sparse_threshold)
             if index == 0:
-                alt_root = sum(w*alt_values[k] for k, w in root_weights.items())
-                item['overall'] = summarize(raw_root, alt_root)
+                item['overall'] = summarize(raw_root, alternative.mixture(root_weights))
             for c in graph.chapters:
                 if c['id'] in profile['chapters'] and entries[c['id']]:
-                    item['chapters'][c['id']] = conditional(profile, c, alt_samples, alt_values)
-            del alt_samples, alt_values
+                    item['chapters'][c['id']] = conditional(profile, c, alternative)
         sensitivity.append(item)
-    report = {"color": args.color, "overall": summarize(raw_root, post_root), "chapters": chapters,
+    interval = overall_posterior['credible_interval_95']
+    report = {"color": args.color, "overall": summarize(raw_root, overall_posterior), "chapters": chapters,
               "chapter_transitions": transition_rows,
               "starting_position_reference": starting_position_reference(evidence[starting_position], color, explorer.provenance[starting_position]),
               "events": ledger, "prior_sensitivity": sensitivity,
               "manifest": {"created_at": datetime.now(timezone.utc).isoformat(), "input_path": str(Path(args.pgn).resolve()),
                            "input_sha256": hashlib.sha256(Path(args.pgn).read_bytes()).hexdigest(), "configuration": config,
                            "filters": explorer.filters, "endpoint": "https://explorer.lichess.org/lichess", "evidence": explorer.provenance,
-                           "prior": args.prior, "seed": args.seed, "simulations": args.simulations, "sparse_threshold": args.sparse_threshold,
+                           "prior": args.prior, "uncertainty_method": UNCERTAINTY_METHOD, "sparse_threshold": args.sparse_threshold,
                            "positions": len(graph.nodes), "evaluated_positions": len({k for p in profiles for k in p['order']}),
                            "overall_policy_evaluated_positions": len(order), "root_weights": root_weights,
                            "conflict_resolution": "explicit policy overrides, otherwise first PGN move in first chapter order",
@@ -234,17 +229,15 @@ def analyze(args):
                            "policy_profile_count": len(profiles),
                            "overall_basis": "supplied root weights" if "root_weights" in config else "standard starting position" if absolute_reach else "conditional on custom PGN root",
                            "tolerance_score_points": args.tolerance,
-                           "tolerance_met": float((post_root[COMPLETED].max()-post_root[COMPLETED].min())*100) <= args.tolerance},
+                           "tolerance_met": bool((interval[1] - interval[0]) * 100 <= args.tolerance)},
               "diagnostics": {"policy_conflicts": inspection["conflicts"], "entry_inspection": inspection["entries"],
                               "cycles": [], "sanity_checks_passed": True}}
-    report["manifest"]["tolerance_met"] = np.ptp(np.quantile(post_root[COMPLETED], [0.025, 0.975]))*100 <= args.tolerance
     report['overall']['prepared_depth'] = summarize_depth(depth_values, root_weights)
     report['manifest']['prepared_depth_definition'] = (
         'Expected remaining own prepared moves before a deviation, theory leaf, or terminal outcome; '
         'includes an available own move at entry, uses the merged repertoire and empirical opponent probabilities, '
         'and uses chapter comparison policies and first-entry weights. No depth cutoff, discount, or bonus for entry itself. '
         'Missing move distributions or first-entry weights remain unresolved with conditional bounds.')
-    report["manifest"]["tolerance_met"] = bool(report["manifest"]["tolerance_met"])
     enrich(report, graph)
     output.with_suffix(".json").write_text(data_json(report), encoding="utf-8")
     update_report_outputs(output.with_suffix(".json"))
@@ -261,16 +254,14 @@ def main():
     parser.add_argument("--cache", default=".cache/explorer")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--refresh", action="store_true")
-    parser.add_argument("--simulations", type=int, default=2000)
-    parser.add_argument("--seed", type=int, default=20260928)
     parser.add_argument("--prior", nargs=3, type=float, default=[0.5, 0.5, 0.5])
     parser.add_argument("--sparse-threshold", type=int, default=30)
     parser.add_argument("--tolerance", type=float, default=1.0)
     add_token_option(parser)
     args = parser.parse_args()
     apply_token_file(parser, args)
-    if args.simulations < 100 or min(args.prior) <= 0 or args.sparse_threshold < 1 or args.tolerance <= 0:
-        parser.error("Require at least 100 simulations, positive prior, sparse threshold and tolerance")
+    if min(args.prior) <= 0 or args.sparse_threshold < 1 or args.tolerance <= 0:
+        parser.error("Require a positive prior, sparse threshold and tolerance")
     try:
         analyze(args)
     except (ValueError, RuntimeError) as exc:

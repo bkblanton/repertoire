@@ -57,8 +57,8 @@ def test_saved_analysis_is_cache_only_reproducible_and_uses_overall_policy(compl
     source = path.parent / 'fixture.pgn'
     pgn = source.read_bytes()
     output = path.parent / 'prepared-depth-gain-correlation.json'
-    first = analyze([path], output, path.parent / 'cache', simulations=200, seed=7)
-    second = analyze([path], output, path.parent / 'cache', simulations=200, seed=7)
+    first = analyze([path], output, path.parent / 'cache')
+    second = analyze([path], output, path.parent / 'cache')
     assert first['network_requests'] == 0
     assert first['results'] == second['results']
     result = first['results']['white']
@@ -78,11 +78,7 @@ def test_saved_analysis_is_cache_only_reproducible_and_uses_overall_policy(compl
         total = 100*(row['repertoire_score']-rows[row['id']]['reference_score'])
         immediate = 100*(row['move_database_score']-rows[row['id']]['reference_score'])
         assert total == pytest.approx(immediate+row['future_preparation_gain_pp'])
-    for key, interval in result['confidence_intervals_95'].items():
-        assert interval['valid_replicates']+interval['invalid_replicates'] == 200
-        if result[key] is not None:
-            assert interval['bounds'] is not None
-            assert interval['bounds'][0] <= interval['bounds'][1]
+    assert 'confidence_intervals_95' not in result
     assert source.read_bytes() == pgn
     assert all(p.read_bytes() == content for p, content in original.items())
 
@@ -96,21 +92,13 @@ def test_sparse_samples_and_stale_inputs_are_rejected(complete):
     for row in own:
         row['parent_sparse'] = True
     companion.write_text(json.dumps(saved), encoding='utf-8')
-    result = analyze([path], output, cache, simulations=2)['results']['white']
+    result = analyze([path], output, cache)['results']['white']
     assert result['n'] == 0 and result['exclusions']['sparse'] == len(own)
     assert result['reach_weighted_pearson'] is None
-    assert result['confidence_intervals_95']['reach_weighted_pearson']['bounds'] is None
     saved['manifest']['report_sha256'] = 'wrong'
     companion.write_text(json.dumps(saved), encoding='utf-8')
     with pytest.raises(ValueError, match='snapshot'):
-        analyze([path], output, cache, simulations=2)
+        analyze([path], output, cache)
     (path.parent / 'fixture.pgn').write_text('changed source')
     with pytest.raises(ValueError, match='PGN changed'):
-        analyze([path], output, cache, simulations=2)
-
-
-def test_invalid_sample_count_does_not_write_output(tmp_path):
-    output = tmp_path / 'out.json'
-    with pytest.raises(ValueError, match='positive simulation count'):
-        analyze([], output, simulations=0)
-    assert not output.exists()
+        analyze([path], output, cache)

@@ -16,9 +16,8 @@ def test_midpoint_ranks_and_weighted_correlation():
     assert np.isnan(correlation([1, 1, 1], [1, 2, 3]))
 
 
-def test_cell_formats_estimates_and_intervals():
-    result = {'pearson': .5, 'slope_pp_per_move': 1.25, 'spearman': None,
-              'confidence_intervals_95': {'pearson': {'bounds': [.1, .9]}, 'slope_pp_per_move': {'bounds': None}}}
-    assert cell(result, 'pearson') == '0.500 [0.100, 0.900]'
-    assert cell(result, 'slope_pp_per_move') == '1.250% (interval unavailable)'
+def test_cell_formats_estimates():
+    result = {'pearson': .5, 'slope_pp_per_move': 1.25, 'spearman': None}
+    assert cell(result, 'pearson') == '0.500'
+    assert cell(result, 'slope_pp_per_move') == '1.250%'
     assert cell(result, 'spearman') == 'undefined'

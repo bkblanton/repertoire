@@ -11,11 +11,13 @@ import numpy as np
 
 from .layout import data_json
 from . import SCHEMA_VERSION
-from .evaluate import COMPLETED, backward
+from .evaluate import COMPLETED
+from .uncertainty import (METHOD as UNCERTAINTY_METHOD, Posterior, comparison_interval, dirichlet_variance,
+                          row_moments)
 from .board_cache import children
 from .explorer import Explorer, counts, validate
 from .graph import parse, resolve, topology
-from .model import draws, prepare
+from .model import prepare
 from .openings import name_flow
 from .preparation import Evaluator, chess_facts
 from .spread import (assert_outcomes, mixture as spread_mixture, recursive_spread,
@@ -86,25 +88,6 @@ def move_decomposition(row):
     return dict(database_move_gain_pp=a, continuation_gain_pp=b, total_gain_pp=total)
 
 
-class Intervals:
-    """Approximate 95% intervals, computed many sample arrays at a time."""
-
-    def __init__(self, block=512):
-        self.block, self.pending = block, []
-
-    def add(self, entry, field, values):
-        self.pending.append((entry, field, values))
-        if len(self.pending) >= self.block:
-            self.flush()
-
-    def flush(self):
-        if self.pending:
-            bounds = np.quantile(np.stack([values for _, _, values in self.pending]), [.025, .975], axis=1).T
-            for (entry, field, _), (low, high) in zip(self.pending, bounds):
-                entry[field] = [float(low), float(high)]
-            self.pending = []
-
-
 def database_table(data, position, color, prior):
     """Legal moves and Dirichlet parameters for one cached position; reusable across sampling batches."""
     moves = sorted(children(position))
@@ -117,21 +100,77 @@ def database_table(data, position, color, prior):
     return moves, np.asarray(observations, dtype=float) + table_prior / len(observations)
 
 
-def database_samples(data, position, chosen, color, simulations, prior, seed, table=None):
-    """One joint move/result table keeps the move and parent scores correlated."""
-    moves, alpha = table or database_table(data, position, color, prior)
-    derived_seed = int.from_bytes(hashlib.sha256(f'{seed}:{position}'.encode()).digest()[:8], 'little')
-    rng = np.random.default_rng(derived_seed)
-    gamma = rng.gamma(alpha, size=(simulations, *alpha.shape))
-    totals = gamma.sum(axis=2)
-    numerators = gamma[:, :, 0 if color else 2] + .5 * gamma[:, :, 1]
-    parent = numerators.sum(axis=1) / totals.sum(axis=1)
-    selected = {}
-    for move in chosen:
-        j = moves.index(move)
-        selected[move] = np.divide(numerators[:, j], totals[:, j],
-            out=np.full(simulations, .5), where=totals[:, j] > 0)
-    return parent, selected
+class LocalComparisons:
+    """Means and 95% intervals of local score changes, from one policy's exact posterior.
+
+    A reply's or move's result split within its row is independent of how often it is played, so its
+    own score has an exact Beta-like distribution. When a comparison involves such a score, its interval
+    keeps that score's skewed shape, which matters for replies with only a few games.
+    """
+
+    def __init__(self, posterior, database, owner):
+        self.posterior, self.database, self.owner = posterior, database, owner
+        self.influence = posterior.influence()
+        self._variance = {}
+
+    def value_variance(self, k):
+        if k not in self._variance:
+            self._variance[k] = self.posterior.value_variance({k: 1.})
+        return self._variance[k]
+
+    def leaf(self, k):
+        """A position whose value is one table's own result score, or None."""
+        node = self.posterior.model[k]
+        if node.mode == 'stop' and k in self.posterior.alpha:
+            return row_moments(self.posterior.alpha[k][0], self.owner)
+        return None
+
+    def opponent(self, k, j):
+        """Repertoire value before an opponent reply minus the value after it: mean and 95% interval."""
+        posterior, branch = self.posterior, self.posterior.model[k].branches[j]
+        before = posterior.values[k][COMPLETED, 0]
+        reach = self.influence[k]
+        # The value before the reply already contains the reply's own share of the score after it.
+        component, coefficient = None, posterior.sample[k][j][0] - 1
+        if branch.target is not None:
+            after = posterior.values[branch.target][COMPLETED, 0]
+            downstream = self.influence[branch.target]
+            variance = sum((reach.get(m, 0.) - downstream.get(m, 0.)) ** 2 * posterior.table_variance(m)
+                           for m in set(reach) | set(downstream))
+            component = self.leaf(branch.target)
+        elif branch.fixed_score is not None:
+            after, variance = branch.fixed_score, self.value_variance(k)
+        else:
+            # The reply's score covaries with the value before it only through its own share of that value.
+            probability = posterior.sample[k][j][0]
+            component = row_moments(posterior.alpha[k][j], self.owner)
+            after = component[0]
+            variance = self.value_variance(k) + component[1] * (1 - 2 * probability)
+        drop = before - after
+        return drop, comparison_interval(drop, variance, component, coefficient)
+
+    def own(self, k, move, target):
+        """Parent database score, the selected move's database score and the continuation after it."""
+        moves, alpha = self.database[k]
+        weights = alpha / alpha.sum()
+        parent = float((weights * self.owner).sum())
+        parent_variance = dirichlet_variance(alpha, np.broadcast_to(self.owner, alpha.shape))
+        row = moves.index(move)
+        selected, selected_variance = row_moments(alpha[row], self.owner)
+        share = float(weights[row].sum())
+        after = self.posterior.values[target][COMPLETED, 0]
+        after_variance = self.value_variance(target)
+        drop = parent - after
+        # Keep the skewed shape of whichever bounded score varies most: the parent's or a leaf continuation's.
+        leaf = self.leaf(target)
+        component, coefficient = ((parent, parent_variance), 1.) if leaf is None or parent_variance >= leaf[1] else (leaf, -1.)
+        return dict(
+            drop=(drop, comparison_interval(drop, parent_variance + after_variance, component, coefficient)),
+            # The parent score already contains the move's own share of its database score.
+            database_gain=comparison_interval(selected - parent, parent_variance + selected_variance * (1 - 2 * share),
+                                              (selected, selected_variance), 1 - share),
+            continuation_gain=comparison_interval(after - selected, after_variance + selected_variance,
+                                                  (selected, selected_variance), -1))
 
 
 def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None):
@@ -261,8 +300,8 @@ def analyze(path, cache='.cache/explorer'):
     for scope in scopes:
         for row in scope['moves'].get('all_signed_rows', []):
             if row['kind'] == 'own': chosen[row['position']].add(row['move'])
-    database = {k: database_samples(evidence[k], k, selected, color, manifest['simulations'],
-                manifest['prior'], manifest['seed']) for k, selected in chosen.items()}
+    database = {k: database_table(evidence[k], k, color, manifest['prior']) for k in chosen}
+    owner = np.array([1., .5, 0.] if color else [0., .5, 1.])
     facts = chess_facts(graph, color, evidence)
     exact = {k: r['exact_name'] for k, r in supporting['openings']['positions'].items() if r.get('exact_name')}
     chapters = {c['id']: c for c in saved['chapters']}
@@ -270,14 +309,13 @@ def analyze(path, cache='.cache/explorer'):
     for scope in scopes:
         profiles[json.dumps(scope['overrides'], sort_keys=True)].append(scope)
     roots = [*manifest['root_weights'], *[e['position'] for c in saved['chapters'] for e in c['entries']]]
-    intervals = Intervals()
     for identity, group in profiles.items():
         transitions = default_transitions if identity == '{}' else resolve(graph, color,
             dict(manifest['configuration'].get('policy', {}), **json.loads(identity)))
         order = topology(transitions, roots)
         model = prepare(graph, transitions, order, color, evidence)
-        sampled = draws(model, color, manifest['simulations'], manifest['seed'], manifest['prior'])
-        values = backward(model, order, sampled, manifest['sparse_threshold'], manifest['simulations'])
+        comparisons = LocalComparisons(Posterior(model, order, color, manifest['prior'], manifest['sparse_threshold']),
+                                       database, owner)
         branches = {k: {b.move: j for j, b in enumerate(n.branches) if b.move} for k, n in model.items()}
         evaluator = Evaluator(graph, color, evidence, facts,
             dict(manifest['configuration'].get('policy', {}), **json.loads(identity)))
@@ -297,21 +335,18 @@ def analyze(path, cache='.cache/explorer'):
             for row in scope['moves'].get('all_signed_rows', []):
                 k, move = row['position'], row['move']
                 j = branches[k][move]
-                branch = model[k].branches[j]
-                after = values[branch.target][COMPLETED] if branch.target else sampled[k][j][1]
-                before = database[k][0] if row['kind'] == 'own' else values[k][COMPLETED]
-                # Intervals are filled in when the batch is flushed; create their keys now to keep field order.
-                entry = dict(local_drop_interval_pp=None, local_gain_interval_pp=None)
-                intervals.add(entry, 'local_drop_interval_pp', 100 * (before-after))
-                intervals.add(entry, 'local_gain_interval_pp', 100 * (after-before))
                 if row['kind'] == 'own':
-                    selected = database[k][1][move]
-                    entry.update(move_decomposition(row), database_move_gain_interval_pp=None, continuation_gain_interval_pp=None)
-                    intervals.add(entry, 'database_move_gain_interval_pp', 100 * (selected-before))
-                    intervals.add(entry, 'continuation_gain_interval_pp', 100 * (after-selected))
+                    parts = comparisons.own(k, move, model[k].branches[j].target)
+                    _, drop = parts['drop']
+                else:
+                    _, drop = comparisons.opponent(k, j)
+                entry = dict(local_drop_interval_pp=drop, local_gain_interval_pp=[-drop[1], -drop[0]])
+                if row['kind'] == 'own':
+                    entry.update(move_decomposition(row),
+                                 database_move_gain_interval_pp=parts['database_gain'],
+                                 continuation_gain_interval_pp=parts['continuation_gain'])
                 results[scope['id']]['moves'][row['id']] = entry
-        intervals.flush()
-        del sampled, values, model
+        del comparisons, model
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError('PGN changed during report insight analysis')
     result = dict(color=saved['color'], scopes=list(results.values()),
@@ -319,8 +354,8 @@ def analyze(path, cache='.cache/explorer'):
             report_path=str(path.resolve()), report_sha256=hashlib.sha256(source_bytes).hexdigest(),
             input_path=str(source), input_sha256=manifest['input_sha256'], filters=manifest['filters'],
             supporting_sha256=hashes, cache_only=True, network_requests=0,
-            simulations=manifest['simulations'], seed=manifest['seed'], prior=manifest['prior'],
-            interval_definition='Approximate prior-completed 95% local model intervals, using the saved joint move/result sampler and shared transposition values. Own move and parent database scores share one joint table. Opponent frequencies and results are jointly sampled. Policies and population are fixed; historical game overlap and selection effects are not modeled. Weighted rankings use empirical reach.',
+            prior=manifest['prior'], uncertainty_method=UNCERTAINTY_METHOD,
+            interval_definition='Approximate prior-completed 95% local model intervals: exact posterior means and first-order variances from each cached Dirichlet table, combined through shared transposition values. Own move and parent database scores share one table, so their covariance is included. Policies and population are fixed; historical game overlap and selection effects are not modeled. Weighted rankings use empirical reach.',
             spread_definition='Weighted standard deviation of stopping-event expected scores. Total variance equals between-canonical-position variance plus within-position incoming-evidence-cohort variance. No cutoff, sparse filter, prior or tunable parameter.'),
         validation=dict(source_pgn_unchanged=True, saved_scores_reproduced=True,
                         transposed_variance_decomposition=True, own_gain_decomposition=True))

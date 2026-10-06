@@ -39,7 +39,7 @@ def test_late_transposition_counts_once_and_reweights_score_and_baseline(tmp_pat
     evidence[early] = data(60,0,40)
     evidence[late] = data(20,0,80)
     m,o,r,s,v,p = setup(g,True,evidence)
-    result = chapter_score(m,o,r,s,v,p,{g.roots[0]:1},entries,1000)
+    result = chapter_score(m,o,r,v,{g.roots[0]:1},entries,s)
     assert result['entry_probability'] == pytest.approx(.36)
     assert result['first_entry_weights'][early] == pytest.approx(5/9)
     assert result['first_entry_weights'][late] == pytest.approx(4/9)
@@ -48,7 +48,7 @@ def test_late_transposition_counts_once_and_reweights_score_and_baseline(tmp_pat
     assert baseline['raw_score'] == pytest.approx((5*.6+4*.2)/9)
     # Passing every region member gives the same reach and score, with no
     # double counting at the shared junction or the following own move.
-    expanded = chapter_score(m,o,r,s,v,p,{g.roots[0]:1},region,1000)
+    expanded = chapter_score(m,o,r,v,{g.roots[0]:1},region,s)
     assert expanded['entry_probability'] == pytest.approx(result['entry_probability'])
     assert expanded['raw_empirical_score'] == pytest.approx(result['raw_empirical_score'])
     assert sum(x[0] for x in forward(m,o,r,{g.roots[0]:1})[0].values()) == pytest.approx(1)

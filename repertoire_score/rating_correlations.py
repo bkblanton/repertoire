@@ -34,35 +34,18 @@ def point(moment, centered):
     return np.clip(r, -1, 1), slope
 
 
-def estimate(moments, centered, repetitions, seed):
-    """Resample complete groups, using small batches to bound memory."""
+def estimate(moments, centered):
+    """Pooled correlation and slope from per-group sufficient moments."""
     a = np.asarray(moments, dtype=float)
     if not len(a):
-        return dict(correlation=None, slope_percent_per_100_rating=None,
-                    confidence_intervals_95={}, clusters=len(a), status='too few groups')
+        return dict(correlation=None, slope_percent_per_100_rating=None, clusters=0, status='too few groups')
     r, slope = point(a.sum(axis=0), centered)
-    if len(a) == 1:
-        return dict(correlation=float(r) if finite(float(r)) else None,
-                    slope_percent_per_100_rating=float(slope) if finite(float(slope)) else None,
-                    confidence_intervals_95={}, clusters=1, status='too few groups for interval')
-    rng = np.random.default_rng(seed)
-    draws = [[], []]
-    for start in range(0, repetitions, 256):
-        indices = rng.integers(len(a), size=(min(256, repetitions-start), len(a)))
-        values = point(a[indices].sum(axis=1), centered)
-        for output, value in zip(draws, values):
-            output.extend(value[np.isfinite(value)].tolist())
-    intervals = {}
-    for name, value, sample in zip(('correlation', 'slope_percent_per_100_rating'), (r, slope), draws):
-        available = finite(float(value)) and len(sample) >= .99*repetitions
-        intervals[name] = dict(bounds=np.quantile(sample, [.025, .975]).tolist() if available else None,
-                               valid_replicates=len(sample), invalid_replicates=repetitions-len(sample))
     return dict(correlation=float(r) if finite(float(r)) else None,
                 slope_percent_per_100_rating=float(slope) if finite(float(slope)) else None,
-                confidence_intervals_95=intervals, clusters=len(a), status='calculated')
+                clusters=len(a), status='calculated')
 
 
-def within_parent(rows, repetitions, seed):
+def within_parent(rows):
     """Demean both variables within each canonical parent board."""
     parents = defaultdict(list)
     for row in rows:
@@ -82,13 +65,13 @@ def within_parent(rows, repetitions, seed):
         eligible.extend(replies)
         details.append(dict(position=position, replies=len(replies), weight=float(w.sum()),
                             centered_moments=[xx, xy, yy]))
-    result = estimate(moments, True, repetitions, seed)
+    result = estimate(moments, True)
     result.update(replies=len(eligible), parents=len(moments), parent_moments=details,
                   eligible_reply_weight=sum(r['weight'] for r in eligible))
     return result
 
 
-def chapter_association(rows, field, weighted, repetitions, seed):
+def chapter_association(rows, field, weighted):
     groups = defaultdict(list)
     origin_x = np.mean([r['rating'] for r in rows]) if rows else 0
     origin_y = np.mean([r[field] for r in rows]) if rows else 0
@@ -96,7 +79,7 @@ def chapter_association(rows, field, weighted, repetitions, seed):
         x, y = row['rating']-origin_x, row[field]-origin_y
         w = row['reach'] if weighted else 1.
         groups[row['cluster']].append(np.array([w, w*x, w*y, w*x*x, w*x*y, w*y*y]))
-    result = estimate([np.sum(groups[k], axis=0) for k in sorted(groups)], False, repetitions, seed)
+    result = estimate([np.sum(groups[k], axis=0) for k in sorted(groups)], False)
     result.update(chapters=len(rows), weighting='chapter entry reach' if weighted else 'equal chapter weight',
                   rank_correlation=correlation(rank(np.array([r['rating'] for r in rows])),
                                                rank(np.array([r[field] for r in rows]))) if len(rows)>1 else None)
@@ -173,12 +156,7 @@ def load_color(path):
 
 def cell(result, key='correlation', slope=False):
     value = result.get(key)
-    if value is None:
-        return 'unavailable'
-    suffix = '%' if slope else ''
-    bounds = result['confidence_intervals_95'].get(key, {}).get('bounds')
-    interval = f' [{bounds[0]:+.3f}{suffix}, {bounds[1]:+.3f}{suffix}]' if bounds else ' [interval unavailable]'
-    return f'{value:+.3f}{suffix}' + interval
+    return 'unavailable' if value is None else f"{value:+.3f}{'%' if slope else ''}"
 
 
 def markdown(result):
@@ -186,7 +164,7 @@ def markdown(result):
              'This cache-only analysis measures associations between the mean ratings of players choosing replies and our modeled continuation scores. It does not measure the causal effect of rating or predict an individual player\'s result.', '',
              '## Replies from the same position', '',
              'Both rating and continuation score are centered on their reach-weighted means among eligible replies from the same board. Weights are parent reach times reply frequency. Positive slopes favor the repertoire owner; negative slopes mean replies associated with stronger opponents leave us with lower scores. Prepared replies use the recursive repertoire score, and unprepared replies use the cached parent move row. Transposed boards and replies occur only once in this analysis.', '',
-             '| Repertoire | Reply set | Replies / parent boards | Within-position correlation and 95% interval | Score association per +100 rating and 95% interval |',
+             '| Repertoire | Reply set | Replies / parent boards | Within-position correlation | Score association per +100 rating |',
              '|---|---|---:|---:|---:|']
     labels = {'all': 'All eligible replies', 'prepared': 'Prepared replies', 'unprepared': 'Unprepared replies',
               'at_least_1000_games': 'Replies with at least 1,000 games'}
@@ -194,10 +172,10 @@ def markdown(result):
         for key, estimate in data['reply_associations'].items():
             lines.append(f"| {color.title()} | {labels[key]} | {estimate['replies']:,} / {estimate['parents']:,} | "
                          f"{cell(estimate)} | {cell(estimate, 'slope_percent_per_100_rating', True)} |")
-    lines += ['', 'Intervals resample complete parent boards, keeping all replies from a board together. Repeated games and shared downstream evidence can correlate different boards, so these are exploratory parent-bootstrap intervals, with no guarantee of nominal 95% coverage. They condition on the saved scores and ratings rather than propagate finite-database uncertainty. The slope describes differences between reply cohorts, not the effect of raising one opponent\'s rating.', '',
+    lines += ['', 'These are descriptive point estimates without intervals. Repeated games and shared downstream evidence connect different boards. The slope describes differences between reply cohorts, not the effect of raising one opponent\'s rating.', '',
               '## Across chapters', '',
               'The rating is the chapter\'s modeled, once-per-game stopping-evidence opponent mean, paired with the chapter score. Delta is score minus entry baseline. Equal chapter weighting is the primary comparison; reach weighting shows sensitivity to commonly reached chapters. Chapters sharing region boards are resampled together, including indirect transpositions. There is no whole-repertoire average rating.', '',
-              '| Repertoire | Comparison | Chapters / transposition groups | Correlation and 95% interval | Rank correlation |',
+              '| Repertoire | Comparison | Chapters / transposition groups | Correlation | Rank correlation |',
               '|---|---|---:|---:|---:|']
     for color, data in result['results'].items():
         for key, estimate in data['chapter_associations'].items():
@@ -205,28 +183,26 @@ def markdown(result):
             rank_value = estimate['rank_correlation']
             rank_text = f'{rank_value:+.3f}' if rank_value is not None else 'unavailable'
             lines.append(f"| {color.title()} | {label} | {estimate['chapters']} / {estimate['clusters']} | {cell(estimate)} | {rank_text} |")
-    lines += ['', 'Across-chapter results also reflect which openings and positions the repertoire selects. Chapter intervals resample transposition groups; few groups, overlap outside chapter regions, and shared historical games limit their interpretation.', '', '## Chapter inputs', '']
+    lines += ['', 'Across-chapter results also reflect which openings and positions the repertoire selects. Few transposition groups, overlap outside chapter regions, and shared historical games limit their interpretation.', '', '## Chapter inputs', '']
     for color, data in result['results'].items():
         lines += [f'### {color.title()} repertoire', '', '| Chapter | Entry reach | Average opponent rating | Repertoire score / CP | Delta vs entry baseline |', '|---|---:|---:|---:|---:|']
         for row in data['chapters']:
             name = row['name'].replace('|', '&#124;')
             lines.append(f"| {name} | {100*row['reach']:.2f}% | {row['rating']:,.1f} | {score_cell(row['score'])} | {score_points(100*row['delta'], signed=True)} |")
     lines += ['', '## Evidence and reproduction', '',
-              f"- Bootstrap replicates: {result['bootstrap_repetitions']:,}; seed: {result['seed']}.",
               '- Filters: standard chess, all cached rating buckets, blitz, rapid and classical. Scores include half a point for draws.',
               '- Unprepared child positions are not queried. Only saved score, rating and vulnerability JSON files are read.',
               '- CP uses the same score-scale conversion as the consolidated report and is not an engine evaluation.',
               '- Reproduce: `uv run repertoire rating-correlations reports/data/white.json reports/data/black.json`.',
-              '- The grouped-bootstrap rationale is discussed by [Cameron and Miller](https://faculty.econ.ucdavis.edu/faculty/cameron/research/Cameron_Miller_JHR_2014_July_09.pdf).', '']
+              '']
     for color, data in result['results'].items():
         lines.append(f"{color.title()}: sparse threshold {data['provenance']['sparse_threshold']} games; excluded replies {data['exclusions']['replies']}; excluded chapters {len(data['exclusions']['chapters'])}.")
     return '\n'.join(lines)+'\n'
 
 
-def analyze(paths, repetitions=20000, seed=20261004):
-    result = dict(created_at=datetime.now(timezone.utc).isoformat(), bootstrap_repetitions=repetitions,
-                  seed=seed, network_requests=0, results={})
-    for i, path in enumerate(paths):
+def analyze(paths):
+    result = dict(created_at=datetime.now(timezone.utc).isoformat(), network_requests=0, results={})
+    for path in paths:
         data = load_color(path)
         if data['color'] in result['results']:
             raise ValueError('Supply one score file per color')
@@ -235,12 +211,11 @@ def analyze(paths, repetitions=20000, seed=20261004):
         subsets = dict(all=replies, prepared=[r for r in replies if r['prepared']],
                        unprepared=[r for r in replies if not r['prepared']],
                        at_least_1000_games=[r for r in replies if r['games'] >= 1000])
-        data['reply_associations'] = {name: within_parent(rows, repetitions, seed+i*100+j)
-                                      for j, (name, rows) in enumerate(subsets.items())}
-        data['chapter_associations'] = {name: chapter_association(data['chapters'], field, weighted, repetitions, seed+i*100+10+j)
-                                        for j, (name, field, weighted) in enumerate((
+        data['reply_associations'] = {name: within_parent(rows) for name, rows in subsets.items()}
+        data['chapter_associations'] = {name: chapter_association(data['chapters'], field, weighted)
+                                        for name, field, weighted in (
                                             ('score', 'score', False), ('delta', 'delta', False),
-                                            ('reach_weighted_score', 'score', True), ('reach_weighted_delta', 'delta', True)))}
+                                            ('reach_weighted_score', 'score', True), ('reach_weighted_delta', 'delta', True))}
         result['results'][data['color']] = data
         for name, source in data['provenance']['paths'].items():
             if digest(source) != data['provenance']['hashes'][name]:
@@ -251,14 +226,10 @@ def analyze(paths, repetitions=20000, seed=20261004):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+')
-    parser.add_argument('--bootstrap-samples', type=int, default=20000)
-    parser.add_argument('--seed', type=int, default=20261004)
     parser.add_argument('--output', default='reports/data/opponent-rating-score-correlation.json')
     parser.add_argument('--markdown', default='reports/comparisons/opponent-rating-score.md')
     args = parser.parse_args()
-    if args.bootstrap_samples < 1000:
-        parser.error('Use at least 1,000 bootstrap samples')
-    result = analyze(args.reports, args.bootstrap_samples, args.seed)
+    result = analyze(args.reports)
     for target, content in ((args.output, json.dumps(result, indent=2, allow_nan=False)+'\n'),
                             (args.markdown, markdown(result))):
         path = Path(target)

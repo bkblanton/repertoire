@@ -1,4 +1,4 @@
-"""Reach-weighted preparation correlations with joint cached-evidence intervals."""
+"""Reach-weighted correlations between future prepared depth and future preparation gain."""
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -9,11 +9,10 @@ import numpy as np
 
 from . import SCHEMA_VERSION
 from .stats import correlation, rank
-from .evaluate import COMPLETED, KNOWN, UNKNOWN, backward
+from .evaluate import KNOWN, UNKNOWN, backward
 from .explorer import Explorer
 from .graph import parse, resolve, topology
-from .model import draws, empirical, prepare, score
-from .report_insights import database_samples, database_table
+from .model import empirical, prepare, score
 
 
 METRICS = ('reach_weighted_pearson', 'reach_weighted_spearman', 'slope_pp_per_move', 'pearson', 'spearman')
@@ -72,7 +71,7 @@ def reaches(model, order, sampled, roots, width=1):
     return values
 
 
-def analyze_color(path, cache, simulations, seed, batch_size=128):
+def analyze_color(path, cache):
     path = Path(path)
     move_path = path.with_suffix('.vulnerabilities.json')
     hashes = dict(score=digest(path), vulnerabilities=digest(move_path))
@@ -154,36 +153,6 @@ def analyze_color(path, cache, simulations, seed, batch_size=128):
     def arrays(rows):
         return ([r['depth'] for r in rows], [r['future_preparation_gain_pp'] for r in rows], [r['reach'] for r in rows])
     point = metrics(*arrays(eligible))
-    chosen = {}
-    for row in eligible:
-        chosen.setdefault(row['position'], set()).add(row['move'])
-    samples = {k: [] for k in METRICS}
-    # Validate each cached table once, not once per sampling batch.
-    tables = {position: database_table(evidence[position], position, color, manifest['prior']) for position in chosen}
-    for start in range(0, simulations, batch_size):
-        width = min(batch_size, simulations - start)
-        local_seed = seed + start // batch_size
-        sampled = draws(model, color, width, local_seed, manifest['prior'])
-        posterior = backward(model, order, sampled, manifest['sparse_threshold'], width)
-        sampled_depth = depths(model, order, sampled, width)
-        sampled_reach = reaches(model, order, sampled, roots, width)
-        selected = {position: database_samples(evidence[position], position, selected_moves, color, width,
-                                               manifest['prior'], local_seed, tables[position])[1]
-                    for position, selected_moves in chosen.items()}
-        if eligible:
-            x = np.stack([sampled_depth[r['target']] for r in eligible])
-            y = np.stack([100 * (posterior[r['target']][COMPLETED] - selected[r['position']][r['move']]) for r in eligible])
-            w = np.stack([sampled_reach[r['position']] * r['probability'] for r in eligible])
-            for j in range(width):
-                for name, value in metrics(x[:, j], y[:, j], w[:, j]).items():
-                    if value is not None:
-                        samples[name].append(value)
-        print(f'{saved["color"]}: joint preparation draws {start + width}/{simulations}', flush=True)
-    intervals = {}
-    for name, sample in samples.items():
-        available = point[name] is not None and len(sample) >= .99 * simulations
-        intervals[name] = dict(bounds=np.quantile(sample, [.025, .975]).tolist() if available else None,
-                               valid_replicates=len(sample), invalid_replicates=simulations - len(sample))
     nonzero = [r for r in eligible if r['depth'] > 0]
     sensitivity = dict(n=len(nonzero), **metrics(*arrays(nonzero)))
     for name, filename in (('score', path), ('vulnerabilities', move_path)):
@@ -192,7 +161,7 @@ def analyze_color(path, cache, simulations, seed, batch_size=128):
     if digest(source) != manifest['input_sha256']:
         raise ValueError('PGN changed during preparation correlation analysis')
     return dict(n=len(eligible), encounter_weight=sum(r['reach'] for r in eligible), **point,
-                confidence_intervals_95=intervals, decisions=eligible, exclusions=exclusions,
+                decisions=eligible, exclusions=exclusions,
                 position_depths={k: float(v[0]) for k, v in depth.items()},
                 sensitivity_without_zero_depth=sensitivity, validation=dict(root_score_reproduced=True,
                     root_depth_reproduced=float(root_depth), canonical_decisions_unique=True),
@@ -201,17 +170,14 @@ def analyze_color(path, cache, simulations, seed, batch_size=128):
                     filters=manifest['filters'], prior=manifest['prior'], sparse_threshold=manifest['sparse_threshold']))
 
 
-def analyze(paths, output, cache='.cache/explorer', simulations=2000, seed=20261005):
-    if simulations < 1:
-        raise ValueError('Use a positive simulation count')
+def analyze(paths, output, cache='.cache/explorer'):
     result = dict(schema_version=SCHEMA_VERSION, created_at=datetime.now(timezone.utc).isoformat(), network_requests=0,
-                  interval_method='Joint Dirichlet evidence propagation for the fixed repertoire',
-                  simulations=simulations, seed=seed, results={}, provenance={})
-    for i, path in enumerate(paths):
+                  results={}, provenance={})
+    for path in paths:
         color = json.loads(Path(path).read_bytes())['color']
         if color in result['results']:
             raise ValueError('Supply one saved score file per color')
-        value = analyze_color(path, cache, simulations, seed + 10000 * i)
+        value = analyze_color(path, cache)
         result['provenance'][color] = value.pop('provenance')
         result['results'][color] = value
     output = Path(output).with_suffix('.json')
@@ -225,11 +191,9 @@ def main():
     parser.add_argument('reports', nargs='+')
     parser.add_argument('--cache', default='.cache/explorer')
     parser.add_argument('--output')
-    parser.add_argument('--simulations', type=int, default=2000)
-    parser.add_argument('--seed', type=int, default=20261005)
     args = parser.parse_args()
     output = args.output or Path(args.reports[0]).parent / 'prepared-depth-gain-correlation.json'
-    analyze(args.reports, output, args.cache, args.simulations, args.seed)
+    analyze(args.reports, output, args.cache)
     print(f'Saved {Path(output).resolve()}; network requests: 0')
     from .render import update_report_outputs
     update_report_outputs(args.reports[0])

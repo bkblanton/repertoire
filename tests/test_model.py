@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 from repertoire_score.graph import parse, key, resolve, topology, conflicts, infer_entries
 from repertoire_score.explorer import validate, Explorer
-from repertoire_score.model import prepare, empirical, draws
+from repertoire_score.model import prepare, empirical
+from repertoire_score.uncertainty import Posterior
 from repertoire_score.evaluate import backward, forward, summarize, chapter_score, KNOWN, UNKNOWN, COMPLETED, LEAF, DEVIATION, OTHER
 
 
@@ -26,15 +27,15 @@ def data(w, d, b, moves=()):
     return dict(white=w, draws=d, black=b, moves=[dict(uci=m, white=a, draws=c, black=e) for m,a,c,e in moves])
 
 
-def setup(g, color, evidence, policy=None, seed=7):
+def setup(g, color, evidence, policy=None):
+    """Model, order, empirical sample, Posterior, empirical values and posterior-mean values."""
     t = resolve(g, color, policy or {})
     order = topology(t, g.roots)
     model = prepare(g, t, order, color, evidence)
     raw = empirical(model, color)
-    samples = draws(model, color, 1000, seed, [0.5]*3)
     values = backward(model, order, raw, 30)
-    posterior = backward(model, order, samples, 30, 1000)
-    return model, order, raw, samples, values, posterior
+    posterior = Posterior(model, order, color, [0.5]*3, 30)
+    return model, order, raw, posterior, values, posterior.values
 
 
 def test_forced_own_move_deviations_and_conservation(tmp_path):
@@ -49,7 +50,7 @@ def test_forced_own_move_deviations_and_conservation(tmp_path):
     assert sum(x[0] for x in stops.values()) == pytest.approx(1)
     assert sum(stops[k,j][0]*(r[k][j][1] or 0) for k,j in stops) == pytest.approx(.6)
     assert np.allclose(p[root][UNKNOWN]+p[root][LEAF]+p[root][DEVIATION]+p[root][OTHER],1)
-    assert np.allclose(sum(flow*s[k][j][1] for (k,j),flow in forward(m,o,s,{root:1},1000)[0].items()),p[root][COMPLETED])
+    assert np.allclose(sum(flow*s.sample[k][j][1] for (k,j),flow in forward(m,o,s.sample,{root:1})[0].items()),p[root][COMPLETED])
     evidence[e4] = data(40,0,60,[('e7e5',40,0,40),('c7c5',0,0,20)])
     assert setup(g, True, evidence)[4][root][KNOWN,0] == pytest.approx(.4)
 
@@ -58,7 +59,7 @@ def test_sparse_zero_leaf_and_zero_distribution(tmp_path):
     g = graph(tmp_path, '1. e4 e5 2. Nf3 *')
     evidence = {position('e4'):data(80,0,20,[('e7e5',70,0,10),('c7c5',10,0,10)]),position('e4 e5 Nf3'):data(0,0,0)}
     m,o,r,s,v,p = setup(g, True, evidence)
-    summary = summarize(v[g.roots[0]],p[g.roots[0]])
+    summary = summarize(v[g.roots[0]],s.mixture({g.roots[0]: 1.}))
     assert summary['raw_empirical_score'] is None
     assert summary['conditional_bounds'] == pytest.approx([.1,.9])
     evidence[position('e4')] = data(0,0,0)
@@ -117,7 +118,7 @@ def test_transposition_incoming_mass_and_first_entry(tmp_path):
     flow,_ = forward(m,o,r,{root:1})
     leaf = position('Nf3 d5 g3 Nf6 Bg2')
     assert sum(mass[0] for (k, _), mass in flow.items() if k == leaf) == pytest.approx(1)
-    chapter = chapter_score(m,o,r,s,v,p,{root:1},[position('Nf3'),position('g3'),leaf],1000)
+    chapter = chapter_score(m,o,r,v,{root:1},[position('Nf3'),position('g3'),leaf],s)
     assert chapter['entry_probability'] == pytest.approx(1)
     assert chapter['first_entry_weights'][leaf] == 0
     assert chapter['raw_empirical_score'] == pytest.approx(.4)
@@ -282,11 +283,11 @@ def test_missing_distribution_does_not_imply_zero_entry_probability(tmp_path):
     g = graph(tmp_path,'1. e4 e5 (1... c5) *')
     evidence = {position('e4'):data(0,0,0),position('e4 e5'):data(5,0,5),position('e4 c5'):data(5,0,5)}
     m,o,r,s,v,p = setup(g,True,evidence)
-    one = chapter_score(m,o,r,s,v,p,{g.roots[0]:1},[position('e4 e5')],1000)
+    one = chapter_score(m,o,r,v,{g.roots[0]:1},[position('e4 e5')],s)
     assert one['entry_probability'] is None
     assert one['entry_probability_bounds'] == [0,1]
     assert one['raw_empirical_score'] == .5
-    two = chapter_score(m,o,r,s,v,p,{g.roots[0]:1},[position('e4 e5'),position('e4 c5')],1000)
+    two = chapter_score(m,o,r,v,{g.roots[0]:1},[position('e4 e5'),position('e4 c5')],s)
     assert two['status'] == 'unresolved_first_entry_weights'
 
 
@@ -297,5 +298,4 @@ def test_prior_strength_is_independent_of_legal_move_count(tmp_path):
     m,o,r,s,v,p = setup(g,True,{position('e4'):data(1,0,0,[('e7e5',1,0,0)]),position('e4 e5'):data(1,0,0)})
     k = position('e4')
     j = next(j for j,b in enumerate(m[k].branches) if b.move=='e7e5')
-    many = draws(m,True,20000,4,[.5]*3)
-    assert np.mean(many[k][j][0]) == pytest.approx(1.075/2.5,abs=.01)
+    assert s.sample[k][j][0] == pytest.approx(1.075/2.5)

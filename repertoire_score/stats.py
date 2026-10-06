@@ -36,12 +36,8 @@ def connected_groups(position_sets):
 
 
 def cell(result, metric):
-    """A saved statistic with its 95% interval, for report tables."""
+    """A saved statistic for report tables."""
     value = result[metric]
     if value is None:
         return 'undefined'
-    limits = result['confidence_intervals_95'][metric]['bounds']
-    suffix = '%' if metric == 'slope_pp_per_move' else ''
-    if limits is None:
-        return f'{value:.3f}{suffix} (interval unavailable)'
-    return f'{value:.3f}{suffix} [{limits[0]:.3f}{suffix}, {limits[1]:.3f}{suffix}]'
+    return f"{value:.3f}{'%' if metric == 'slope_pp_per_move' else ''}"

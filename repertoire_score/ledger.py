@@ -1,5 +1,4 @@
 """Stopping-event ledger and starting-position reference saved with each score."""
-import numpy as np
 import chess
 from .model import score
 from .board_cache import after_fen, san
@@ -20,19 +19,15 @@ def starting_position_reference(data, color, provenance):
     }
 
 
-def events(graph, model, raw_sample, post_sample, raw_flow, post_flow, color, prior_strength):
+def events(graph, model, raw_sample, posterior, raw_flow, post_flow, color, prior_strength):
+    """Every stopping event under the overall policy; `post_flow` is the posterior-mean flow from `posterior`."""
     result = []
-    keys = list(raw_flow)
-    # One quantile call per block of events instead of one per event.
-    intervals = []
-    for start in range(0, len(keys), 2048):
-        block = np.stack([post_sample[k][j][1] for k, j in keys[start:start + 2048]])
-        intervals.extend(np.quantile(block, [0.025, 0.975], axis=1).T.tolist())
-    for ((k, j), mass), interval in zip(raw_flow.items(), intervals):
+    for (k, j), mass in raw_flow.items():
         b = model[k].branches[j]
         raw_score = raw_sample[k][j][1]
-        draws = post_sample[k][j][1]
-        pmass = post_flow[(k, j)]
+        score_mean, interval = posterior.stop_interval(k, j)
+        # Upstream reach and this table are independent, so the mean of their product is the product of means.
+        pmass = float(post_flow[(k, j)][0])
         sample = sum(b.counts)
         unresolved = b.fixed_score is None and sample == 0
         n = graph.nodes[k]
@@ -43,13 +38,12 @@ def events(graph, model, raw_sample, post_sample, raw_flow, post_flow, color, pr
                        "representative_path_san": path, "chapters": sorted(n.chapters), "type": b.kind,
                        "unresolved": unresolved, "score_status": "prior-only; no direct observations" if unresolved else "deterministic" if b.fixed_score is not None else "observed",
                        "sample_count": sample, "counts_white_draw_black": b.counts,
-                       "probability": float(mass[0]), "posterior_probability_mean": float(pmass.mean()),
-                       "raw_score": raw_score, "posterior_score_mean": float(np.mean(draws)),
+                       "probability": float(mass[0]), "posterior_probability_mean": pmass,
+                       "raw_score": raw_score, "posterior_score_mean": score_mean,
                        "posterior_score_interval_95": interval,
                        "contribution": float(mass[0]*raw_score) if raw_score is not None else None,
-                       "posterior_contribution_mean": float(np.mean(pmass*draws)),
-                       "uncertainty_priority": float(pmass.mean())*(interval[1]-interval[0]),
-                       "contribution_sd": float(np.std(pmass*draws)),
+                       "posterior_contribution_mean": pmass*score_mean,
+                       "uncertainty_priority": pmass*(interval[1]-interval[0]),
                        "prior_fraction": 0 if b.fixed_score is not None else
                        (prior_strength/len(model[k].branches) if model[k].mode == "opponent" else prior_strength)/
                        (sample+(prior_strength/len(model[k].branches) if model[k].mode == "opponent" else prior_strength)),

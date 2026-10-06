@@ -310,9 +310,7 @@ uv run repertoire correlations reports/data/white.json reports/data/black.json
 
 This writes `prepared-depth-gain-correlation.json` beside the scores and refreshes the consolidated report. Each canonical selected own move is one observation under the overall policy. Its depth is the expected number of prepared own moves after that move, excluding the selected move itself. Its gain is the recursive continuation score minus the selected move's database score from the cached parent table. Weight is the probability of playing that decision, merged across all transpositions. The main table shows reach-weighted linear and rank correlations and the weighted gain slope. Unweighted results and a positive-depth-only check are available in expandable details.
 
-Approximate 95% model-based intervals propagate the saved Dirichlet evidence model jointly through the graph. Each canonical table is sampled once per draw and reused through shared continuations and transpositions. Depths, scores, baseline scores and reach weights are recomputed together. Defaults are 2,000 draws and seed 20261005; `--simulations` and `--seed` control reproducibility and numerical precision. The analysis uses bounded batches to limit memory. Intervals are withheld when the empirical statistic is undefined or more than 1% of draws are undefined.
-
-These intervals describe finite-database uncertainty for the fixed repertoire under its saved prior. Correlation is nonlinear: uncertainty in continuation scores and the prior can shift the sampled correlations, so a model interval need not contain the observed-count point estimate. Distinct board tables are still treated as independent, even though historical games can overlap. The result describes association, not the causal gain from adding preparation. Sparse, unreachable and unresolved decisions are excluded.
+These are point estimates from the observed counts, without intervals. The result describes association, not the causal gain from adding preparation. Sparse, unreachable and unresolved decisions are excluded.
 
 No Lichess requests or token are needed. The PGN files are read only to reconstruct dependencies and must still match the saved input hashes. Correlations run automatically in `repertoire build` or through this separate command. Presentation-only `repertoire report` combines the matching saved correlations without recalculating them.
 
@@ -322,7 +320,7 @@ To analyze the association between opponent rating and score using saved evidenc
 uv run repertoire rating-correlations reports/data/white.json reports/data/black.json
 ```
 
-This writes `reports/comparisons/opponent-rating-score.md` and ignored supporting JSON in `reports/data/`. It compares replies within canonical parent boards, using reach weights, recursive prepared scores, cached unprepared reply scores, and parent-bootstrap intervals. It also compares chapter scores and baseline deltas with chapter stopping-evidence opponent ratings, grouping overlapping chapter regions for bootstrap intervals. Sparse replies are excluded, and a 1,000-game sensitivity check is included. These are descriptive cohort associations, not causal rating effects or predictions at a target rating. No Lichess requests are made.
+This writes `reports/comparisons/opponent-rating-score.md` and ignored supporting JSON in `reports/data/`. It compares replies within canonical parent boards, using reach weights, recursive prepared scores and cached unprepared reply scores. It also compares chapter scores and baseline deltas with chapter stopping-evidence opponent ratings, grouping overlapping chapter regions. Both are point estimates without intervals. Sparse replies are excluded, and a 1,000-game sensitivity check is included. These are descriptive cohort associations, not causal rating effects or predictions at a target rating. No Lichess requests are made.
 
 ### Report insights and attribution
 

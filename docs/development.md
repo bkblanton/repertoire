@@ -10,7 +10,7 @@ Work from the repository root and preserve unrelated local changes. Use uv for P
 | --- | --- |
 | PGN parsing, canonical boards, selected moves, chapter regions and first entries | [graph.py](../repertoire_score/graph.py), [board_cache.py](../repertoire_score/board_cache.py) |
 | Authenticated evidence, validation and persistent cache | [explorer.py](../repertoire_score/explorer.py) |
-| The `repertoire` command, scoring orchestration and posterior model | [cli.py](../repertoire_score/cli.py), [score.py](../repertoire_score/score.py), [model.py](../repertoire_score/model.py) |
+| The `repertoire` command, scoring orchestration, evidence model and calculated uncertainty | [cli.py](../repertoire_score/cli.py), [score.py](../repertoire_score/score.py), [model.py](../repertoire_score/model.py), [uncertainty.py](../repertoire_score/uncertainty.py) |
 | Backward values, forward probability, entry baselines, depth and chapter transitions | [evaluate.py](../repertoire_score/evaluate.py), [baseline.py](../repertoire_score/baseline.py), [depth.py](../repertoire_score/depth.py), [transitions.py](../repertoire_score/transitions.py) |
 | Cache-only empirical traversal, stopping ledger, depth distribution and entry-route examples | [preparation.py](../repertoire_score/preparation.py), [insights.py](../repertoire_score/insights.py) |
 | Position reach, first gaps, reuse, reply variety, WDL and recursive branch spread | [character.py](../repertoire_score/character.py), [gaps.py](../repertoire_score/gaps.py), [sharpness.py](../repertoire_score/sharpness.py), [spread.py](../repertoire_score/spread.py) |
@@ -66,7 +66,7 @@ For a focused change, choose the relevant checks:
 | Change | Useful test command |
 | --- | --- |
 | Presentation and summary | `uv run --no-sync pytest tests/test_consolidated.py tests/test_report_insights.py -q` |
-| Traversal, reach, chapters or depth | `uv run --no-sync pytest tests/test_model.py tests/test_endpoint_traversal.py tests/test_regions.py tests/test_chapter_policies.py tests/test_depth.py tests/test_gaps.py -q` |
+| Traversal, reach, chapters, depth or uncertainty | `uv run --no-sync pytest tests/test_model.py tests/test_uncertainty.py tests/test_endpoint_traversal.py tests/test_regions.py tests/test_chapter_policies.py tests/test_depth.py tests/test_gaps.py -q` |
 | Explorer or incremental reuse | `uv run --no-sync pytest tests/test_explorer.py tests/test_build.py -q` |
 | Broad numerical or dependency changes | `uv run --no-sync pytest -q` |
 

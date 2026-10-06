@@ -13,27 +13,25 @@ def replies():
             for i in range(4) for rating, score, weight in ((1500, .6, 1), (1600, .55, 2), (1700, .5, 1))]
 
 
-def test_within_parent_removes_position_offsets_and_resamples_complete_boards():
-    result = within_parent(replies(), 1000, 7)
+def test_within_parent_removes_position_offsets():
+    result = within_parent(replies())
     assert result['correlation'] == pytest.approx(-1)
     assert result['slope_percent_per_100_rating'] == pytest.approx(-5)
-    assert result['confidence_intervals_95']['correlation']['bounds'] == pytest.approx([-1, -1])
     assert result['replies'] == 12
     assert result['parents'] == 4
-    assert result == within_parent(replies(), 1000, 7)
+    assert result == within_parent(replies())
     assert np.corrcoef([r['rating'] for r in replies()], [r['score'] for r in replies()])[0, 1] > 0
 
 
 def test_no_variation_and_singletons_are_not_invented_associations():
     rows = [dict(position='a', rating=1500, score=.5, weight=1),
             dict(position='b', rating=1600, score=.4, weight=1)]
-    assert within_parent(rows, 1000, 7)['correlation'] is None
+    assert within_parent(rows)['correlation'] is None
     rows[1]['position'] = 'a'
-    result = within_parent(rows, 1000, 7)
+    result = within_parent(rows)
     assert result['correlation'] == pytest.approx(-1)
-    assert result['confidence_intervals_95'] == {}
     rows[1]['score'] = .5
-    assert within_parent(rows, 1000, 7)['correlation'] is None
+    assert within_parent(rows)['correlation'] is None
 
 
 def test_grouped_chapter_moments_reproduce_weighted_correlation_and_slope():
@@ -42,17 +40,18 @@ def test_grouped_chapter_moments_reproduce_weighted_correlation_and_slope():
                                            (1700, .62, .4), (1800, .55, .2), (1900, .5, .5), (2000, .52, .1)))]
     x, y, w = (np.array([r[k] for r in rows]) for k in ('rating', 'score', 'reach'))
     dx, dy = x-np.average(x, weights=w), y-np.average(y, weights=w)
-    result = chapter_association(rows, 'score', True, 1000, 7)
+    result = chapter_association(rows, 'score', True)
     assert result['correlation'] == pytest.approx(np.sum(w*dx*dy)/np.sqrt(np.sum(w*dx*dx)*np.sum(w*dy*dy)))
     assert result['slope_percent_per_100_rating'] == pytest.approx(10000*np.sum(w*dx*dy)/np.sum(w*dx*dx))
     assert result['clusters'] == 3
     assert result['chapters'] == 6
 
 
-def test_degenerate_bootstrap_is_reported():
-    result = estimate([[1, 1, 1], [1, -1, 1]], True, 1000, 7)
+def test_pooled_estimate_from_group_moments():
+    result = estimate([[1, 1, 1], [1, -1, 1]], True)
     assert result['correlation'] == pytest.approx(0)
-    assert result['confidence_intervals_95']['correlation']['valid_replicates'] == 1000
+    assert result['clusters'] == 2 and 'confidence_intervals_95' not in result
+    assert estimate([], True)['status'] == 'too few groups'
 
 
 def fixture(tmp_path):

@@ -141,7 +141,7 @@ def batch(tmp_path, monkeypatch):
     monkeypatch.setattr(build, 'generate', counted)
     def run(**options):
         return build.build(white, black, white_config=None, black_config=None,
-            directory=tmp_path / 'data', cache=cache, offline=True, simulations=100, repetitions=10, **options)
+            directory=tmp_path / 'data', cache=cache, offline=True, **options)
     return run, white, black, renders
 
 

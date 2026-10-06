@@ -75,39 +75,27 @@ def forward(model, order, sampled, roots, width=1, stop_at=(), entering=None):
 
 
 def summarize(raw, posterior):
+    """Empirical score fields from the raw component vector, plus the posterior block from uncertainty.py."""
     r = raw[:, 0]
     u = float(r[UNKNOWN])
-    result = {
+    return {
         "raw_empirical_score": float(r[KNOWN]) if u == 0 else None,
         "resolved_contribution": float(r[KNOWN]), "unresolved_mass": u,
         "conditional_bounds": [float(r[KNOWN]), float(r[KNOWN]+u)],
         "sparse_mass": float(r[SPARSE]),
         "sparse_sensitivity": [float(r[KNOWN]-r[SPARSE_KNOWN]), float(r[KNOWN]-r[SPARSE_KNOWN]+r[SPARSE])],
         "masses": {"theory_leaf": float(r[LEAF]), "deviation": float(r[DEVIATION]), "other_stop": float(r[OTHER]), "unresolved": u},
+        "posterior": posterior,
     }
-    pu = posterior[UNKNOWN]
-    result["posterior"] = {
-        "mean": float(posterior[COMPLETED].mean()),
-        "credible_interval_95": np.quantile(posterior[COMPLETED], [0.025, 0.975]).tolist(),
-        "label": "prior-completed estimate; missing distributions stop unresolved without assuming opponent play" if np.any(pu>0) else "posterior estimate",
-        "unresolved_mass_mean": float(pu.mean()),
-        "resolved_contribution_mean": float(posterior[KNOWN].mean()),
-        "conditional_bounds_mean": [float(posterior[KNOWN].mean()), float((posterior[KNOWN]+pu).mean())],
-        "masses_mean": {"theory_leaf": float(posterior[LEAF].mean()), "deviation": float(posterior[DEVIATION].mean()),
-                        "other_stop": float(posterior[OTHER].mean()), "unresolved": float(pu.mean())},
-    }
-    return result
 
 
-def chapter_score(model, order, raw_sample, post_sample, values, post_values, root_weights, entries, simulations):
+def chapter_score(model, order, raw_sample, values, root_weights, entries, posterior):
+    """Score conditional on first entry, with `posterior` an uncertainty.Posterior for the same model."""
     # Only positions that can still reach the chapter matter for its entry weights.
     entering = can_enter(model, order, entries)
     raw_stops, raw_entries = forward(model, order, raw_sample, root_weights, stop_at=entries, entering=entering)
-    _, post_entries = forward(model, order, post_sample, root_weights, simulations, entries, entering)
     raw_reach = sum(raw_entries.values(), np.zeros(1))
-    post_reach = sum(post_entries.values(), np.zeros(simulations))
     r = sum((raw_entries[k]*values[k] for k in raw_entries), np.zeros((8, 1)))
-    p = sum((post_entries[k]*post_values[k] for k in post_entries), np.zeros((8, simulations)))
     weights = {k: float(v[0]/raw_reach[0]) if raw_reach[0] else None for k, v in raw_entries.items()}
     unresolved_entry_mass = sum(float(flow[0]) for (k,j),flow in raw_stops.items()
                                 if model[k].branches[j].kind == "unresolved_distribution" and entering[k])
@@ -116,18 +104,20 @@ def chapter_score(model, order, raw_sample, post_sample, values, post_values, ro
                 "entry_probability_bounds": [float(raw_reach[0]),float(raw_reach[0])+unresolved_entry_mass],
                 "conditional_score_bounds": [min(values[k][KNOWN,0] for k in entries),
                                              max(values[k][KNOWN,0]+values[k][UNKNOWN,0] for k in entries)]}
+    chapter = posterior.chapter(root_weights, entries)
     if raw_reach[0] <= 0:
         if len(entries) == 1:
             k = next(iter(entries))
-            summary = summarize(values[k], post_values[k])
+            summary = summarize(values[k], posterior.mixture({k: 1.}))
             summary["conditional_basis"] = "single entry position, even though root reach is zero"
         else:
             summary = {"status": "unreachable_multiple_entries_require_conditional_weights"}
     else:
-        if np.any(post_reach <= 0):
-            raise ValueError("Posterior first-entry weights underflowed; use a stronger prior or explicit entries")
-        summary = summarize(r/raw_reach, p/post_reach)
-    summary.update(entry_probability=float(raw_reach[0]), posterior_entry_probability_mean=float(post_reach.mean()), first_entry_weights=weights)
+        if chapter['summary'] is None:
+            raise ValueError("Posterior first-entry weights are zero; use a stronger prior or explicit entries")
+        summary = summarize(r/raw_reach, chapter['summary'])
+    summary.update(entry_probability=float(raw_reach[0]), posterior_entry_probability_mean=chapter['entry_probability'],
+                   first_entry_weights=weights)
     if unresolved_entry_mass > 0:
         summary["entry_probability"] = None
         summary["posterior_entry_probability_mean"] = None

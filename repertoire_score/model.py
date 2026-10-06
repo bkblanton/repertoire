@@ -1,6 +1,5 @@
 """Evidence preparation, independent of network access."""
 from dataclasses import dataclass, field
-import numpy as np
 from .board_cache import children, owner_outcome, turn
 from .explorer import counts, validate
 
@@ -67,41 +66,6 @@ def prepare(graph, transitions, order, color, evidence):
 def score(count, color):
     total = sum(count)
     return ((count[0] if color else count[2])+0.5*count[1])/total if total else None
-
-
-def draws(model, color, simulations, seed, prior):
-    """Sample each local evidence table once and reuse it at every reference."""
-    rng = np.random.default_rng(seed)
-    sampled = {}
-    prior = np.asarray(prior, dtype=float)
-    # User prior is in owner win/draw/loss order; tables use white/draw/black.
-    table_prior = prior if color else prior[::-1]
-    for k in sorted(model):
-        node = model[k]
-        local = []
-        if node.mode == "opponent":
-            alpha = np.asarray([b.counts for b in node.branches], dtype=float) + table_prior / len(node.branches)
-            gamma = rng.gamma(alpha, size=(simulations, *alpha.shape))
-            # Extremely weak unobserved cells can underflow to zero.
-            row = gamma.sum(axis=2)
-            joint_total = row.sum(axis=1)
-            probabilities = row / joint_total[:, None]
-            numerators = gamma[:, :, 0 if color else 2]+0.5*gamma[:, :, 1]
-            scores = np.divide(numerators, row, out=np.full_like(row, 0.5), where=row>0)
-            for j, b in enumerate(node.branches):
-                local.append((probabilities[:, j], scores[:, j] if b.fixed_score is None else np.full(simulations, b.fixed_score)))
-        elif node.mode == "own":
-            local = [(b.weight, None) for b in node.branches]
-        else:
-            b = node.branches[0]
-            if b.fixed_score is not None:
-                values = np.full(simulations, b.fixed_score)
-            else:
-                theta = rng.dirichlet(np.asarray(b.counts)+table_prior, size=simulations)
-                values = theta[:, 0 if color else 2] + theta[:, 1]/2
-            local = [(1.0, values)]
-        sampled[k] = local
-    return sampled
 
 
 def empirical(model, color):

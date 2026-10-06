@@ -5,15 +5,13 @@ import re
 from pathlib import Path
 
 import httpx
-import numpy as np
 import pytest
 
 from repertoire_score import character, openings, preparation, vulnerabilities
 from repertoire_score.consolidated import Chapters, gap_section, generate
-from repertoire_score.report_insights import (analyze, branch_score_spread, database_samples,
+from repertoire_score.report_insights import (analyze, branch_score_spread,
     gap_priorities, move_decomposition)
 from test_chapter_policies import run_fixture
-from test_model import data, position
 
 
 def test_gap_shares_merge_transposed_arrivals_before_squaring():
@@ -50,19 +48,6 @@ def test_move_gain_components_sum_even_when_the_database_move_hurts():
     result = move_decomposition(dict(reference_score=.5, move_database_score=.4, move_score=.6))
     assert result == pytest.approx(dict(database_move_gain_pp=-10, continuation_gain_pp=20, total_gain_pp=10))
     assert move_decomposition(dict(reference_score=.5, move_database_score=None, move_score=.6))['total_gain_pp'] is None
-
-
-def test_parent_and_move_samples_share_joint_evidence_are_reproducible_and_color_relative():
-    k = position('')
-    table = data(120, 20, 60, [('e2e4', 60, 10, 30), ('d2d4', 60, 10, 30)])
-    a, moves = database_samples(table, k, ['e2e4'], True, 4000, [.5]*3, 7)
-    repeat, same = database_samples(table, k, ['e2e4'], True, 4000, [.5]*3, 7)
-    black, reversed_moves = database_samples(table, k, ['e2e4'], False, 4000, [.5]*3, 7)
-    np.testing.assert_array_equal(a, repeat)
-    np.testing.assert_array_equal(moves['e2e4'], same['e2e4'])
-    np.testing.assert_allclose(a + black, 1.)
-    np.testing.assert_allclose(moves['e2e4'] + reversed_moves['e2e4'], 1.)
-    assert np.cov(a, moves['e2e4'])[0, 1] > 0
 
 
 def test_gap_priority_table_retains_full_denominator_and_five_summary_rows():
