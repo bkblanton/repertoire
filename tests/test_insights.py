@@ -157,7 +157,7 @@ def test_new_insights_are_automated_in_report_and_summary(complete):
     assert full.count('##### Prepared-depth distribution') == len(bundle['report']['chapters'])
     assert 'Entry-position weight' in full and 'Example-route weight' in full
     assert 'any position in this chapter, through any move order' in full
-    assert 'Own moves with the largest weighted' in summary
+    assert 'Own decisions to review' in summary
     assert 'Avg games per encounter' in full and 'Avg games per encounter' in summary
     assert 'Median prepared depth' in summary
     assert 'Depth and improvement' not in summary

@@ -530,8 +530,11 @@ def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(comple
     bundle['vulnerabilities']['overall'] = scope
     bundle['character']['scopes'][0] = positions
     summary = summary_report([bundle], path.parent/'report.md', None, None)
-    contribution_block = summary.split('### Largest position contributions', 1)[1].split('Preparation ends', 1)[0]
-    assert 'EXCLUDED_' not in contribution_block
+    review_blocks = re.findall(r'<details>\n<summary>([^<]+)</summary>\n(.*?)</details>', summary, re.S)
+    for title, body in review_blocks:
+        if title in ('Moves and gaps to review', 'Strongest moves'):
+            assert 'EXCLUDED_' not in body
+    assert '### Largest position contributions' not in summary
     assert 'Supported own move' in summary and 'Supported unprepared reply' in summary
     assert 'Supported reached position' in summary
 
@@ -697,7 +700,8 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     assert 'Showing 2 of' in block
     assert '(#white-chapter-' in block or '(#white-chapters)' in block
     assert sum(r.startswith('| 1.') for r in block.splitlines()) == 2
-    assert 'Most common positions' not in (path.parent/'summary.md').read_text(encoding='utf-8')
+    summary = (path.parent/'summary.md').read_text(encoding='utf-8')
+    assert '### Most common positions' in summary and '| 1. e4 |' in summary
     with pytest.raises(ValueError, match='positive table lengths'):
         generate([path], position_top=0)
     scope = bundles[0]['character']['scopes'][0]
@@ -736,6 +740,14 @@ def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoi
     # Filter before the limit: the lower-frequency unprepared reply still appears.
     limited = '\n'.join(common_positions_section([bundle],1))
     assert 'e4 e5 Nf3' in limited and 'e4 c5' in limited and 'e4 e6 d4' not in limited
+    compact = '\n'.join(common_positions_for_scope(scope, Chapters(bundle['report']), 1, compact=True))
+    assert '### Most common positions' in compact and '### Most common unprepared replies (gaps)' in compact
+    assert 'e4 e5 |' not in compact and 'e4 e5 Nf3' in compact
+    assert 'e4 c5' in compact and '30.00%' in compact and 'e4 d5' not in compact
+    assert 'e4 e6 d4' not in compact
+    assert f'| 45.00% ({cp(.45)} cp) | unavailable | 1,234† |' in compact
+    assert '[All positions and gaps](#white-common-positions)' in compact
+    check_score_tables(compact)
     scope['id'] = 'chapter'
     chapter = '\n'.join(common_positions_for_scope(scope, Chapters(bundle['report']), 1, level='#####'))
     assert '##### Most common positions' in chapter
@@ -771,7 +783,7 @@ def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(t
     assert all(p.read_bytes() == data for p, data in before.items())
 
 
-def test_first_pass_places_snapshot_notice_first_and_hides_chapter_tables(complete):
+def test_summary_focuses_on_common_positions_and_gaps_and_keeps_snapshot_notices_visible(complete):
     path, report = complete
     Path(report['manifest']['input_path']).write_text('newer study')
     generate([path])
@@ -785,13 +797,43 @@ def test_first_pass_places_snapshot_notice_first_and_hides_chapter_tables(comple
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     assert full.index('### White chapters') < full.index('### Vulnerabilities')
-    assert '<summary>All 3 White chapters</summary>' in summary
-    assert summary.index('<summary>All 3 White chapters</summary>') < summary.index('### Openings reached')
+    assert '<summary>Chapter comparisons (3 chapters)</summary>' in summary
+    assert '### Openings reached' not in summary
+    assert '| Opening family / variation |' not in summary
+    assert 'Most common opening source' in summary
     summary_headings = re.findall(r'^### (.+)$', summary.split('## White repertoire', 1)[1], flags=re.M)
-    expected = ['Openings reached', 'Own moves with the largest weighted drag',
-                'Unprepared replies with the largest weighted drag', 'Own moves with the largest weighted gain',
-                'Largest position contributions', 'Equivalent gap reach']
+    expected = ['Most common positions', 'Most common unprepared replies (gaps)',
+                'Costly unprepared replies',
+                'Own decisions to review', 'Own moves with the largest weighted gain']
     assert summary_headings == [heading for heading in expected if heading in summary_headings]
+    visible, depth = [], 0
+    for row in summary.splitlines():
+        if row == '<details>':
+            depth += 1
+            assert depth == 1
+        elif row == '</details>':
+            depth -= 1
+            assert depth >= 0
+        elif depth == 0:
+            visible.append(row)
+    assert depth == 0
+    visible = '\n'.join(visible)
+    assert 'snapshot notice' in visible
+    assert 'Most common positions' in visible
+    assert 'Own decisions to review' not in visible and 'Costly unprepared replies' not in visible
+    assert re.findall(r'^### (.+)$', visible, flags=re.M) == [
+        heading for heading in ('Most common positions', 'Most common unprepared replies (gaps)') if heading in visible
+    ]
+    assert 'Prepared depth |' not in visible and 'Chapters |' not in visible
+    assert 'database evidence retrieved' not in visible
+    assert '<summary>Moves and gaps to review</summary>' in summary
+    assert '<summary>Preparation and variability</summary>' in summary
+    assert summary.index('<summary>Chapter comparisons') < summary.index('<summary>Moves and gaps to review') < summary.index('<summary>Preparation and variability')
+    assert '### Largest position contributions' not in summary
+    assert '### Equivalent gap reach' not in summary
+    assert '**Gaps driving repeat encounters**' not in summary
+    assert '| Repeat-gap share |' not in summary
+    assert '<summary>Evidence and definitions</summary>' in summary
     assert 'Depth and improvement' not in summary and 'cluster-bootstrap' not in summary
     assert 'Strongest and weakest' not in full
 

@@ -219,13 +219,16 @@ def test_summary_is_narrow_and_new_insights_and_entry_explanations_are_visible(c
     for header in summary.splitlines():
         if header.startswith('| ') and not header.startswith('| ---'):
             assert len(header.strip('|').split('|')) <= 10
-    assert '<details>\n<summary>Score uncertainty</summary>' in summary and 'Sparse-evidence sensitivity' in summary
+    assert '**Score uncertainty**' in summary and 'Sparse-evidence sensitivity' in summary
+    assert '<summary>Score uncertainty</summary>' not in summary
     assert '### Score uncertainty' not in full + summary
     assert 'combined-score-uncertainty' not in full
     assert '### Score and evidence limits' in full
-    uncertainty = summary.split('<summary>Score uncertainty</summary>', 1)[1].split('</details>', 1)[0]
+    uncertainty = summary.split('**Score uncertainty**', 1)[1].split('**Data snapshot**', 1)[0]
     assert '| Approximate 95% score interval |' in uncertainty
-    assert summary.index('| Repertoire |') < summary.index('<summary>Score uncertainty</summary>') < summary.index('## White repertoire')
+    assert (summary.index('| Repertoire |') < summary.index('## White repertoire')
+            < summary.index('<summary>Evidence and definitions</summary>')
+            < summary.index('**Score uncertainty**'))
     assert 'Branch score spread' in full and 'Move gain and preparation gain' in full
     assert 'Where this chapter starts' in full
     assert full.index('Where this chapter starts') < full.index('<summary>Analysis, lines, and entry routes')
