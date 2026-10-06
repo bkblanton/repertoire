@@ -114,7 +114,7 @@ def test_starting_board_local_context_keeps_opponent_response_average_in_the_rep
     attach(bundle)
     assert row['opponent_rating']['mean'] == 1700
     rendered = '\n'.join(character_section(scope, Chapters(bundle['report']), 1))
-    assert '| (PGN root) |' in rendered and '| 1,700 |' in rendered
+    assert '| [(PGN root)](https://lichess.org/analysis/standard/' in rendered and '| 1,700 |' in rendered
     white = Context(Evaluator(g, chess.WHITE, evidence, chess_facts(g, chess.WHITE, evidence)), {root: 1}).inventory()
     assert white['positions'][root]['local']['mean'] is None
     assert opponent_rating(white['positions'][root]['local']) == 'n/a (no preceding opponent move)'
@@ -274,11 +274,13 @@ def test_cache_only_ledger_preserves_scores_and_has_no_overall_mean(tmp_path, mo
     assert all(p.read_bytes() == value for p, value in originals.items())
     generate([path])
     full = (tmp_path / 'report.md').read_text(encoding='utf-8')
-    overview = full.split('## White repertoire')[0]
-    color_totals = full.split('### Score and evidence limits')[1].split('### Most common positions')[0]
+    # Skip the contents list, which names the opponent-rating correlation section.
+    overview = full.split('<a id="overview"></a>', 1)[1].split('## White repertoire')[0]
+    color_totals = full.split('### Score and evidence limits')[1].split('### Uncertainty priorities')[0]
     assert 'opponent rating' not in overview.lower() + color_totals.lower()
-    assert 'Avg opponent rating' in full and 'entry-baseline opponent rating' in full
-    assert '\u2014' not in full
+    chapters = '\n'.join(p.read_text(encoding='utf-8') for p in (tmp_path / 'chapters').glob('W*.md'))
+    assert 'Avg opponent rating' in full and 'entry-baseline opponent rating' in chapters
+    assert '\u2014' not in full + chapters
     assert 'Rating Δ vs parent' in full
     changed = path.with_suffix('.character.json')
     changed.write_bytes(changed.read_bytes() + b'\n')

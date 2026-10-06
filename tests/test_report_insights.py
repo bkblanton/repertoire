@@ -145,8 +145,8 @@ def test_summary_group_uses_downstream_statistics_counts_reach_once_and_links_bo
     row = dict(downstream, _summary_ids=[upstream['id'], downstream['id']])
     text = '\n'.join(opening_table([row], refs, {upstream['id']: 'first', downstream['id']: 'second'}, True))
     assert '[Vienna Game: Max Lange Defense](#first)<br>↳ [Paulsen Variation](#second)' in text
-    assert f'| 20.00% | {score_cell(.55)} | {score_cell(.6)} | +5.00%' in text
-    assert text.count('20.00%') == 1 and score_cell(.5) not in text
+    assert '| 20.00% | 55.00% | 60.00% | +5.00%' in text and ' cp)' not in text
+    assert text.count('20.00%') == 1 and '50.00%' not in text
 
 
 def test_gap_priority_table_retains_full_denominator_and_five_summary_rows():
@@ -155,7 +155,7 @@ def test_gap_priority_table_retains_full_denominator_and_five_summary_rows():
     metrics = dict(equivalent_gap_reach=math.sqrt(.1), gaps=positions, unresolved_mass=0)
     scope = dict(id='overall', positions=positions, gap_coverage=metrics, gap_priorities=gap_priorities(metrics))
     text = '\n'.join(gap_section(scope, refs=Chapters(dict(color='white', chapters=[])), top=5, compact=True))
-    assert text.count('| gap ') == 5
+    assert text.count('| [gap ') == 5
     assert '**50.00%**' in text
     assert text.count('10.00% | 50.00%') == 5
 
@@ -230,8 +230,9 @@ def test_summary_is_narrow_and_new_insights_and_entry_explanations_are_visible(c
             < summary.index('<summary>Evidence and definitions</summary>')
             < summary.index('**Score uncertainty**'))
     assert 'Branch score spread' in full and 'Move gain and preparation gain' in full
-    assert 'Where this chapter starts' in full
-    assert full.index('Where this chapter starts') < full.index('<summary>Analysis, lines, and entry routes')
+    page = (path.parent / 'chapters' / 'W1.md').read_text(encoding='utf-8')
+    assert 'Where this chapter starts' in page
+    assert page.index('Where this chapter starts') < page.index('## Where preparation ends') < page.index('## Exact first-entry positions')
     assert 'Gain split: move / prep' in full and '95%:' in full
     anchors = set(re.findall(r'<a id="([^"]+)"', full))
     assert all(a in anchors for a in re.findall(r'\]\(report.md#([^)]+)\)', summary))

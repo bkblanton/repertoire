@@ -129,7 +129,7 @@ def test_entry_examples_merge_unrecorded_immediate_transpositions(tmp_path):
     assert row['example']['path_san'] == ['e4', 'e5', 'Nc3', 'Nc6', 'g3', 'Bc5', 'Bg2', 'Nf6']
 
 
-def test_own_summary_ranking_weights_reach_filters_sparse_and_preserves_cp():
+def test_own_summary_ranking_weights_reach_filters_sparse_and_shows_points_per_thousand_games():
     def row(line, reach, gain, **extra):
         return dict(line=line, branch_reach=reach, local_gain_pp=gain, local_drop_pp=gain,
                     parent_sample_count=100, reference_score=.5, move_score=.6, **extra)
@@ -143,7 +143,9 @@ def test_own_summary_ranking_weights_reach_filters_sparse_and_preserves_cp():
     refs = Chapters(dict(color='white', chapters=[]))
     rendered = '\n'.join(summary_own_priorities(ranked, refs, strongest=True))
     assert '| 10.00%<br>1 per 10 games |' in rendered
-    assert cp_change(.6, .5) + ' cp)' in rendered and '+0.1000%' in rendered
+    # Reach 10% times a 1-point gain is 0.1 percentage points per game, or one point per 1,000 games.
+    assert '| +10.00%<br>95%: unavailable | +1.0 |' in rendered and ' cp)' not in rendered
+    assert '| Gain | Gain per 1,000 games |' in rendered
     assert 'sparse' not in rendered
 
 
@@ -154,10 +156,12 @@ def test_new_insights_are_automated_in_report_and_summary(complete):
     generate([path])
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
-    assert full.count('##### Prepared-depth distribution') == len(bundle['report']['chapters'])
-    assert 'Entry-position weight' in full and 'Example-route weight' in full
-    assert 'any position in this chapter, through any move order' in full
-    assert 'Own decisions to review' in summary
+    chapters = '\n'.join((path.parent / 'chapters' / f'W{i}.md').read_text(encoding='utf-8')
+                         for i in range(1, len(bundle['report']['chapters']) + 1))
+    assert chapters.count('\n## Prepared-depth distribution\n') == len(bundle['report']['chapters'])
+    assert 'Entry-position weight' in chapters and 'Example-route weight' in chapters
+    assert 'any position in this chapter, through any move order' in chapters
+    assert 'Own moves to review' in summary
     assert 'Avg games per encounter' in full and 'Avg games per encounter' in summary
     assert 'Median prepared depth' in summary
     assert 'Depth and improvement' not in summary

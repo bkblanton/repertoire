@@ -215,9 +215,9 @@ def test_unlisted_opponent_move_reenters_known_theory(tmp_path):
 
 def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     from repertoire_score import __main__ as cli
-    from repertoire_score.consolidated import cp
-    white_row = f'| White | 80.00% | {cp(.8)} | 70.00% | {cp(.7)} | -10.00% |'
-    black_row = f'| Black | 20.00% | {cp(.2)} | 30.00% | {cp(.3)} | +10.00% |'
+    from repertoire_score.consolidated import headline_delta
+    white_row = f'| White | 80.00% | 70.00% | {headline_delta(.7, .8)} |'
+    black_row = f'| Black | 20.00% | 30.00% | {headline_delta(.3, .2)} |'
     g = graph(tmp_path,'1. e4 e5 *')
     evidence = {position(''):data(7,2,1,[('e2e4',7,2,1)]), position('e4'):data(80,0,20,[('e7e5',80,0,20)]),position('e4 e5'):data(6,2,2)}
     class FakeExplorer:
@@ -272,10 +272,10 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     registry = json.loads((tmp_path/'.report-index.json').read_text())
     assert registry == {'white': 'report.json', 'black': 'black.json'}
     summary = (tmp_path/'summary.md').read_text()
-    assert '<summary>All 1 White chapters</summary>' in summary and '<summary>All 1 Black chapters</summary>' in summary
+    assert summary.count('<summary>Chapter comparisons (1 chapter)</summary>') == 2
     assert 'Posterior mean' not in summary and 'Empirical score' not in summary
-    assert f'| White | 80.00% ({cp(.8)} cp) | 70.00% ({cp(.7)} cp) | -10.00%' in summary
-    assert f'| Black | 20.00% ({cp(.2)} cp) | 30.00% ({cp(.3)} cp) | +10.00%' in summary
+    assert '| White | 80.0% | 70.0% | -10.0%' in summary
+    assert '| Black | 20.0% | 30.0% | +10.0%' in summary
     assert 'Posterior' not in summary and str(tmp_path) not in summary
     assert not (tmp_path/'black.study-description.md').exists()
 

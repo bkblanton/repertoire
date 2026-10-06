@@ -6,7 +6,7 @@ import chess
 import httpx
 import pytest
 
-from repertoire_score.consolidated import Chapters, openings_section, table
+from repertoire_score.consolidated import Chapters, opening_details_page, openings_section, table
 from repertoire_score.openings import (analyze, classify, cohort, entered_reach, first_entries,
                                        chapter_sources, most_common_source, name_flow, named_regions, opening_identity)
 from repertoire_score.preparation import Evaluator, chess_facts
@@ -231,7 +231,7 @@ def test_cache_only_analysis_preserves_scores_sources_and_validates_staleness(tm
         analyze(path, cache)
 
 
-def test_opening_tables_show_cp_spread_baselines_and_entry_details(tmp_path):
+def test_opening_tables_show_spread_baselines_and_entry_details(tmp_path):
     from test_consolidated import check_score_tables
     g, e, ev = transposing(tmp_path)
     identity = named(e, position('Nf3 d5'), 'Family: One')
@@ -243,10 +243,16 @@ def test_opening_tables_show_cp_spread_baselines_and_entry_details(tmp_path):
                   openings=dict(openings=[row], catalog=list(catalog.values()),
                     coverage=dict(named_repertoire_positions=1, ever_classified_probability=1.),
                     positions={k: dict(exact_name=exact.get(k), current_ids=sorted(ids)) for k, ids in labels.items()}))
-    text = '\n'.join(openings_section(bundle, Chapters(bundle['report'])))
+    refs = Chapters(bundle['report'])
+    table_text = '\n'.join(openings_section(bundle, refs))
+    details = '\n'.join(opening_details_page(bundle, refs))
+    text = table_text + '\n' + details
+    # Per-opening evidence moved to its own page; the report keeps the table and links there.
+    assert 'First-entry example' not in table_text and '](@openings/white)' in table_text
+    assert details.startswith('# White openings') and '<a id="white-opening-1"></a>' in details
     assert 'Family: One' in text and 'First-entry example' in text
     assert '| Entry baseline | Repertoire score | Delta | Score spread |' in text
-    assert ' cp)' in text and '| Score CP |' not in text
+    assert ' cp' not in text and '| Score CP |' not in text
     assert 'white-opening-1' in text and '[W1]' in text
     assert 'no aggregate opponent rating' in text
     assert '\u2014' not in text
@@ -325,11 +331,12 @@ def test_opening_source_move_uses_parent_flow_and_named_child_resets(tmp_path):
                 entry_sources={shared: dict(id='Entry route', share=.75)})])
     refs = Chapters(dict(color='white', chapters=g.chapters), data)
     assert refs.opening_source(dict(position=shared)) == '[Common](#white-opening-2) (60.00%)'
-    assert refs.opening_source(dict(position=parent, move='g8f6')) == '[First route](#white-opening-1) (100.00%)'
-    assert refs.for_scope('1').opening_source(dict(position=shared)) == '[First route](#white-opening-1) (100.00%)'
+    # A sole source needs no share; partial sources keep theirs.
+    assert refs.opening_source(dict(position=parent, move='g8f6')) == '[First route](#white-opening-1)'
+    assert refs.for_scope('1').opening_source(dict(position=shared)) == '[First route](#white-opening-1)'
     assert refs.for_scope('1').opening_source(dict(position=shared, _opening_entry=True)) == 'Entry route (75.00%)'
     data['positions'][shared]['exact_name'] = 'Named child'
-    assert refs.opening_source(dict(position=parent, move='g8f6')) == 'Named child (100.00%)'
+    assert refs.opening_source(dict(position=parent, move='g8f6')) == 'Named child'
     assert refs.opening_source(dict(position='invalid', move='g8f6')) == 'unavailable'
 
 

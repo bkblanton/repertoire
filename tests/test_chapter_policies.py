@@ -94,7 +94,8 @@ def test_unselected_chapters_have_conditional_scores_and_separate_reach(tmp_path
     assert not (tmp_path/'white.md').exists()
     assert '**(alternative)**' in rendered and 'Overall-policy reach' in rendered
     summary = (tmp_path/'summary.md').read_text()
-    assert 'Tarrasch Nf6' in summary and '**(alternative)** | 60.00%<br>Overall 0.00%' in summary
+    assert 'Tarrasch Nf6' in summary
+    assert '**(alternative)**<br>[Lichess study](https://lichess.org/study/test/tarrasch) | 60.0%<br>Overall 0.0%' in summary
     assert 'Overall-policy reach' in summary
     result = vulnerabilities(tmp_path/'white.json', cache)
     assert result['manifest']['candidate_child_queries'] == 0
