@@ -4,30 +4,32 @@ version = "0.1.0"
 description = "Estimate repertoire scores with transpositions and Lichess population evidence"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Bryce Blanton" }]
+keywords = ["chess", "lichess", "opening repertoire", "opening explorer"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Games/Entertainment :: Board Games",
+]
 dependencies = [
     "httpx>=0.28.1",
     "numpy>=2.5.3",
     "python-chess>=1.999",
 ]
 
+[project.urls]
+Repository = "https://github.com/bkblanton/repertoire"
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff>=0.16.10",
 ]
 
 [project.scripts]
-repertoire-build = "repertoire_score.build:main"
-repertoire-fetch = "repertoire_score.studies:main"
-repertoire-score = "repertoire_score.__main__:main"
-repertoire-report = "repertoire_score.render:main"
-repertoire-correlations = "repertoire_score.position_correlations:main"
-repertoire-vulnerabilities = "repertoire_score.vulnerabilities:main"
-repertoire-preparation = "repertoire_score.preparation:main"
-repertoire-character = "repertoire_score.character:main"
-repertoire-ratings = "repertoire_score.ratings:main"
-repertoire-openings = "repertoire_score.openings:main"
-repertoire-attribution = "repertoire_score.attribution:main"
-repertoire-insights = "repertoire_score.report_insights:main"
+repertoire = "repertoire_score.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -35,3 +37,11 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+extend-exclude = [".uv-cache", ".uv-python", ".cache"]
+
+[tool.ruff.lint]
+# Pyflakes only for now; widen once long lines are refactored.
+select = ["F"]

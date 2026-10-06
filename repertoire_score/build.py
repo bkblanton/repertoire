@@ -7,10 +7,10 @@ from pathlib import Path
 import time
 from types import SimpleNamespace
 
-from . import __main__ as scoring
+from . import score as scoring
 from . import character, openings, position_correlations, preparation, rating_correlations, ratings, report_insights, studies, vulnerabilities
 from .consolidated import generate, page_names
-from .explorer import observe_cache
+from .explorer import add_token_option, apply_token_file, observe_cache
 from .layout import report_directory
 from .render import defer_report_outputs
 
@@ -174,11 +174,14 @@ def main():
     parser.add_argument('--cache', default='.cache/explorer')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--force', action='store_true', help='Rebuild all analyses using existing cached evidence')
+    add_token_option(parser)
     args = parser.parse_args()
+    apply_token_file(parser, args)
     if (args.white_pgn is None) != (args.black_pgn is None):
         parser.error('give both PGN paths, or neither to use the exported studies')
     options = vars(args)
     sources, folder, no_fetch = options.pop('sources'), options.pop('studies'), options.pop('no_fetch')
+    options.pop('token_file')
     try:
         if args.white_pgn is None:
             # Offline builds never contact Lichess, so they reuse the last export.

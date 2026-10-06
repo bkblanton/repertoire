@@ -8,7 +8,6 @@ from repertoire_score.correlations import correlation
 from repertoire_score.evaluate import COMPLETED, backward
 from repertoire_score.model import Branch, ModelNode
 from repertoire_score.position_correlations import analyze, depths, metrics, reaches, weighted_rank
-from test_consolidated import complete
 from test_model import position
 
 

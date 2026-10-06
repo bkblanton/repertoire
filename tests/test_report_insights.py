@@ -9,12 +9,11 @@ import numpy as np
 import pytest
 
 from repertoire_score import character, openings, preparation, vulnerabilities
-from repertoire_score.consolidated import Chapters, gap_section, generate, opening_table, score_cell
+from repertoire_score.consolidated import Chapters, gap_section, generate, opening_table
 from repertoire_score.graph import resolve
 from repertoire_score.report_insights import (analyze, branch_score_spread, database_samples,
     gap_priorities, move_decomposition, opening_summary_groups, refresh_opening_groups, refresh_spreads)
 from test_chapter_policies import run_fixture
-from test_consolidated import complete
 from test_model import data, graph, position
 
 

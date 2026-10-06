@@ -29,6 +29,23 @@ def observe_cache():
         _cache_observer.reset(token)
 
 
+def add_token_option(parser):
+    parser.add_argument('--token-file', help='File containing a Lichess API token; overrides LICHESS_TOKEN for this run')
+
+
+def apply_token_file(parser, args):
+    """Load --token-file into this process's environment; the token is never written anywhere."""
+    if not args.token_file:
+        return
+    try:
+        token = Path(args.token_file).read_text(encoding='utf-8-sig').strip()
+    except OSError as exc:
+        parser.error(f'cannot read token file: {exc}')
+    if not token:
+        parser.error(f'token file is empty: {args.token_file}')
+    os.environ['LICHESS_TOKEN'] = token
+
+
 def counts(row):
     result = [row.get(k) for k in ("white", "draws", "black")]
     if any(type(v) is not int or v < 0 for v in result):

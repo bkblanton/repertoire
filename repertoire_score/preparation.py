@@ -10,7 +10,7 @@ import numpy as np
 
 from .explorer import Explorer, counts
 from .graph import key, parse
-from .model import outcome, score
+from .model import score
 from .attribution import enrich
 from .insights import depth_distribution, first_entry_examples
 from .board_cache import geometry, owner_outcome

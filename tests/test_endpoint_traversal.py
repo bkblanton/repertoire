@@ -1,4 +1,3 @@
-import chess
 import pytest
 
 from repertoire_score.character import scope_metrics

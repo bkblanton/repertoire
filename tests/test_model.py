@@ -1,6 +1,4 @@
-import io
 import json
-from pathlib import Path
 from types import SimpleNamespace
 import chess
 import numpy as np
@@ -214,11 +212,11 @@ def test_unlisted_opponent_move_reenters_known_theory(tmp_path):
 
 
 def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
-    from repertoire_score import __main__ as cli
+    from repertoire_score import score as cli
     from repertoire_score.consolidated import headline_delta
     white_row = f'| White | 80.00% | 70.00% | {headline_delta(.7, .8)} |'
     black_row = f'| Black | 20.00% | 30.00% | {headline_delta(.3, .2)} |'
-    g = graph(tmp_path,'1. e4 e5 *')
+    graph(tmp_path, '1. e4 e5 *')  # writes the fixture PGN
     evidence = {position(''):data(7,2,1,[('e2e4',7,2,1)]), position('e4'):data(80,0,20,[('e7e5',80,0,20)]),position('e4 e5'):data(6,2,2)}
     class FakeExplorer:
         def __init__(self,*args):

@@ -9,10 +9,10 @@ import chess
 import numpy as np
 
 from .evaluate import KNOWN, UNKNOWN, backward, forward
-from .explorer import Explorer, counts
+from .explorer import Explorer, add_token_option, apply_token_file, counts
 from .graph import parse, resolve, topology
 from .model import empirical, prepare, score
-from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE, vulnerability_summary
+from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE
 
 
 def reaches(model, order, sampled, roots):
@@ -491,7 +491,9 @@ def main():
     refresh_mode = parser.add_mutually_exclusive_group()
     refresh_mode.add_argument('--fetch-missing', action='store_true', help='Fetch only missing own decision parent tables; default is cache-only')
     refresh_mode.add_argument('--refresh-saved', action='store_true', help='Update own comparisons from matching saved character scores without parsing PGNs or fetching data')
+    add_token_option(parser)
     args = parser.parse_args()
+    apply_token_file(parser, args)
     for path in args.reports:
         result = refresh_saved(path) if args.refresh_saved else analyze(path, args.cache, args.fetch_missing)
         write_outputs(result, path, refresh_rating_provenance=args.refresh_saved)

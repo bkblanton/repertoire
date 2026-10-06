@@ -5,7 +5,7 @@ import chess
 import httpx
 import pytest
 
-from repertoire_score import __main__ as cli
+from repertoire_score import score as cli
 from repertoire_score.graph import chapter_policy_overrides, resolve
 from repertoire_score.vulnerabilities import analyze as vulnerabilities
 from test_model import data, graph, position

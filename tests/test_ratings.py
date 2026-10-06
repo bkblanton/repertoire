@@ -1,9 +1,6 @@
-import hashlib
 import json
-import math
 
 import chess
-import httpx
 import pytest
 
 from repertoire_score.consolidated import generate, load

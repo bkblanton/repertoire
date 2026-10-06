@@ -325,7 +325,7 @@ def load(paths, strict=True, require_complete=False):
                         if m.get('schema_version') != 1:
                             reason = 'unsupported report insight schema'
                         elif require_complete and m.get('recursive_spread_schema_version') != 1:
-                            reason = 'recursive score spread not generated; use repertoire-insights --refresh-spread'
+                            reason = 'recursive score spread not generated; use repertoire insights --refresh-spread'
                         elif set(m.get('supporting_sha256', {})) != {'preparation', 'character', 'vulnerabilities', 'openings'}:
                             reason = 'missing report insight provenance'
                         elif any(name not in bundle or not path.with_suffix(f'.{name}.json').exists()
@@ -750,6 +750,15 @@ def overview_notes(bundles):
     return text + f'Prepared depth counts remaining own moves. {about("score", "Scores, deltas and conversions")}.'
 
 
+def display_source(source, result_path):
+    """Show the PGN relative to the report folder, so published reports carry no local absolute path."""
+    try:
+        return Path(os.path.relpath(source, report_directory(result_path))).as_posix()
+    except ValueError:
+        # Different Windows drives have no relative path.
+        return Path(source).name
+
+
 def snapshot_notes(bundles):
     text = []
     for b in bundles:
@@ -1140,7 +1149,7 @@ def rating_correlations_section(result, reason):
     text = section('### Opponent rating and score improvement', 'rating-correlations')
     if not result:
         return text + [f'Rating correlation analysis unavailable: {reason}. '
-                       'Generate it with `uv run python -m repertoire_score.rating_correlations` and the saved score files.', '']
+                       'Generate it with `uv run repertoire rating-correlations` and the saved score files.', '']
     text += ['This compares opponent replies from the same parent position. Rating delta is the reply cohort\'s average opponent rating minus the '
              'reach-weighted mean rating of eligible replies at that parent. Score delta is its continuation score minus the '
              'corresponding reach-weighted mean continuation score. Prepared replies use the recursive repertoire score; '
@@ -1208,7 +1217,7 @@ def methods(bundles):
     for b in bundles:
         r = b['report']; m = r['manifest']; color = r['color'].title()
         text += [f'### {color} evidence', '',
-                 f"Analyzed {m['created_at']}. PGN: `{escape(m['input_path'])}`.", '',
+                 f"Analyzed {m['created_at']}. PGN: `{escape(display_source(m['input_path'], b['path']))}`.", '',
                  f"Input SHA-256: `{m['input_sha256']}`. Score SHA-256: `{b['digest']}`.", '',
                  f"{m['positions']:,} graph positions; {m['evaluated_positions']:,} evaluated positions; "
                  f"{m['simulations']:,} score simulations; seed {m['seed']}; owner W/D/L prior {m['prior']}; sparse threshold {m['sparse_threshold']}.", '',
@@ -1541,7 +1550,7 @@ def openings_section(bundle, refs):
     color = bundle['report']['color']
     text = section('### Openings reached', f'{color}-openings')
     if data is None:
-        return text + ['Opening analysis pending. Run `repertoire-openings` with the saved score results.', '']
+        return text + ['Opening analysis pending. Run `repertoire openings` with the saved score results.', '']
     rows = data['openings']
     anchors = {row['id']: f'{color}-opening-{i}' for i, row in enumerate(rows, 1)}
     text += ['Reach counts first arrival at a named opening or its named variations, across all move orders under the selected repertoire. '

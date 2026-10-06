@@ -8,6 +8,7 @@ import time
 
 import httpx
 
+from .explorer import add_token_option, apply_token_file
 from .graph import parse
 
 SOURCES = 'studies.json'
@@ -106,7 +107,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sources', default=SOURCES, help='JSON file with white and black study URLs')
     parser.add_argument('--directory', default=DIRECTORY)
+    add_token_option(parser)
     args = parser.parse_args()
+    apply_token_file(parser, args)
     try:
         fetch(args.sources, args.directory)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:

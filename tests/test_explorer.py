@@ -1,4 +1,3 @@
-import json
 import chess
 import httpx
 import pytest

@@ -191,13 +191,6 @@ def markdown(result):
     for metric,label in list(METRICS.items())[4:]:
         lines.append(f'| {label} | ' + ' | '.join(cell(results[c],metric) if c in results else 'not supplied' for c in ('white','black','pooled')) + ' |')
     lines += ['', 'Fraction of available improvement means (score - baseline) / (1 - baseline). The named-family comparison subtracts each color/family mean, grouping by the chapter-name prefix before the colon. It is distinct from the transposition groups used for resampling. The slope is descriptive and does not predict the effect of adding one move.', '']
-    if 'white_without_portuguese' in result.get('sensitivity',{}):
-        sensitivity = result['sensitivity']['white_without_portuguese']
-        lines += ['## Portuguese Gambit sensitivity', '',
-                  'The primary results retain every chapter. Removing the White Portuguese Gambit outlier produces:', '',
-                  '| Measure | Estimate and 95% interval |', '|---|---:|']
-        for metric in primary:
-            lines.append(f'| {METRICS[metric]} | {cell(sensitivity,metric)} |')
     lines += ['', '## Interval method and limitations', '',
               f"Used {method['repetitions']:,} paired cluster-bootstrap replicates per analysis, seed {method['seed']}. Bounds are the 2.5th and 97.5th percentiles of the resampled statistic. No new Lichess requests were made.", '',
               'Chapters belong to the same group when their reachable post-entry theory shares any canonical position, directly or through another chapter. Reachability uses each chapter comparison policy and the complete merged graph, including structurally possible theory moves with zero observed frequency. Entry weights also use that comparison policy for alternative chapters. Repeated introductory positions before chapter entry are excluded. All chapters and variables in a group are resampled together. Each color draws its original number of groups with replacement; pooled resampling is stratified by color. The number of chapter rows can vary because groups have different sizes.', '',
@@ -227,15 +220,10 @@ def analyze(paths, output, repetitions=20000, seed=20260929):
             continue
         print(f'Bootstrap {color}: {len(sample)} chapters, {repetitions:,} replicates',flush=True)
         results[color] = bootstrap(sample,repetitions,seed+i)
-    sensitivity = {}
-    if any(r['color']=='white' and r['id']=='wchap001' for r in rows):
-        sample = [r for r in rows if r['color']=='white' and r['id']!='wchap001']
-        print('Bootstrap White excluding Portuguese: sensitivity check',flush=True)
-        sensitivity['white_without_portuguese'] = bootstrap(sample,repetitions,seed+3)
     clusters = [{'id':cid,'chapters':[r['name'] for r in rows if r['cluster']==cid]} for cid in sorted({r['cluster'] for r in rows})]
     result = {'method':'Exploratory, color-stratified, paired transposition-cluster percentile bootstrap',
               'bootstrap':{'repetitions':repetitions,'seed':seed,'confidence_level':.95},
-              'provenance':provenance,'results':results,'sensitivity':sensitivity,'chapters':rows,'clusters':clusters}
+              'provenance':provenance,'results':results,'chapters':rows,'clusters':clusters}
     output = Path(output)
     output.parent.mkdir(parents=True,exist_ok=True)
     output.with_suffix('.json').write_text(json.dumps(result,indent=2,ensure_ascii=False,allow_nan=False),encoding='utf-8')
@@ -249,15 +237,11 @@ def main():
     parser.add_argument('--output',help='JSON output prefix (default: beside the score data)')
     parser.add_argument('--bootstrap-samples',type=int,default=20000)
     parser.add_argument('--seed',type=int,default=20260929)
-    parser.add_argument('--plot',action='store_true',help='Also write a standalone HTML scatterplot; requires Plotly')
     args = parser.parse_args()
     if args.bootstrap_samples < 1000:
         parser.error('Use at least 1000 bootstrap replicates')
     output = Path(args.output) if args.output else Path(args.reports[0]).parent/'depth-delta-correlation'
-    result = analyze(args.reports,output,args.bootstrap_samples,args.seed)
-    if args.plot:
-        from .correlation_plot import plot
-        plot(result,output.with_suffix('.html'))
+    analyze(args.reports,output,args.bootstrap_samples,args.seed)
     from .render import update_report_outputs
     update_report_outputs(args.reports[-1])
 

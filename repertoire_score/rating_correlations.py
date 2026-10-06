@@ -216,7 +216,7 @@ def markdown(result):
               '- Filters: standard chess, all cached rating buckets, blitz, rapid and classical. Scores include half a point for draws.',
               '- Unprepared child positions are not queried. Only saved score, rating and vulnerability JSON files are read.',
               '- CP uses the same score-scale conversion as the consolidated report and is not an engine evaluation.',
-              '- Reproduce: `uv run python -m repertoire_score.rating_correlations reports/data/white.json reports/data/black.json`.',
+              '- Reproduce: `uv run repertoire rating-correlations reports/data/white.json reports/data/black.json`.',
               '- The grouped-bootstrap rationale is discussed by [Cameron and Miller](https://faculty.econ.ucdavis.edu/faculty/cameron/research/Cameron_Miller_JHR_2014_July_09.pdf).', '']
     for color, data in result['results'].items():
         lines.append(f"{color.title()}: sparse threshold {data['provenance']['sparse_threshold']} games; excluded replies {data['exclusions']['replies']}; excluded chapters {len(data['exclusions']['chapters'])}.")

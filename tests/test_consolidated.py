@@ -6,8 +6,6 @@ from pathlib import Path
 import chess
 import pytest
 
-from repertoire_score.ratings import analyze as ratings
-from repertoire_score.openings import analyze as openings
 from repertoire_score.character import analyze as character
 from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_equivalent, common_positions_for_scope, common_positions_section,
     combined_overall, cp, cp_change, display, elo_equivalent, exit_points, exits_section, generate, headline_delta, line, load,
@@ -15,20 +13,7 @@ from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_
     vulnerabilities_section)
 from repertoire_score.consolidated import spread_display
 from repertoire_score.consolidated import compressed_columns, report_navigation, table
-from repertoire_score.preparation import analyze as preparation
-from repertoire_score.vulnerabilities import analyze as vulnerabilities
-from repertoire_score.report_insights import analyze as report_insights
 from test_chapter_policies import run_fixture
-
-
-@pytest.fixture
-def complete(tmp_path, monkeypatch):
-    report, cache = run_fixture(tmp_path, monkeypatch, common_entry=True)
-    path = tmp_path / 'white.json'
-    for name, analyze in [('vulnerabilities', vulnerabilities), ('preparation', preparation), ('character', character), ('ratings', ratings), ('openings', openings), ('insights', report_insights)]:
-        data = analyze(path, cache)
-        path.with_suffix(f'.{name}.json').write_text(json.dumps(data))
-    return path, report
 
 
 def chapter_pages(directory, report):
@@ -313,6 +298,10 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     assert not stale.exists() and (directory / 'chapters' / 'notes.md').exists()
     full = (directory / 'report.md').read_text()
     assert '[Scores](data/white.json)' in full
+    # Published reports show the PGN relative to the report, never a local absolute path.
+    source = Path(report['manifest']['input_path'])
+    assert f"PGN: `{source.relative_to(directory).as_posix()}`" in full
+    assert str(tmp_path) not in full and tmp_path.as_posix() not in full
     assert '(data/white.vulnerabilities.json)' in full
     assert '95% model-based intervals' in full
     assert '### Strengths' in full
@@ -653,7 +642,7 @@ def test_combined_sharpness_uses_owner_relative_wdl_mixture():
 
 def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypatch):
     from types import SimpleNamespace
-    from repertoire_score import __main__ as cli
+    from repertoire_score import score as cli
     path, white = complete
     args = SimpleNamespace(config=str(path.parent/'config.json'), pgn=white['manifest']['input_path'], color='black',
                            output=str(path.parent/'black'), command='run', cache=str(path.parent/'cache'), offline=True,
