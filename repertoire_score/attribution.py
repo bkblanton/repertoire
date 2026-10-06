@@ -1,7 +1,4 @@
 """Chapter provenance for displayed moves and positions."""
-import argparse
-import hashlib
-import json
 import os
 from pathlib import Path
 import tempfile
@@ -9,7 +6,7 @@ import time
 
 import chess
 
-from .graph import key, parse
+from .graph import key
 
 
 ATTRIBUTION_NOTE = ('Chapter attribution follows the exact position or final recorded move, so a representative route can combine chapters. '
@@ -110,9 +107,6 @@ def enrich(report, graph):
                 for distribution in profile['distributions'].values():
                     for row in distribution:
                         row['example_chapter_attribution'] = examples[row['example_position'],row['example_line']]
-    elif 'nonoverlapping_change_contributions' in report:
-        for row in report['nonoverlapping_change_contributions']:
-            row['chapter_attribution'] = attribution.position_or_move(row['position'])
     else:
         def visit(item):
             if isinstance(item,list):
@@ -146,115 +140,3 @@ def chapter_text(row, catalog):
     if attribution['basis'] == 'unprepared move':
         return 'Unprepared'+('; parent: '+names(attribution['context_ids']) if attribution['context_ids'] else '')
     return 'None'
-
-
-def vulnerability_summary(results, top=10):
-    from .vulnerabilities import pct,delta,opponent_tables,table
-    text = ['# Repertoire vulnerability summary', '',
-            'Largest weighted deficits, separately for opponent replies and our moves. The benchmarks differ and the rows overlap, '
-            'so do not sum them or interpret drag as an achievable improvement. See each full report for definitions, sample caveats, '
-            'all chapters and exact evidence.', '', ATTRIBUTION_NOTE, '']
-    for report,path in results:
-        catalog = report['chapter_catalog']
-        text += [f"## {report['color'].title()}", '',
-                 f"Repertoire score: {pct(report['overall_score'])}; {report['color']} starting baseline: "
-                 f"{pct(report['starting_baseline_score'])}; difference: {delta(report['overall_delta_pp'])}.", '',
-                 f"[Full overall and chapter report]({path.with_suffix('.vulnerabilities.md').name})", '']
-        text += opponent_tables(report['overall']['rankings']['opponent'],top,catalog=catalog)
-        text += ['### Our selected moves','']+table(report['overall']['rankings']['own'],top,own=True,catalog=catalog)
-    return '\n'.join(text)
-
-
-def improvement_markdown(report, text):
-    """Add source cells to the established improvement report without changing its narrative."""
-    changes = {r['representative_line']:r for r in report['nonoverlapping_change_contributions']}
-    output,had_column,in_table = [],False,False
-    for line in text.splitlines():
-        if line.startswith('| First changed continuation |'):
-            had_column = 'Source chapters' in line
-            in_table = True
-            if not had_column: line = line.replace('| First changed continuation |','| First changed continuation | Source chapters |',1)
-        elif in_table and line.startswith('|---'):
-            if not had_column: line = '|---'+line
-        elif in_table and line.startswith('|'):
-            cells = line.split('|')
-            row = changes.get(cells[1].strip())
-            if row:
-                value = ' '+chapter_text(row,report['chapter_catalog'])+' '
-                if had_column: cells[2] = value
-                else: cells.insert(2,value)
-                line = '|'.join(cells)
-        else:
-            in_table = False
-        output.append(line)
-    return '\n'.join(output)+'\n'
-
-
-def regenerate(paths):
-    """Refresh saved attribution and Markdown without rerunning any analysis."""
-    from .render import update_report_outputs
-    paths = [Path(p) for p in paths]
-    stages = []
-    correlation_updates,improvement_updates = {},[]
-    # Validate every requested source and companion before any write.
-    for path in paths:
-        report = json.loads(path.read_text(encoding='utf-8'))
-        manifest = report['manifest']
-        source = Path(manifest['input_path'])
-        if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-            raise ValueError(f'PGN changed since scoring; regenerate scores first: {source}')
-        graph = parse(source,manifest['configuration'].get('exclude',[]))
-        companions = []
-        old_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        correlation_path = path.parent/'depth-delta-correlation.json'
-        if correlation_path.exists():
-            correlation = correlation_updates.setdefault(correlation_path,json.loads(correlation_path.read_text(encoding='utf-8')))
-            provenance = correlation.get('provenance',{}).get(report['color'],{})
-            if provenance.get('report_path') == str(path.resolve()) and provenance.get('report_sha256') == old_hash:
-                provenance['_refresh_path'] = str(path)
-        improvement_path = path.parent/f"{report['color']}-improvements.json"
-        if improvement_path.exists():
-            improvement = json.loads(improvement_path.read_text(encoding='utf-8'))
-            if improvement.get('input_sha256') == manifest['input_sha256']:
-                improvement_updates.append((improvement_path,enrich(improvement,graph)))
-        for kind in ('vulnerabilities','preparation','character'):
-            companion_path = path.with_suffix(f'.{kind}.json')
-            if not companion_path.exists(): continue
-            companion = json.loads(companion_path.read_text(encoding='utf-8'))
-            if companion['manifest']['input_sha256'] != manifest['input_sha256'] or companion['manifest']['report_sha256'] != old_hash:
-                raise ValueError(f'Saved companion differs from source scores: {companion_path}')
-            companions.append((kind,companion_path,enrich(companion,graph)))
-        stages.append((path,enrich(report,graph),companions))
-    for path,report,companions in stages:
-        data = json.dumps(report,indent=2,allow_nan=False)
-        write_text(path,data)
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        for kind,companion_path,result in companions:
-            result['manifest']['report_sha256'] = digest
-            write_text(companion_path,json.dumps(result,indent=2,allow_nan=False))
-        print(f"Updated {report['color']} chapter attribution: score report and {len(companions)} companion reports",flush=True)
-    for path,correlation in correlation_updates.items():
-        changed = False
-        for provenance in correlation.get('provenance',{}).values():
-            source = provenance.pop('_refresh_path',None)
-            if source:
-                provenance['report_sha256'] = hashlib.sha256(Path(source).read_bytes()).hexdigest()
-                changed = True
-        if changed: write_text(path,json.dumps(correlation,indent=2,allow_nan=False))
-    for path,report in improvement_updates:
-        write_text(path,json.dumps(report,indent=2,allow_nan=False))
-        markdown_path = path.with_suffix('.md')
-        if markdown_path.exists():
-            write_text(markdown_path,improvement_markdown(report,markdown_path.read_text(encoding='utf-8')))
-    for path in paths:
-        update_report_outputs(path)
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('reports',nargs='+',type=Path,help='Saved score reports; refresh their existing companions too')
-    args = parser.parse_args()
-    regenerate(args.reports)
-
-
-if __name__ == '__main__': main()

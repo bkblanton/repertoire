@@ -10,6 +10,7 @@ from pathlib import Path
 import chess
 import numpy as np
 
+from . import SCHEMA_VERSION
 from .evaluate import COMPLETED, backward
 from .explorer import Explorer, counts, validate
 from .graph import parse, resolve, topology
@@ -86,111 +87,6 @@ def move_decomposition(row):
 
 def interval(values):
     return [float(v) for v in np.quantile(values, [.025, .975])]
-
-
-def opening_summary_groups(rows, graph, transitions, color):
-    """Group the same entry cohort along guaranteed own-move continuations."""
-    masses = {row['id']: defaultdict(float) for row in rows}
-    traces = {}
-    for row in rows:
-        for entry in row['entries']:
-            if entry['entry_probability'] > 0:
-                masses[row['id']][entry['position']] += entry['entry_probability']
-
-    def forced_trace(k):
-        start = k
-        if k not in traces:
-            path = [k]
-            while k in graph.nodes and chess.Board(graph.nodes[k].fen).turn == color:
-                options = transitions[k]
-                if len(options) != 1:
-                    break
-                target, probability = next(iter(options.values()))
-                if probability != 1. or target in path:
-                    break
-                path.append(target)
-                k = target
-            traces[start] = path
-        return traces[start]
-
-    def signature(row):
-        mass = defaultdict(float)
-        for k, probability in masses[row['id']].items():
-            mass[forced_trace(k)[-1]] += probability
-        return tuple(sorted((k, round(p, 13)) for k, p in mass.items()))
-
-    def continues(source, destination):
-        wanted = masses[destination['id']]
-        if not wanted or not masses[source['id']]:
-            return False
-        arrived = defaultdict(float)
-        for k, probability in masses[source['id']].items():
-            hit = next((board for board in forced_trace(k) if board in wanted), None)
-            if hit is None:
-                return False
-            arrived[hit] += probability
-        return arrived.keys() == wanted.keys() and all(
-            math.isclose(arrived[k], p, rel_tol=0., abs_tol=1e-12) for k, p in wanted.items())
-
-    signatures = {row['id']: signature(row) for row in rows}
-    progression = {(a['id'], b['id']): continues(a, b) for a in rows for b in rows
-                   if signatures[a['id']] == signatures[b['id']]}
-    cohorts, groups = {}, []
-    for row in rows:
-        marker = signatures[row['id']]
-        target = next((g for g in cohorts.get(marker, []) if
-            all(progression[r['id'], row['id']] or progression[row['id'], r['id']] for r in g)
-            and all((r['repertoire_score'] is None and row['repertoire_score'] is None) or
-                (r['repertoire_score'] is not None and row['repertoire_score'] is not None
-                 and math.isclose(r['repertoire_score'], row['repertoire_score'], abs_tol=1e-10)) for r in g)), None)
-        if target is None:
-            target = []
-            cohorts.setdefault(marker, []).append(target)
-            groups.append(target)
-        target.append(row)
-    result = []
-    for group in groups:
-        ordered = sorted(group, key=lambda r: (sum(progression[other['id'], r['id']]
-            and not progression[r['id'], other['id']] for other in group), len(r['parent_ids']), r['name']))
-        result.append(dict(ids=[r['id'] for r in ordered], representative=ordered[-1]['id']))
-    return result
-
-
-OPENING_GROUP_DEFINITION = ('Opening labels share a summary row only when their weighted first-entry board '
-    'distributions coincide along guaranteed own moves and their repertoire scores agree. '
-    'No opponent move is assumed. The downstream opening supplies the baseline and delta; reach is counted once.')
-
-
-def refresh_opening_groups(path):
-    """Refresh presentation grouping without Explorer reads or score sampling."""
-    path = Path(path)
-    raw = path.read_bytes()
-    saved = json.loads(raw)
-    manifest = saved['manifest']
-    value = json.loads(path.with_suffix('.insights.json').read_bytes())
-    provenance = value['manifest']
-    if value['color'] != saved['color'] or any(provenance.get(k) != expected for k, expected in (
-            ('report_sha256', hashlib.sha256(raw).hexdigest()), ('input_sha256', manifest['input_sha256']),
-            ('filters', manifest['filters']))):
-        raise ValueError('Report insights differ from saved score snapshot')
-    for family in ('preparation', 'character', 'vulnerabilities', 'openings'):
-        supporting = path.with_suffix(f'.{family}.json').read_bytes()
-        if hashlib.sha256(supporting).hexdigest() != provenance.get('supporting_sha256', {}).get(family):
-            raise ValueError(f'{family} differs from saved report insights')
-        if family == 'openings':
-            rows = json.loads(supporting)['openings']
-    source = Path(manifest['input_path'])
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN differs from saved scores; regenerate scores first')
-    graph = parse(source, manifest['configuration'].get('exclude', []))
-    color = saved['color'] == 'white'
-    transitions = resolve(graph, color, manifest['configuration'].get('policy', {}))
-    value['opening_summary_groups'] = opening_summary_groups(rows, graph, transitions, color)
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN changed during opening grouping')
-    provenance.update(opening_groups_refreshed_at=datetime.now(timezone.utc).isoformat(),
-                      opening_group_definition=OPENING_GROUP_DEFINITION)
-    return value
 
 
 def database_samples(data, position, chosen, color, simulations, prior, seed):
@@ -286,7 +182,7 @@ def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None)
                 assert_outcomes(result, row['outcomes'])
                 opening_spreads[row['id']] = dict(branch_score_spread=result, entries=entries)
             value['opening_spreads'] = opening_spreads
-    value['manifest'].update(recursive_spread_schema_version=1,
+    value['manifest'].update(
         spread_definition='B(s) = sum(p * (B(child) + (score(child) - score(s))**2)); known stopping scores have B=0. '
             'Forced own moves inherit the child. Shared canonical continuations are reused. '
             'Entry mixtures and the color mixture include between-entry score variance; standard deviations are never averaged. '
@@ -295,30 +191,6 @@ def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None)
             'Sparse evidence remains included; unresolved evidence remains unavailable. Outcome volatility is the existing WDL variance.',
         spreads_refreshed_at=datetime.now(timezone.utc).isoformat())
     value['validation'].update(recursive_spread_equals_stopping_ledger=True, outcome_variance_decomposition=True)
-    return value
-
-
-def refresh_spreads(path, cache='.cache/explorer'):
-    """Reuse saved intervals and scores; only the empirical spread walk is new."""
-    value = refresh_opening_groups(path)
-    path = Path(path)
-    saved = json.loads(path.read_bytes())
-    manifest = saved['manifest']
-    supporting = {family: json.loads(path.with_suffix(f'.{family}.json').read_bytes())
-                  for family in ('preparation', 'character', 'vulnerabilities', 'openings')}
-    graph = parse(manifest['input_path'], manifest['configuration'].get('exclude', []))
-    evidence = {}
-    explorer = Explorer(cache, manifest['filters'], offline=True)
-    try:
-        for k, original in dict(manifest['evidence'], **supporting['vulnerabilities']['manifest']['evidence']).items():
-            evidence[k] = explorer.get(k)
-            if explorer.provenance[k] != original:
-                raise ValueError('Cached evidence differs from saved analysis')
-    finally:
-        explorer.close()
-    value = add_recursive_spreads(value, saved, supporting, graph, evidence)
-    if hashlib.sha256(Path(manifest['input_path']).read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN changed during recursive spread analysis')
     return value
 
 
@@ -356,7 +228,6 @@ def analyze(path, cache='.cache/explorer'):
     graph = parse(source, manifest['configuration'].get('exclude', []))
     color = saved['color'] == 'white'
     default_transitions = resolve(graph, color, manifest['configuration'].get('policy', {}))
-    opening_groups = opening_summary_groups(supporting['openings']['openings'], graph, default_transitions, color)
     evidence = {}
     explorer = Explorer(cache, manifest['filters'], offline=True)
     try:
@@ -419,13 +290,12 @@ def analyze(path, cache='.cache/explorer'):
         del sampled, values, model
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError('PGN changed during report insight analysis')
-    result = dict(color=saved['color'], scopes=list(results.values()), opening_summary_groups=opening_groups,
-        manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), schema_version=1,
+    result = dict(color=saved['color'], scopes=list(results.values()),
+        manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), schema_version=SCHEMA_VERSION,
             report_path=str(path.resolve()), report_sha256=hashlib.sha256(source_bytes).hexdigest(),
             input_path=str(source), input_sha256=manifest['input_sha256'], filters=manifest['filters'],
             supporting_sha256=hashes, cache_only=True, network_requests=0,
             simulations=manifest['simulations'], seed=manifest['seed'], prior=manifest['prior'],
-            opening_group_definition=OPENING_GROUP_DEFINITION,
             interval_definition='Approximate prior-completed 95% local model intervals, using the saved joint move/result sampler and shared transposition values. Own move and parent database scores share one joint table. Opponent frequencies and results are jointly sampled. Policies and population are fixed; historical game overlap and selection effects are not modeled. Weighted rankings use empirical reach.',
             spread_definition='Weighted standard deviation of stopping-event expected scores. Total variance equals between-canonical-position variance plus within-position incoming-evidence-cohort variance. No cutoff, sparse filter, prior or tunable parameter.'),
         validation=dict(source_pgn_unchanged=True, saved_scores_reproduced=True,
@@ -437,18 +307,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+', type=Path)
     parser.add_argument('--cache', default='.cache/explorer')
-    refresh = parser.add_mutually_exclusive_group()
-    refresh.add_argument('--refresh-opening-groups', action='store_true',
-                        help='Refresh only summary opening groups from matching saved analyses; no sampling or Explorer reads')
-    refresh.add_argument('--refresh-spread', action='store_true',
-                        help='Add recursive and immediate reply spreads from cache; preserve saved scores and intervals')
     args = parser.parse_args()
     for path in args.reports:
-        print(f'Refreshing {path.stem} recursive spread' if args.refresh_spread else
-              f'Refreshing {path.stem} opening groups' if args.refresh_opening_groups else
-              f'Generating {path.stem} report insights from cache', flush=True)
-        value = (refresh_spreads(path, args.cache) if args.refresh_spread else
-                 refresh_opening_groups(path) if args.refresh_opening_groups else analyze(path, args.cache))
+        print(f'Generating {path.stem} report insights from cache', flush=True)
+        value = analyze(path, args.cache)
         path.with_suffix('.insights.json').write_text(json.dumps(value, indent=2, allow_nan=False), encoding='utf-8')
     from .render import update_report_outputs
     update_report_outputs(args.reports[-1])

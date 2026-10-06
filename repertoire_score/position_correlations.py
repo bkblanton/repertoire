@@ -7,7 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .correlations import correlation, rank
+from . import SCHEMA_VERSION
+from .stats import correlation, rank
 from .evaluate import COMPLETED, KNOWN, UNKNOWN, backward
 from .explorer import Explorer
 from .graph import parse, resolve, topology
@@ -84,8 +85,6 @@ def analyze_color(path, cache, simulations, seed, batch_size=128):
     if moves['color'] != saved['color'] or any(moves['manifest'].get(k) != expected for k, expected in (
             ('report_sha256', hashes['score']), ('input_sha256', manifest['input_sha256']), ('filters', manifest['filters']))):
         raise ValueError('Vulnerabilities do not match the saved score snapshot')
-    if moves['manifest'].get('own_score_basis') != 'prepared repertoire continuation':
-        raise ValueError('Own comparisons need a saved continuation refresh')
     graph = parse(source, manifest['configuration'].get('exclude', []))
     color = saved['color'] == 'white'
     transitions = resolve(graph, color, manifest['configuration'].get('policy', {}))
@@ -203,7 +202,7 @@ def analyze_color(path, cache, simulations, seed, batch_size=128):
 def analyze(paths, output, cache='.cache/explorer', simulations=2000, seed=20261005):
     if simulations < 1:
         raise ValueError('Use a positive simulation count')
-    result = dict(schema_version=1, created_at=datetime.now(timezone.utc).isoformat(), network_requests=0,
+    result = dict(schema_version=SCHEMA_VERSION, created_at=datetime.now(timezone.utc).isoformat(), network_requests=0,
                   interval_method='Joint Dirichlet evidence propagation for the fixed repertoire',
                   simulations=simulations, seed=seed, results={}, provenance={})
     for i, path in enumerate(paths):

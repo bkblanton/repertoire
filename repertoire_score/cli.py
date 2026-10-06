@@ -17,7 +17,6 @@ COMMANDS = [
     ('insights', 'report_insights', 'Gap priorities, branch-score spread and gain intervals'),
     ('correlations', 'position_correlations', 'Prepared depth versus continuation gain'),
     ('rating-correlations', 'rating_correlations', 'Opponent rating versus score within parent positions'),
-    ('attribution', 'attribution', 'Refresh chapter attribution in saved results'),
 ]
 
 

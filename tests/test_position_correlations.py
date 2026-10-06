@@ -4,7 +4,7 @@ import httpx
 import numpy as np
 import pytest
 
-from repertoire_score.correlations import correlation
+from repertoire_score.stats import correlation
 from repertoire_score.evaluate import COMPLETED, backward
 from repertoire_score.model import Branch, ModelNode
 from repertoire_score.position_correlations import analyze, depths, metrics, reaches, weighted_rank

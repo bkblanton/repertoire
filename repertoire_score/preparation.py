@@ -8,6 +8,7 @@ from pathlib import Path
 import chess
 import numpy as np
 
+from . import SCHEMA_VERSION
 from .explorer import Explorer, counts
 from .graph import key, parse
 from .model import score
@@ -281,8 +282,7 @@ def analyze(path, cache='.cache/explorer'):
         manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), report_path=str(path.resolve()),
             report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(), input_sha256=manifest['input_sha256'],
             input_path=str(source), filters=manifest['filters'], evidence=explorer.provenance,
-            cache_only=True, network_requests=0, uncached_positions=missing, insights_schema_version=1,
-            traversal_schema_version=2,
+            cache_only=True, network_requests=0, uncached_positions=missing, schema_version=SCHEMA_VERSION,
             depth_distribution_definition='Remaining own moves from the same scope entry mixture; survival probabilities and exact stopping depths retain transposed elapsed-depth histories. Missing reply distributions have finite structural bounds. Missing leaf scores do not affect depth.',
             entry_example_definition='Highest-probability single root-to-first-arrival path for each entry board. All routes contribute to entry weights; example probabilities are subsets, conditional on chapter entry.'),
         validation=dict(original_scores_reproduced=True, stopping_contributions_reproduced=True,

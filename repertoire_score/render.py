@@ -28,14 +28,6 @@ def load_report(path):
     return report
 
 
-def render_reports(paths, summary_path):
-    paths = [Path(p) for p in paths]
-    reports = [load_report(p) for p in paths]
-    # During a scoring refresh, old companions are pending rather than mixed in.
-    generate(paths, summary_path=summary_path, strict=False)
-    return reports
-
-
 def update_report_outputs(result_path):
     """Register the latest result per color in this folder and refresh all outputs."""
     if _deferred.get():
@@ -65,7 +57,8 @@ def update_report_outputs(result_path):
         if load_report(path)['color'] != color:
             raise ValueError(f'Report registry color mismatch: {path}')
         paths.append(path)
-    render_reports(paths, report_directory(result_path) / 'summary.md')
+    # During a scoring refresh, old companions are pending rather than mixed in.
+    generate(paths, summary_path=report_directory(result_path) / 'summary.md', strict=False)
     index_path.write_text(json.dumps(index, indent=2), encoding='utf-8')
 
 

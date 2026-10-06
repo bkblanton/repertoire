@@ -7,7 +7,7 @@ from repertoire_score.consolidated import generate, load
 from repertoire_score.preparation import Evaluator, chess_facts
 from repertoire_score.ratings import (Context, analyze, first_entries, mixture, move_context,
                                       reply_rating, response_rating, unavailable,
-                                      comparison_fields, add_reply_differences, refresh_differences)
+                                      comparison_fields, add_reply_differences)
 from test_model import data, graph, position
 from test_chapter_policies import run_fixture
 
@@ -242,32 +242,8 @@ def test_cache_only_ledger_preserves_scores_and_has_no_overall_mean(tmp_path, mo
     for scope in result['scopes'][1:]:
         assert scope['score_evidence']['mean'] is None
         assert scope['score_evidence']['missing_coverage'] == 1
+    assert result['validation']['reply_differences_use_cached_parents']
     path.with_suffix('.ratings.json').write_text(json.dumps(result), encoding='utf-8')
-    refreshed = refresh_differences(path, cache)
-    assert refreshed['manifest']['report_sha256'] == result['manifest']['report_sha256']
-    assert refreshed['manifest']['cache_sha256'] == result['manifest']['cache_sha256']
-    assert refreshed['validation']['reply_differences_use_cached_parents']
-    source = tmp_path / 'fixture.pgn'
-    source_bytes = source.read_bytes()
-    try:
-        source.write_bytes(source_bytes + b'\n{New source edits outside the saved snapshot}\n')
-        snapshot = refresh_differences(path, cache)
-        assert not snapshot['manifest']['reply_difference_source_current']
-        assert snapshot['manifest']['input_sha256'] == result['manifest']['input_sha256']
-        assert snapshot['scopes'] == refreshed['scopes']
-    finally:
-        source.write_bytes(source_bytes)
-    provenance = next(iter(result['manifest']['evidence'].values()))
-    cache_file = cache / (provenance['cache_key'] + '.json')
-    cache_bytes = cache_file.read_bytes()
-    try:
-        modified = json.loads(cache_bytes)
-        modified['data']['extra'] = 'a cache change with unchanged retrieval time'
-        cache_file.write_text(json.dumps(modified), encoding='utf-8')
-        with pytest.raises(ValueError, match='Cached rating evidence changed'):
-            refresh_differences(path, cache)
-    finally:
-        cache_file.write_bytes(cache_bytes)
     assert all(p.read_bytes() == value for p, value in originals.items())
     generate([path])
     full = (tmp_path / 'report.md').read_text(encoding='utf-8')

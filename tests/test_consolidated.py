@@ -1,4 +1,3 @@
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -165,6 +164,23 @@ def test_mismatched_companion_rejected_before_any_output_changes(complete, field
     assert 'effective opponent replies' not in after
 
 
+def test_files_from_another_schema_version_are_rejected(complete):
+    path, _ = complete
+    companion = path.with_suffix('.openings.json')
+    data = json.loads(companion.read_text())
+    data['manifest']['schema_version'] = 0
+    companion.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match='different program version'):
+        generate([path])
+    generate([path], strict=False)
+    assert 'openings: written by a different program version' in (path.parent / 'report.md').read_text(encoding='utf-8')
+    report = json.loads(path.read_text())
+    report['manifest']['schema_version'] = 0
+    path.write_text(json.dumps(report))
+    with pytest.raises(ValueError, match='different program version'):
+        generate([path], strict=False)
+
+
 def test_saved_snapshot_and_missing_analyses_are_explicit(tmp_path, monkeypatch):
     report, _ = run_fixture(tmp_path, monkeypatch, common_entry=True)
     path = tmp_path / 'white.json'
@@ -268,7 +284,7 @@ def test_destinations_and_relative_links(complete):
 
 def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch):
     import sys
-    from repertoire_score import vulnerabilities, preparation, character, ratings, position_correlations, rating_correlations, attribution, openings, report_insights
+    from repertoire_score import vulnerabilities, preparation, character, ratings, position_correlations, rating_correlations, openings, report_insights
     directory = tmp_path / 'reports'
     data = directory / 'data'
     data.mkdir(parents=True)
@@ -282,7 +298,6 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     position_correlations.main()
     generate([path], require_complete=True)
     assert path.read_bytes() == original
-    attribution.regenerate([path])
     position_correlations.analyze([path], data / 'prepared-depth-gain-correlation.json', cache, simulations=100)
     rating_result = rating_correlations.analyze([path], repetitions=1000)
     (data / 'opponent-rating-score-correlation.json').write_text(json.dumps(rating_result), encoding='utf-8')
@@ -364,31 +379,15 @@ def check_score_tables(text):
     return checked
 
 
-def test_compressed_columns_preserve_values_notes_and_inputs():
-    headers = ['Chapter', 'Chapter reach (incl. transpositions)', 'Overall-policy reach',
-               'Entry baseline', 'Baseline CP', 'Repertoire score', 'Score CP', 'Delta', 'CP delta',
-               'Weighted gap reach contribution', 'Equivalent gap reach after entry', 'Avg opponent rating', 'Rating Δ vs parent']
-    rows = [['Test', '20.00%', '15.00%', '50.00%', '+0.00', '60.00%', '+110.11', '+10.00%', '+110.11',
-             '1.00%', '5.00%', '1,800 (90.0% rated)', '+30']]
+def test_compressed_columns_preserve_values_and_inputs():
+    headers = ['Line', 'Position reach', 'Avg games per encounter', 'Opening', 'ECO', 'Avg opponent rating', 'Rating Δ vs parent']
+    rows = [['1. e4', '20.00%', '5', 'Kings Pawn', 'B00', '1,800 (90.0% rated)', '+30']]
     original = [r[:] for r in rows]
     names, values = compressed_columns(headers, rows)
-    assert len(names) == 7
-    assert values == [['Test', '20.00%<br>Overall 15.00%', '50.00% (+0.00 cp)', '60.00% (+110.11 cp)',
-                       '+10.00% (+110.11 cp)', '5.00%<br>Weighted 1.00%', '1,800 (90.0% rated)<br>Δ +30']]
-    assert rows == original and len(headers) == 13
-    names, values = compressed_columns(['CP delta', 'Drag', 'Weighted drag'], [['-10.00', '1.00%<br>95%: 0.50% to 1.50%', '.10%']])
-    assert names == ['Drag / CP delta', 'Weighted drag']
-    assert values == [['1.00% (-10.00 cp)<br>95%: 0.50% to 1.50%', '.10%']]
+    assert names == ['Line', 'Position reach<br>Avg games per encounter', 'Opening / ECO', 'Avg opponent rating<br>Rating Δ vs parent']
+    assert values == [['1. e4', '20.00%<br>1 per 5 games', 'Kings Pawn<br>B00', '1,800 (90.0% rated)<br>Δ +30']]
+    assert rows == original and len(headers) == 7
     assert compressed_columns(names, values) == (names, values)
-
-
-def test_compressed_intervals_and_probability_rows_keep_cp_semantics():
-    rendered = '\n'.join(table(['Measure', 'Value', 'Centipawn equivalent (cp)'], [
-        ['Conditional score bounds', '50.00% to 60.00%', '+0.00 to ' + cp(.6)],
-        ['Unresolved probability', '0.00%', 'n/a']]))
-    assert '| Measure | Value |' in rendered
-    assert f'50.00% (+0.00 cp) to 60.00% ({cp(.6)} cp)' in rendered
-    assert '| Unresolved probability | 0.00% |' in rendered
     with pytest.raises(ValueError, match='lengths differ'):
         table(['One'], [['one', 'extra']])
 
@@ -494,7 +493,7 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     assert ' cp' not in full and centipawn_delta(.525, .575) < 0
     assert check_score_tables(full) == 0
     bundle['vulnerabilities']['overall'] = scope
-    summary = summary_report([bundle], path.parent/'report.md', None, None)
+    summary = summary_report([bundle])
     # Summary rows label the parent board with its shared route, so identify the unprepared reply by its scores.
     assert summary.count('57.5%<br>52.5%') == 1 and '<summary>Costly unprepared replies</summary>' in summary
     assert check_score_tables(summary) == 1  # only the headline delta
@@ -536,7 +535,7 @@ def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(comple
     assert 'Supported reached position' in full
     bundle['vulnerabilities']['overall'] = scope
     bundle['character']['scopes'][0] = positions
-    summary = summary_report([bundle], path.parent/'report.md', None, None)
+    summary = summary_report([bundle])
     review_blocks = dict(re.findall(r'<details>\n<summary>([^<]+)</summary>\n(.*?)</details>', summary, re.S))
     review_blocks['Own moves to review'] = summary.split('### Own moves to review', 1)[1].split('<details>', 1)[0]
     for title in ('Own moves to review', 'Costly unprepared replies', 'Strongest moves'):
@@ -899,73 +898,3 @@ def test_summary_leads_with_exits_and_own_moves_and_keeps_snapshot_notices_visib
     # One decimal place and compact counts in the summary; two decimals in the full report.
     assert not re.search(r'\d+\.\d{2}%', summary.split('<summary>Evidence and definitions</summary>')[0])
     assert re.search(r'\d+\.\d{2}%', full)
-
-
-def test_merged_stopping_contributions_preserve_score_mass_and_flow_weighted_rating():
-    from repertoire_score.consolidated import stopping_contributions
-    from repertoire_score.ratings import rating
-    def stop(reach, score, games, mean, source):
-        return dict(position='same board', parent_position=source, move='m', type='deviation', line=source,
-                    reach=reach, score=score, contribution_pp=None if score is None else 100*reach*score,
-                    sample_count=games, sparse=False, chapter_attribution={'context_ids': [source]},
-                    opponent_rating=rating(1., mean, basis='reply'))
-    rows = [stop(.2, .6, 1000, 2000, 'a'), stop(.3, .4, 2, 1600, 'b')]
-    merged = stopping_contributions({'stops': rows})
-    assert len(merged) == 1 and merged[0]['pooled']
-    assert merged[0]['reach'] == .5 and merged[0]['score'] == pytest.approx(.48)
-    assert merged[0]['contribution_pp'] == pytest.approx(24)
-    assert merged[0]['opponent_rating']['mean'] == pytest.approx(1760)
-    assert merged[0]['chapter_attribution']['context_ids'] == ['a', 'b']
-    rows.append(stop(.1, None, 0, 1500, 'c'))
-    merged = stopping_contributions({'stops': rows})
-    assert merged[0]['score'] is None and merged[0]['contribution_pp'] == pytest.approx(24)
-    assert merged[0]['known_score_mass'] == .5
-
-
-def test_saved_comparison_refresh_uses_exact_continuations_and_preserves_rating_contexts(complete, monkeypatch):
-    import httpx
-    from repertoire_score.vulnerabilities import refresh_saved, write_outputs
-    path, report = complete
-    def forbidden(*args, **kwargs): raise AssertionError('network forbidden')
-    monkeypatch.setattr(httpx.Client, 'request', forbidden)
-    old = json.loads(path.with_suffix('.vulnerabilities.json').read_text())
-    rating_before = json.loads(path.with_suffix('.ratings.json').read_text())
-    unchanged = {p: p.read_bytes() for p in (path, path.with_suffix('.character.json'), path.with_suffix('.preparation.json'))}
-    Path(report['manifest']['input_path']).write_text('newer study')
-    refreshed = refresh_saved(path)
-    assert refreshed['overall']['rankings']['opponent'] == old['overall']['rankings']['opponent']
-    character = json.loads(path.with_suffix('.character.json').read_text())
-    scopes = {s['id']: {r['position']: r for r in s['positions']} for s in character['scopes']}
-    for sid, scope in [('overall', refreshed['overall']), *[(s['id'], s) for s in refreshed['chapters']]]:
-        for row in scope['all_signed_rows']:
-            if row['kind'] != 'own': continue
-            after = scopes[sid][row['target']]['repertoire_score']
-            assert row['move_score'] == after
-            if after is not None:
-                assert row['local_drop_pp'] == pytest.approx(100*(row['reference_score'] - after))
-    write_outputs(refreshed, path, refresh_rating_provenance=True)
-    rating_after = json.loads(path.with_suffix('.ratings.json').read_text())
-    assert rating_after['scopes'] == rating_before['scopes']
-    assert rating_after['manifest']['supporting_sha256']['vulnerabilities'] == hashlib.sha256(path.with_suffix('.vulnerabilities.json').read_bytes()).hexdigest()
-    generate([path])
-    for p, before in unchanged.items(): assert p.read_bytes() == before
-    # Changed continuations cannot be reused even when the original score hash matches.
-    companion = path.with_suffix('.character.json')
-    companion.write_bytes(companion.read_bytes() + b' ')
-    with pytest.raises(ValueError, match='continuation analysis changed'):
-        generate([path])
-
-
-def test_saved_comparison_refresh_rejects_stale_rating_provenance_before_writing(complete):
-    from repertoire_score.vulnerabilities import refresh_saved, write_outputs
-    path, _ = complete
-    refreshed = refresh_saved(path)
-    output = path.with_suffix('.vulnerabilities.json')
-    before = output.read_bytes()
-    rating_path = path.with_suffix('.ratings.json')
-    ledger = json.loads(rating_path.read_text())
-    ledger['manifest']['supporting_sha256']['preparation'] = 'wrong'
-    rating_path.write_text(json.dumps(ledger))
-    with pytest.raises(ValueError, match='supporting analysis changed'):
-        write_outputs(refreshed, path, refresh_rating_provenance=True)
-    assert output.read_bytes() == before

@@ -10,6 +10,7 @@ from pathlib import Path
 import chess
 import numpy as np
 
+from . import SCHEMA_VERSION
 from .explorer import Explorer, counts
 from .gaps import distribution as gap_distribution
 from .graph import key, parse
@@ -444,8 +445,7 @@ def analyze(path, cache='.cache/explorer'):
         manifest=dict(created_at=datetime.now(timezone.utc).isoformat(),
             report_path=str(path.resolve()), report_sha256=hashlib.sha256(source_bytes).hexdigest(),
             input_path=str(source), input_sha256=manifest['input_sha256'], filters=manifest['filters'],
-            schema_version=2, cache_only=True, network_requests=0, evidence=explorer.provenance,
-            source_schema_version=1, traversal_schema_version=2,
+            schema_version=SCHEMA_VERSION, cache_only=True, network_requests=0, evidence=explorer.provenance,
             uncached_positions=missing, source_pgn_unchanged=True, policy_basis='overall selected repertoire policy',
             naming_rule='Exact cached names replace the current name on every arriving route. Unnamed boards preserve each incoming name and its probability share under the selected policy. Structural potential labels never add probability. Unprepared replies inherit parent name flows without child queries.',
             parent_rule='Only existing cached names that match at colon or comma boundaries are broader parents. Earlier unrelated labels are not parents.',

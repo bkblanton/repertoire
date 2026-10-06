@@ -8,11 +8,12 @@ from pathlib import Path
 import chess
 import numpy as np
 
+from . import SCHEMA_VERSION
 from .evaluate import KNOWN, UNKNOWN, backward, forward
 from .explorer import Explorer, add_token_option, apply_token_file, counts
 from .graph import parse, resolve, topology
 from .model import empirical, prepare, score
-from .attribution import enrich, chapter_text, ATTRIBUTION_NOTE
+from .attribution import enrich
 
 
 def reaches(model, order, sampled, roots):
@@ -273,7 +274,7 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
     result = dict(color=saved['color'], overall_score=total_score, starting_baseline_score=baseline,
                 overall_delta_pp=None if baseline is None or total_score is None else 100*(total_score-baseline),
                 overall=overall_scope, chapters=chapters,
-                manifest=dict(created_at=datetime.now(timezone.utc).isoformat(),
+                manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), schema_version=SCHEMA_VERSION,
                               report_path=str(path.resolve()), report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
                               input_path=str(source), input_sha256=manifest['input_sha256'],
                               filters=manifest['filters'], evidence=used, parent_tables_fetched=len(missing),
@@ -286,217 +287,18 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
     return enrich(result, graph)
 
 
-def refresh_saved(path):
-    """Update own comparisons from a matching saved character continuation model.
-
-    This does not parse a newer PGN, query the cache, or change scoring evidence.
-    """
-    path = Path(path); saved_bytes = path.read_bytes(); saved = json.loads(saved_bytes)
-    companion = path.with_suffix('.vulnerabilities.json')
-    result = json.loads(companion.read_bytes())
-    character_path = path.with_suffix('.character.json')
-    character_bytes = character_path.read_bytes(); character = json.loads(character_bytes)
-    for data in (result, character):
-        if data['color'] != saved['color'] or any(data['manifest'].get(k) != v for k, v in (
-                ('report_sha256', hashlib.sha256(saved_bytes).hexdigest()),
-                ('input_sha256', saved['manifest']['input_sha256']), ('filters', saved['manifest']['filters']))):
-            raise ValueError('Saved continuation analysis belongs to a different score snapshot')
-    positions = {s['id']: {r['position']: r for r in s.get('positions', [])} for s in character['scopes']}
-    for sid, scope in [('overall', result['overall']), *[(s['id'], s) for s in result['chapters']]]:
-        for row in scope['all_signed_rows']:
-            if row['kind'] != 'own': continue
-            target = positions.get(sid, {}).get(row['target'])
-            if target is None:
-                raise ValueError('Saved continuation position missing from character analysis')
-            row.setdefault('move_database_score', row['move_score'])
-            row['move_score'] = target['repertoire_score']
-            row['score_basis'] = 'prepared repertoire continuation'
-            row['continuation_endpoint_sparse'] = (target.get('kind') == 'theory_leaf' and target.get('games') is not None
-                and target['games'] < result['manifest']['sparse_threshold'])
-            row['parent_sparse'] = row['parent_sample_count'] < result['manifest']['sparse_threshold']
-            before, after = row['reference_score'], row['move_score']
-            row['local_drop_pp'] = None if before is None or after is None else 100 * (before - after)
-            row['local_gain_pp'] = None if row['local_drop_pp'] is None else -row['local_drop_pp']
-            row['weighted_drag_pp'] = None if row['local_drop_pp'] is None else row['branch_reach'] * row['local_drop_pp']
-            probability = 1. if sid == 'overall' else scope['entry_probability']
-            row['study_drag_pp_after_entry'] = (None if probability is None or row['weighted_drag_pp'] is None
-                                               else probability * row['weighted_drag_pp'])
-            if row.get('alternative'):
-                row['alternative']['reference_basis'] = 'selected move database score; historical screen only'
-        scope['rankings'], scope['strengths'] = rankings(scope['all_signed_rows'])
-        scope['unresolved_rows'] = [r for r in scope['all_signed_rows'] if r['weighted_drag_pp'] is None]
-    result['manifest']['own_score_basis'] = 'prepared repertoire continuation'
-    result['manifest']['continuation_source_sha256'] = hashlib.sha256(character_bytes).hexdigest()
-    result['manifest']['comparison_updated_at'] = datetime.now(timezone.utc).isoformat()
-    result['validation']['own_scores_from_prepared_continuations'] = True
-    return result
-
-
-def pct(value):
-    return 'unresolved' if value is None else f'{100*value:.2f}%'
-
-
-def delta(value):
-    return 'unresolved' if value is None else f'{value:+.3f} pp'
-
-
-def table(rows, limit, chapter=False, own=False, catalog=()):
-    if not rows:
-        return ['No positive drag identified among resolved, reachable moves.', '']
-    before_label = 'Parent database score' if own else 'Before reply repertoire score'
-    after_label = 'Repertoire continuation score' if own else 'After reply score'
-    heading = f'| # | Representative line | Chapter source / context | Reach of move | {before_label} | {after_label} | Drop (pp) | Weighted drag (pp) |'
-    divider = '|---:|---|---|---:|---:|---:|---:|---:|'
-    if chapter:
-        heading += ' Root drag under chapter policy (pp) |'
-        divider += '---:|'
-    heading += ' Games for move |'
-    divider += '---:|'
-    if own:
-        heading += ' Highest-scoring observed alternative (screen only) |'
-        divider += '---|'
-    text = [heading, divider]
-    for i, row in enumerate(rows[:limit], 1):
-        value = f"| {i} | `{row['line']}` | {chapter_text(row,catalog)} | {pct(row['branch_reach'])} | {pct(row['reference_score'])} | {pct(row['move_score'])} | {row['local_drop_pp']:.3f} | {row['weighted_drag_pp']:.4f} |"
-        if chapter:
-            v = row['study_drag_pp_after_entry']
-            value += ' '+('unresolved' if v is None else f'{v:.4f}')+' |'
-        value += f" {row['sample_count']:,}{' (sparse)' if row['sparse'] else ''} |"
-        if own:
-            a = row['alternative']
-            value += (' none observed |' if not a else
-                      f" {a['san']}: {pct(a['score'])}, n={a['sample_count']:,}{' (sparse)' if a['sparse'] else ''}; {chapter_text(a,catalog)} |")
-        text.append(value)
-    return text+['']
-
-
-def opponent_tables(rows, limit, chapter=False, catalog=()):
-    text = []
-    for prepared, label in ((False, 'Unprepared'), (True, 'Prepared')):
-        text += [f'### {label} opponent replies', '']
-        text += table([r for r in rows if r['prepared'] == prepared], limit, chapter=chapter, catalog=catalog)
-    return text
-
-
-def markdown(report, top=20, chapter_top=5):
-    color = report['color'].title()
-    filters = report['manifest']['filters']
-    catalog = report.get('chapter_catalog',[])
-    text = [f'# {color} repertoire vulnerabilities', '',
-            f"Repertoire score: **{pct(report['overall_score'])}**. "
-            f"{color} starting-position baseline: **{pct(report['starting_baseline_score'])}**. "
-            f"Difference: **{delta(report['overall_delta_pp'])}**.", '',
-            f"Lichess population: speeds `{filters['speeds']}`; rating groups `{filters['ratings']}`; "
-            f"dates `{filters['since']}` to `{filters['until']}`.", '',
-            'Opponent replies rank by weighted score deficit; our moves rank by parent database score minus repertoire continuation score. '
-            'Rows can overlap, so do not sum them or interpret drag as a guaranteed improvement. Definitions and evidence checks follow the chapter tables.', '',
-            ATTRIBUTION_NOTE, '', '## Overall study', '']
-    methods = [
-            'Rankings identify empirical pressure points. Positive weighted drag means a score deficit relative to the stated local reference. '
-            'It is a screening measure, not a promised improvement, an engine judgment, or proof that a move causes worse results.', '',
-            'Opponent reply drag = probability of reaching the parent x reply probability x (parent repertoire score - score after reply). '
-            'Prepared replies use the full merged continuation; unprepared replies use the cached parent move row. '
-            'Our move drag = ordinary parent database score - repertoire continuation score after our move. Own rankings use this direct difference; the reach-weighted diagnostic is retained separately. '
-            'Our move popularity is not a weight. The two benchmarks differ, so their rankings are separate.', '',
-            'All scores use the repertoire owner\'s perspective. Weighted drag is in percentage points of the overall score, '
-            'or of the conditional chapter score in chapter tables. Chapter root drag is weighted again by entry probability under the chapter comparison policy. '
-            'These values overlap across depths and chapters and must not be added. They do not decompose the overall baseline delta.', '',
-            'Reach aggregates all modeled transposition routes. The displayed line is one representative route, not its exclusive frequency. '
-            'Chapter rankings start at first entry, use the same weighted entry mixture and chapter comparison policy as the score, and retain compatible continuations from other chapters. '
-            'A move that enters a chapter is shown in the overall or upstream chapter ranking, not charged again after entry.', '',
-            'Own-move alternatives are the highest observed scores in the same parent table, with their game counts. '
-            'Selecting the largest observed score exaggerates noisy small samples; it is not a recommendation to replace the move. '
-            f"Counts below {report['manifest']['sparse_threshold']} are flagged. Opponent counts measure reply frequency; prepared continuation scores can rely on other downstream evidence.", '',
-            'Unobserved moves have zero empirical frequency. Missing score evidence stays unresolved and is excluded from positive rankings. '
-            'No score intervals are inferred from these rankings. Non-move residual stopping buckets are included in model validation but are not ranked as chess moves.', '']
-    text += opponent_tables(report['overall']['rankings']['opponent'], top, catalog=catalog)
-    text += ['### Our selected moves', '']+table(report['overall']['rankings']['own'], top, own=True, catalog=catalog)
-    for chapter in report['chapters']:
-        text += [f"## {chapter['name']}", '', f"Chapter entry probability: **{pct(chapter['entry_probability'])}**. Rankings are conditional on first entry.", '']
-        if chapter.get('policy_overrides'):
-            text += ['Alternative chapter comparison: this chapter\'s first own moves take precedence, with the overall policy elsewhere. '
-                     f"Region reach under the overall policy: **{pct(chapter.get('overall_policy_entry_probability'))}**. "
-                     'Root drag uses the chapter comparison policy and is not an impact on the currently selected overall repertoire.', '']
-        text += [f"Repertoire score: {pct(chapter['repertoire_score'])}; weighted entry baseline: {pct(chapter['entry_baseline_score'])}; "
-                 f"difference: {delta(chapter['delta_vs_entry_baseline_pp'])}. "
-                 'Expected prepared depth: '+('unresolved' if chapter['expected_prepared_depth'] is None
-                                               else f"{chapter['expected_prepared_depth']:.2f} own moves")+'.', '']
-        if chapter['status'] != 'evaluated':
-            text += ['Entry weights are unresolved; no conditional ranking is available.', '']
-            continue
-        text += opponent_tables(chapter['rankings']['opponent'], chapter_top, chapter=True, catalog=catalog)
-        text += ['### Our selected moves', '']+table(chapter['rankings']['own'], chapter_top, chapter=True, own=True, catalog=catalog)
-        text += [f"Unresolved reachable move comparisons: {len(chapter['unresolved_rows'])}.", '']
-    text += ['## How to read the rankings', '', *methods, '## Evidence and checks', '',
-             'All candidate results come from parent-position response tables. Candidate child requests: **0**. '
-             'Evaluation evidence is checked against the saved report cache provenance, and source PGN hashes must match. '
-             'Additional own-parent tables may have newer retrieval dates; exact timestamps and cache keys are in JSON. '
-             'The saved overall and chapter scores were reproduced, probability mass was conserved, and signed opponent deviations balanced around each parent mean.', '',
-             f"Own decision parent tables available: {report['validation']['own_decision_positions']}. "
-             f"Unresolved overall move comparisons: {len(report['overall']['unresolved_rows'])}. "
-             'Full signed comparisons, exact FENs, first-entry weights and all positive rankings are retained in the companion JSON.', '']
-    return '\n'.join(text)
-
-
-def write_outputs(report, path, refresh_rating_provenance=False):
-    path = Path(path)
-    companion = path.with_suffix('.vulnerabilities.json')
-    rating_path = path.with_suffix('.ratings.json'); rating = None
-    if refresh_rating_provenance and rating_path.exists():
-        rating = json.loads(rating_path.read_bytes()); m = rating['manifest']
-        if rating['color'] != report['color'] or any(m.get(k) != report['manifest'][k]
-                for k in ('report_sha256', 'input_sha256', 'filters')):
-            raise ValueError('Rating ledger differs from saved comparison snapshot')
-        for family, digest in m['supporting_sha256'].items():
-            if hashlib.sha256(path.with_suffix(f'.{family}.json').read_bytes()).hexdigest() != digest:
-                raise ValueError('Rating supporting analysis changed before comparison refresh')
-    insight_path = path.with_suffix('.insights.json'); insight = None
-    if refresh_rating_provenance and insight_path.exists():
-        from .report_insights import move_decomposition
-        insight = json.loads(insight_path.read_bytes()); m = insight['manifest']
-        if insight['color'] != report['color'] or any(m.get(k) != report['manifest'][k]
-                for k in ('report_sha256', 'input_sha256', 'filters')):
-            raise ValueError('Report insights differ from saved comparison snapshot')
-        for family, digest in m['supporting_sha256'].items():
-            if hashlib.sha256(path.with_suffix(f'.{family}.json').read_bytes()).hexdigest() != digest:
-                raise ValueError('Report insight evidence changed before comparison refresh')
-        scopes = {s['id']: s for s in insight['scopes']}
-        for sid, scope in [('overall', report['overall']), *[(s['id'], s) for s in report['chapters']]]:
-            for row in scope['all_signed_rows']:
-                if row['kind'] != 'own': continue
-                saved = scopes[sid]['moves'][row['id']]
-                for field, value in move_decomposition(row).items():
-                    original = saved.get(field)
-                    if (value is None) != (original is None) or (value is not None and not np.isclose(value, original, atol=1e-10, rtol=0)):
-                        raise ValueError('Comparison values changed; regenerate report insights before combining')
-    companion.write_text(json.dumps(report, indent=2, allow_nan=False), encoding='utf-8')
-    if rating is not None:
-        # Only own score comparisons changed; all move identities and rating
-        # sources remain the same, so keep the verified cached rating contexts.
-        rating['manifest']['supporting_sha256']['vulnerabilities'] = hashlib.sha256(companion.read_bytes()).hexdigest()
-        rating['manifest']['comparison_provenance_updated_at'] = datetime.now(timezone.utc).isoformat()
-        rating_path.write_text(json.dumps(rating, indent=2, allow_nan=False), encoding='utf-8')
-    if insight is not None:
-        # Only metadata changed. Numeric comparisons and their sampled intervals
-        # were proved identical before writing, so their provenance can follow.
-        insight['manifest']['supporting_sha256']['vulnerabilities'] = hashlib.sha256(companion.read_bytes()).hexdigest()
-        insight['manifest']['comparison_provenance_updated_at'] = datetime.now(timezone.utc).isoformat()
-        insight_path.write_text(json.dumps(insight, indent=2, allow_nan=False), encoding='utf-8')
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+', help='Saved score JSON files, with unchanged source PGNs')
     parser.add_argument('--cache', default='.cache/explorer')
-    refresh_mode = parser.add_mutually_exclusive_group()
-    refresh_mode.add_argument('--fetch-missing', action='store_true', help='Fetch only missing own decision parent tables; default is cache-only')
-    refresh_mode.add_argument('--refresh-saved', action='store_true', help='Update own comparisons from matching saved character scores without parsing PGNs or fetching data')
+    parser.add_argument('--fetch-missing', action='store_true', help='Fetch only missing own decision parent tables; default is cache-only')
     add_token_option(parser)
     args = parser.parse_args()
     apply_token_file(parser, args)
     for path in args.reports:
-        result = refresh_saved(path) if args.refresh_saved else analyze(path, args.cache, args.fetch_missing)
-        write_outputs(result, path, refresh_rating_provenance=args.refresh_saved)
+        result = analyze(path, args.cache, args.fetch_missing)
+        Path(path).with_suffix('.vulnerabilities.json').write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
         print(f"Generated {result['color']} vulnerabilities: overall and {len(result['chapters'])} chapters", flush=True)
     from .render import update_report_outputs
     update_report_outputs(args.reports[-1])

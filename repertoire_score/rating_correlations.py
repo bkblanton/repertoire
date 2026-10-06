@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .correlations import connected_groups, correlation, rank
+from .stats import connected_groups, correlation, rank
 from .consolidated import score_cell, score_points
 
 

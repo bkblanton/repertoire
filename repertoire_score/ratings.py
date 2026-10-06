@@ -13,6 +13,7 @@ from pathlib import Path
 
 import chess
 
+from . import SCHEMA_VERSION
 from .explorer import Explorer, counts
 from .graph import key, parse
 from .preparation import Evaluator, chess_facts
@@ -262,27 +263,6 @@ def add_reply_differences(result, evidence):
     return result
 
 
-def refresh_differences(path, cache='.cache/explorer'):
-    """Upgrade a matching ledger without reevaluating scores."""
-    from .consolidated import load
-    bundle = load([path])[0]
-    if 'ratings' not in bundle:
-        raise ValueError('Generate matching score and rating ledgers before refreshing differences')
-    result = bundle['ratings']; manifest = result['manifest']; evidence = {}
-    explorer = Explorer(cache, manifest['filters'], offline=True)
-    try:
-        for position, provenance in manifest['evidence'].items():
-            evidence[position] = explorer.get(position)
-            digest = hashlib.sha256((Path(cache) / (provenance['cache_key'] + '.json')).read_bytes()).hexdigest()
-            if explorer.provenance[position] != provenance or digest != manifest.get('cache_sha256', {}).get(position):
-                raise ValueError('Cached rating evidence changed; regenerate scores and ratings first')
-    finally:
-        explorer.close()
-    manifest['reply_difference_created_at'] = datetime.now(timezone.utc).isoformat()
-    manifest['reply_difference_source_current'] = bundle['current_source']
-    return add_reply_differences(result, evidence)
-
-
 def analyze(path, cache='.cache/explorer'):
     path = Path(path)
     score_bytes = path.read_bytes(); saved = json.loads(score_bytes)
@@ -382,7 +362,7 @@ def analyze(path, cache='.cache/explorer'):
 
     if hashlib.sha256(source.read_bytes()).hexdigest() != m['input_sha256'] or path.read_bytes() != score_bytes:
         raise ValueError('Source or saved score changed during rating analysis')
-    return add_reply_differences(dict(color=saved['color'], scopes=output, manifest=dict(
+    return add_reply_differences(dict(color=saved['color'], scopes=output, manifest=dict(schema_version=SCHEMA_VERSION, 
         created_at=datetime.now(timezone.utc).isoformat(), report_sha256=hashlib.sha256(score_bytes).hexdigest(),
         input_sha256=m['input_sha256'], input_path=str(source), filters=m['filters'],
         supporting_sha256=hashes, evidence=explorer.provenance,
@@ -447,13 +427,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+')
     parser.add_argument('--cache', default='.cache/explorer')
-    parser.add_argument('--differences-only', action='store_true',
-                        help='Add parent rating differences to matching existing ledgers, cache-only')
     args = parser.parse_args()
     try:
         for value in args.reports:
             path = Path(value)
-            result = refresh_differences(path, args.cache) if args.differences_only else analyze(path, args.cache)
+            result = analyze(path, args.cache)
             path.with_suffix('.ratings.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
             from .render import update_report_outputs
             update_report_outputs(path)

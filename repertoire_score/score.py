@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 import chess
 import numpy as np
+from . import SCHEMA_VERSION
 from .graph import parse, conflicts, resolve, topology, infer_entries, key, chapter_region, region_entries, chapter_policy_overrides
 from .explorer import Explorer, DEFAULT_FILTERS, add_token_option, apply_token_file
 from .model import prepare, outcome, empirical, draws
 from .evaluate import backward, forward, summarize, chapter_score, COMPLETED, KNOWN
-from .report import events, starting_position_reference
+from .ledger import events, starting_position_reference
 from .attribution import enrich
 from .baseline import chapter_entry_baseline
 from .render import update_report_outputs
@@ -228,7 +229,7 @@ def analyze(args):
                            "positions": len(graph.nodes), "evaluated_positions": len({k for p in profiles for k in p['order']}),
                            "overall_policy_evaluated_positions": len(order), "root_weights": root_weights,
                            "conflict_resolution": "explicit policy overrides, otherwise first PGN move in first chapter order",
-                           "traversal_schema_version": 2,
+                           "schema_version": SCHEMA_VERSION,
                            "traversal_rule": "At every prepared opponent-turn board, expand cached reply rows, including after the last recorded PGN move. Immediate transpositions into any known repertoire board resume preparation. Stop at an unanswered own-turn board, unprepared reply, terminal outcome, or unresolved evidence.",
                            "chapter_policy_semantics": "chapter first choices from roots, overall policy elsewhere; chapter comparison reach is separate from overall-policy region reach",
                            "policy_profile_count": len(profiles),

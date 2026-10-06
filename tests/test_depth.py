@@ -1,7 +1,6 @@
 import pytest
 
 from repertoire_score.depth import prepared_depth_values, summarize_depth, chapter_prepared_depth
-from repertoire_score.report import depth_text
 from test_model import graph, position, data, setup
 
 
@@ -35,7 +34,6 @@ def test_missing_distribution_retains_depth_bounds(tmp_path):
     summary = summarize_depth(values,{g.roots[0]:1})
     assert summary['expected_moves'] is None
     assert summary['conditional_bounds'] == [1,2]
-    assert depth_text({'prepared_depth':summary}) == 'unresolved (1.00 to 2.00)'
     # With no remaining own moves, missing opponent frequencies cannot affect depth.
     g = graph(tmp_path,'1. e4 e5 *')
     model,order,raw,*_ = setup(g,True,{position('e4'):data(0,0,0),position('e4 e5'):data(0,0,0)})
@@ -51,4 +49,3 @@ def test_chapter_depth_uses_first_entry_weights_and_preserves_missing_weights():
     assert missing['conditional_bounds'] == [2,5]
     assert chapter_prepared_depth(values,['b'],{})['expected_moves'] == 5
     assert chapter_prepared_depth(values,[],{})['expected_moves'] is None
-    assert depth_text({}) == 'not calculated'

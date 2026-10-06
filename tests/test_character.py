@@ -2,7 +2,7 @@ import chess
 import pytest
 
 from repertoire_score.character import (analyze, board_fingerprint, entropy, exposure,
-                                       position_profile, render, reuse_metrics, scope_metrics, summary)
+                                       position_profile, reuse_metrics, scope_metrics)
 from repertoire_score.preparation import Evaluator, chess_facts
 from test_model import graph, data, position
 from test_preparation import sample
@@ -173,13 +173,9 @@ def test_offline_report_alternatives_entries_and_source_guard(tmp_path,monkeypat
     for scope in result['scopes']:
         assert scope['reuse']['expected_encounters_per_game']==pytest.approx(expected[scope['id']]['prepared_depth']['expected_moves'])
         assert scope['validation']['resolved_score']==pytest.approx(expected[scope['id']]['resolved_contribution'])
-    assert 'Tarrasch Nf6 (alternative)' in render(result)
-    assert '\u2014' not in render(result)
-    result['report_filename']='white.character.md'
-    overview=summary([result])
-    assert 'Positions where preparation ends' in overview
-    assert 'Chapter reply predictability' in overview
-    assert 'white.character.md' in overview
+    # The alternative chapter keeps its own comparison policy.
+    alternative = next(s for s in result['scopes'] if s['name'] == 'Tarrasch Nf6')
+    assert alternative['policy_basis'] != 'overall policy'
     (tmp_path/'fixture.pgn').write_bytes(before+b'\n')
     with pytest.raises(ValueError,match='PGN changed'):
         analyze(tmp_path/'white.json',cache)

@@ -26,7 +26,6 @@ Run commands from the repository root. The program reads Lichess studies but nev
   - [Opening names and reach](#opening-names-and-reach)
   - [Correlations](#correlations)
   - [Report insights and attribution](#report-insights-and-attribution)
-  - [Refreshing saved analyses](#refreshing-saved-analyses)
 - [Comparing alternative preparation](#comparing-alternative-preparation)
 - [Troubleshooting](#troubleshooting)
 
@@ -55,7 +54,7 @@ Everything runs through one command, `repertoire <command>`. `uv run repertoire 
 | `fetch` | Export the studies without building. |
 | `score` | Inspect or score one repertoire PGN. |
 | `report` | Render the Markdown reports from saved results, offline. |
-| `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `correlations`, `rating-correlations`, `attribution` | Run or refresh one analysis stage from saved results. |
+| `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. |
 
 ## Generate both reports
 
@@ -226,7 +225,7 @@ Entry probability means **chapter reach probability**: first arrival anywhere in
 
 The maintained White configuration includes Vienna subject anchors at `1.e4 e5 2.Nc3 Nf6 3.g3 Nc6`, `1.e4 e5 2.Nc3 Nf6 3.g3`, and `1.e4 e5 2.Nc3 Nc6 3.g3`. Several other shared opening subjects have explicit earlier anchors; chapter-owned shared descendants are included in their regions. These are definitions of where preparation becomes relevant, not exclusive opening classifications. Match the configuration's chapter IDs against the current PGN rather than relying on older chapter names. Adjust `chapter_regions` to change a subject boundary. Updated PGN descendants are included automatically on rerun; missing anchors fail validation.
 
-For compatibility, `entries` still accepts a map from chapter IDs to exact entry positions or paths. A chapter cannot have both `entries` and `chapter_regions`. Without either, all first chapter-unique positions become anchors, with chapter-owned descendants defining the region. If none can be entered under that chapter's policy, the first opponent reply on its mainline (or its PGN root) is used. Explicit subject anchors are preferable for comparing alternatives from a common position, such as `1.e4 e6` for both Advance and Tarrasch French chapters; automatic entries can describe different conditional subtrees.
+Instead of a region, `entries` can map a chapter ID to exact entry positions or paths; the chapter is then entered only at those boards. A chapter cannot have both `entries` and `chapter_regions`. Without either, all first chapter-unique positions become anchors, with chapter-owned descendants defining the region. If none can be entered under that chapter's policy, the first opponent reply on its mainline (or its PGN root) is used. Explicit subject anchors are preferable for comparing alternatives from a common position, such as `1.e4 e6` for both Advance and Tarrasch French chapters; automatic entries can describe different conditional subtrees.
 
 Full reports also include directed **chapter transition probabilities**: conditional on first entering a source chapter, how often does the model reach the destination at or after that point? Shared or simultaneous entry counts. The JSON retains all ordered chapter pairs, including zeros and undefined results. This is different from an unordered intersection, because the destination may have been visited only before the source. Overlapping chapter frequencies and transition rows are not additive. The model does not follow deviations through unknown positions to possible later re-entry.
 
@@ -335,46 +334,9 @@ uv run repertoire insights reports/data/white.json reports/data/black.json
 
 This writes `white.insights.json` and `black.insights.json` and refreshes the two Markdown reports. It requires matching preparation, character, vulnerability, and opening analyses, and verifies the source PGN and cached evidence. Supporting hashes prevent old insight calculations from being combined with newer analyses.
 
-All report tables containing individual lines include linked chapter attribution. A recorded move lists its exact position/move providers, including every shared source. A position lists the chapters containing that canonical board. An unprepared reply is labeled unprepared and lists its parent chapters as context; an unrecorded move that transposes into preparation lists the destination chapters. Representative routes may combine chapters. These relationships are stored separately from the older parent-membership `chapters` fields in JSON.
+All report tables containing individual lines include linked chapter attribution. A recorded move lists its exact position/move providers, including every shared source. A position lists the chapters containing that canonical board. An unprepared reply is labeled unprepared and lists its parent chapters as context; an unrecorded move that transposes into preparation lists the destination chapters. Representative routes may combine chapters.
 
-To refresh attribution in saved score, vulnerability, preparation and character reports without recomputing estimates or querying Lichess:
-
-```sh
-uv run repertoire attribution reports/data/white.json reports/data/black.json
-```
-
-The command validates source hashes and companion-report hashes before writing, preserves all numerical results and updates companion source-report hashes. Normal analysis commands also populate attribution automatically.
-
-### Refreshing saved analyses
-
-These targeted commands update specific fields in matching saved analyses. They do not bring an older score up to date with an edited PGN. Use the complete build for current study results.
-
-To update own-move comparison definitions from matching saved continuation analysis without parsing a changed PGN or requesting any data:
-
-```sh
-uv run repertoire vulnerabilities reports/data/white.json reports/data/black.json --refresh-saved
-uv run repertoire report reports/data/white.json reports/data/black.json --require-complete
-```
-
-This refresh checks score and character provenance, updates only vulnerability comparisons, and preserves all existing rating contexts while updating their supporting comparison hash. It does not rescore newer source edits; the report explicitly flags changed or missing PGNs. Normal analysis still requires the current PGN to match its saved score snapshot.
-
-To add or refresh only these differences using the already matching rating ledgers and identical cached evidence:
-
-```sh
-uv run repertoire ratings reports/data/white.json reports/data/black.json --differences-only
-```
-
-Normal rating generation also includes these differences automatically. The differences-only refresh can use a saved score snapshot after its PGN changes, because it does not parse or rescore that PGN. The consolidated report flags the snapshot, and matching score, analysis and cache hashes remain required.
-
-To add recursive spreads while preserving saved score estimates and intervals:
-
-```sh
-uv run repertoire insights reports/data/white.json reports/data/black.json --refresh-spread
-```
-
-This reads existing Explorer tables offline and makes no requests.
-
-Each chapter shows its leading first-entry boards and their opening-source mixtures near the headline. Saved report insights also store `opening_summary_groups`, which the current pages do not display. Those groups merge names only when their weighted first-entry board distributions match along guaranteed own moves and their scores agree, using the downstream opening's baseline and delta and counting reach once. The summary shows opening sources alongside positions instead of a separate opening table; full opening categories remain separate. Summary score and CP cells are paired, chapter source ranges are compact, and rankings show up to five rows. To refresh the saved groups from matching analyses, run `uv run repertoire insights reports/data/white.json reports/data/black.json --refresh-opening-groups`.
+Every analysis command adds this attribution automatically.
 
 ## Comparing alternative preparation
 
@@ -389,7 +351,7 @@ Keep hypothetical results separate from the actual score snapshots and current r
 | Symptom | What to check |
 | --- | --- |
 | `Offline cache miss` or missing parent comparison evidence | Cache path, filters and required board; an authenticated run can collect missing required tables. Keep missing data unresolved instead of inventing results. |
-| Companion belongs to a different snapshot, or supporting hashes changed | Rebuild the affected analysis and its dependents. [Targeted saved-analysis refreshes](#refreshing-saved-analyses) do not rescore newer PGNs. |
+| Companion belongs to a different snapshot, supporting hashes changed, or a file was written by a different program version | Rebuild with `repertoire build`; it reruns only the affected analyses and their dependents. |
 | Scoring or a build stage fails | Read the CLI diagnostic and any `.error.json`. Completed checkpoints and cache remain available; rerun after resolving the error. Existing Markdown can still describe the previous snapshot. |
 | Study export fails with HTTP 401, 403 or 404 | Check the URL in `studies.json` and that the token has `study:read`; private studies are visible only to their owner and members. The previous export is kept. |
 | Unknown chapter ID or missing configured anchor | Compare the new PGN's inspection with the maintained config; removed or recreated chapters may have different IDs. Update intended subject definitions explicitly. |

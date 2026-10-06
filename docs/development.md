@@ -16,7 +16,7 @@ Work from the repository root and preserve unrelated local changes. Use uv for P
 | Position reach, first gaps, reuse, reply variety, WDL and recursive branch spread | [character.py](../repertoire_score/character.py), [gaps.py](../repertoire_score/gaps.py), [sharpness.py](../repertoire_score/sharpness.py), [spread.py](../repertoire_score/spread.py) |
 | Gain/drag comparisons, ratings, opening flows and source attribution | [vulnerabilities.py](../repertoire_score/vulnerabilities.py), [ratings.py](../repertoire_score/ratings.py), [openings.py](../repertoire_score/openings.py), [attribution.py](../repertoire_score/attribution.py) |
 | Saved gain intervals and spread/entry presentation data | [report_insights.py](../repertoire_score/report_insights.py) |
-| Current correlations | [position_correlations.py](../repertoire_score/position_correlations.py), [rating_correlations.py](../repertoire_score/rating_correlations.py). `correlations.py` retains legacy chapter-level utilities. |
+| Correlations | [position_correlations.py](../repertoire_score/position_correlations.py), [rating_correlations.py](../repertoire_score/rating_correlations.py), with shared helpers in [stats.py](../repertoire_score/stats.py) |
 | Summary, full report, chapter and opening pages, exit points, Lichess links, cross-page link resolution and nested contents | [consolidated.py](../repertoire_score/consolidated.py), [render.py](../repertoire_score/render.py), [layout.py](../repertoire_score/layout.py). `report.py` supplies core score/event helpers and legacy rendering utilities. |
 | Lichess study export | [studies.py](../repertoire_score/studies.py) |
 | Incremental stage orchestration | [build.py](../repertoire_score/build.py) |
@@ -73,7 +73,7 @@ Before publishing regenerated reports, check probability conservation, saved san
 
 For presentation-only changes, confirm that score and companion JSON hashes remain unchanged and that no requests were made. If only the summary changed, the full report should remain unchanged too. Keep the five-row summary limits and sparse filters intact. The presentation tests check that every relative link on every generated page reaches an existing file and anchor. Check the final diff with `git diff --check`; documentation-only edits do not need a scoring run.
 
-The supplied PGN source files are never modified. `prefetch.py` can warm the cache before policy selection, but normal runs fetch all required data themselves.
+The supplied PGN source files are never modified.
 
 ## Design notes
 

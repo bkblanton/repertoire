@@ -7,7 +7,7 @@ import pytest
 from repertoire_score.evaluate import forward
 from repertoire_score.explorer import Explorer, DEFAULT_FILTERS, ENDPOINT
 from repertoire_score.graph import key
-from repertoire_score.vulnerabilities import analyze, candidates, rank_scope, reaches, representative_lines, markdown
+from repertoire_score.vulnerabilities import analyze, candidates, rank_scope, reaches, representative_lines
 from test_model import data, graph, position, setup
 
 
@@ -163,9 +163,6 @@ def test_fetches_only_missing_own_parents_then_runs_fully_offline(tmp_path, monk
     chapter_own = replay['chapters'][0]['rankings']['own'][0]
     assert chapter_own['weighted_drag_pp'] == pytest.approx(10)
     assert chapter_own['study_drag_pp_after_entry'] == pytest.approx(8)
-    text = markdown(replay)
-    assert 'Our selected moves' in text and 'Chapter entry probability: **80.00%**' in text
-    assert '\u2014' not in text
     for scope in [replay['overall'], *replay['chapters']]:
         for row in scope['all_signed_rows']:
             board = chess.Board()
