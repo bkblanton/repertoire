@@ -2,6 +2,7 @@
 import numpy as np
 import chess
 from .model import score
+from .board_cache import after_fen, san
 from .explorer import counts
 
 
@@ -21,7 +22,13 @@ def starting_position_reference(data, color, provenance):
 
 def events(graph, model, raw_sample, post_sample, raw_flow, post_flow, color, prior_strength):
     result = []
-    for (k, j), mass in raw_flow.items():
+    keys = list(raw_flow)
+    # One quantile call per block of events instead of one per event.
+    intervals = []
+    for start in range(0, len(keys), 2048):
+        block = np.stack([post_sample[k][j][1] for k, j in keys[start:start + 2048]])
+        intervals.extend(np.quantile(block, [0.025, 0.975], axis=1).T.tolist())
+    for ((k, j), mass), interval in zip(raw_flow.items(), intervals):
         b = model[k].branches[j]
         raw_score = raw_sample[k][j][1]
         draws = post_sample[k][j][1]
@@ -29,14 +36,10 @@ def events(graph, model, raw_sample, post_sample, raw_flow, post_flow, color, pr
         sample = sum(b.counts)
         unresolved = b.fixed_score is None and sample == 0
         n = graph.nodes[k]
-        board = chess.Board(n.fen)
         path = list(n.path)
         if b.move:
-            move = chess.Move.from_uci(b.move)
-            path.append(board.san(move))
-            board.push(move)
-        interval = np.quantile(draws, [0.025, 0.975]).tolist()
-        result.append({"parent_position": k, "position": board.fen(en_passant="legal"), "move": b.move,
+            path.append(san(k, b.move))
+        result.append({"parent_position": k, "position": after_fen(n.fen, b.move) if b.move else n.fen, "move": b.move,
                        "representative_path_san": path, "chapters": sorted(n.chapters), "type": b.kind,
                        "unresolved": unresolved, "score_status": "prior-only; no direct observations" if unresolved else "deterministic" if b.fixed_score is not None else "observed",
                        "sample_count": sample, "counts_white_draw_black": b.counts,

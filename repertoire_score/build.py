@@ -11,7 +11,7 @@ from . import score as scoring
 from . import character, openings, position_correlations, preparation, rating_correlations, ratings, report_insights, studies, vulnerabilities
 from .consolidated import generate, page_names
 from .explorer import add_token_option, apply_token_file, observe_cache
-from .layout import report_directory
+from .layout import data_json, report_directory
 from .render import defer_report_outputs
 
 FAMILIES = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights')
@@ -23,9 +23,31 @@ MODULES = dict(vulnerabilities=vulnerabilities, preparation=preparation, charact
                ratings=ratings, openings=openings, insights=report_insights)
 
 
+# File hashes for the current build run, keyed by path, size and modification time. One build
+# checks the same inputs and roughly a thousand cache files for every stage. Builder clears this at
+# the start of a run and forgets each stage's outputs after rewriting them, so a file replaced
+# within the clock's resolution is never mistaken for its previous version.
+_digests = {}
+
+
+def forget(paths):
+    names = {str(Path(p).resolve()) for p in paths}
+    for identity in [i for i in _digests if i[0] in names]:
+        del _digests[identity]
+
+
 def digest(path):
     path = Path(path)
-    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    if not path.is_file():
+        return None
+    identity = (str(path.resolve()), stat.st_size, stat.st_mtime_ns)
+    if identity not in _digests:
+        _digests[identity] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return _digests[identity]
 
 
 def file_inputs(paths):
@@ -33,10 +55,9 @@ def file_inputs(paths):
 
 
 def write_json(path, value):
-    # Preserve the companion format and its existing provenance contracts.
     path = Path(path)
     temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(json.dumps(value, indent=2, allow_nan=False), encoding='utf-8')
+    temporary.write_text(data_json(value), encoding='utf-8')
     temporary.replace(path)
 
 
@@ -64,6 +85,7 @@ class Builder:
         self.state.setdefault('version', 1)
         self.state.setdefault('steps', {})
         self.timings = []
+        _digests.clear()
 
     def step(self, name, inputs, outputs, action):
         started = time.perf_counter()
@@ -83,6 +105,7 @@ class Builder:
             write_json(self.path, self.state)
             with observe_cache() as watched:
                 action()
+            forget(outputs)
             if current != inputs():
                 raise ValueError(f'Inputs changed during {name}; rerun the batch')
             output_hashes = file_inputs(outputs)

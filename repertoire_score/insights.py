@@ -2,9 +2,8 @@
 from collections import defaultdict
 import math
 
-import chess
 
-from .graph import key
+from .board_cache import children, fen_number, move_text, next_number, san
 
 
 ENDING_TYPES = ('prepared_endpoint', 'unprepared_reply', 'game_over', 'other_stop', 'unresolved_distribution')
@@ -139,17 +138,15 @@ def first_entry_examples(evaluator, roots, region, expected_probability=None, ex
     rows = []
     for k, arrival in sorted(arrivals.items(), key=lambda item: (-item[1], item[0])):
         probability, root, path = witnesses[k]
-        board = chess.Board(evaluator.graph.nodes[root].fen)
+        position, number = root, fen_number(evaluator.graph.nodes[root].fen)
         sans, text = [], []
         for uci in path:
-            if key(board) in region:
+            if position in region:
                 raise AssertionError('Example route passes through an earlier chapter entry')
-            move = chess.Move.from_uci(uci)
-            san = board.san(move)
-            text.append(f'{board.fullmove_number}{"." if board.turn else "..."}{san}')
-            sans.append(san)
-            board.push(move)
-        if key(board) != k:
+            sans.append(san(position, uci))
+            text.append(move_text(position, number, uci))
+            position, number = children(position)[uci], next_number(position, number)
+        if position != k:
             raise AssertionError('Example route does not reach its entry board')
         rows.append(dict(position=k, conditional_first_entry_weight=arrival / total,
                          example=dict(root_position=root, root_fen=evaluator.graph.nodes[root].fen,

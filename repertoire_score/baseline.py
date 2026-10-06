@@ -1,8 +1,8 @@
 """Chapter entry references with the repertoire's conditional first-entry weights."""
 import math
-import chess
+from .board_cache import owner_outcome
 from .explorer import counts
-from .model import outcome, score
+from .model import score
 
 
 def chapter_entry_baseline(positions, chapter_score, evidence, color, provenance):
@@ -21,7 +21,7 @@ def chapter_entry_baseline(positions, chapter_score, evidence, color, provenance
     components = []
     known, unresolved = 0.0, 0.0
     for k, weight in weights.items():
-        deterministic = outcome(chess.Board(k + " 0 1"), color)
+        deterministic = owner_outcome(k, color)
         results = counts(evidence[k]) if deterministic is None else None
         entry_score = score(results, color) if deterministic is None else deterministic
         if entry_score is None:

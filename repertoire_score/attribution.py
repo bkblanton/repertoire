@@ -4,9 +4,8 @@ from pathlib import Path
 import tempfile
 import time
 
-import chess
 
-from .graph import key
+from .board_cache import children
 
 
 ATTRIBUTION_NOTE = ('Chapter attribution follows the exact position or final recorded move, so a representative route can combine chapters. '
@@ -57,9 +56,7 @@ class Attribution:
         else:
             basis = 'unprepared move'
             if node:
-                board = chess.Board(node.fen)
-                board.push_uci(move)
-                target = self.graph.nodes.get(key(board))
+                target = self.graph.nodes.get(children(position)[move])
                 if target:
                     transpositions, basis = self.ordered(target.chapters), 'transposition'
         result = dict(source_ids=sources, context_ids=context, transposition_ids=transpositions, basis=basis)
@@ -108,7 +105,11 @@ def enrich(report, graph):
                     for row in distribution:
                         row['example_chapter_attribution'] = examples[row['example_position'],row['example_line']]
     else:
+        # Rankings reuse the row objects of all_signed_rows; visit each object once.
+        seen = set()
         def visit(item):
+            if id(item) in seen: return
+            seen.add(id(item))
             if isinstance(item,list):
                 for child in item: visit(child)
             elif isinstance(item,dict):

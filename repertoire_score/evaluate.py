@@ -35,14 +35,32 @@ def backward(model, order, sampled, sparse_threshold, width=1):
     return values
 
 
-def forward(model, order, sampled, roots, width=1, stop_at=()):
+def can_enter(model, order, entries):
+    """Whether each position can still reach one of `entries`, including through unresolved replies."""
+    result = {}
+    for k in order:
+        targets = [b.target for b in model[k].branches if b.target is not None] + model[k].potential_targets
+        result[k] = k in entries or any(result[t] for t in targets)
+    return result
+
+
+def forward(model, order, sampled, roots, width=1, stop_at=(), entering=None):
+    """Propagate probability from the roots, stopping at `stop_at`.
+
+    With `entering` (from can_enter), positions that cannot reach an entry are not expanded: their
+    mass is absorbed whole and their individual stops are omitted. Entry masses are unchanged.
+    """
     mass = {k: np.zeros(width) for k in order}
     for k, weight in roots.items():
         mass[k] += weight
     stops, entries = {}, {}
+    absorbed = np.zeros(width)
     for k in reversed(order):
         if k in stop_at:
             entries[k] = mass[k].copy()
+            continue
+        if entering is not None and not entering[k]:
+            absorbed += mass[k]
             continue
         for j, (b, (p, _)) in enumerate(zip(model[k].branches, sampled[k])):
             flow = mass[k] * p
@@ -50,7 +68,7 @@ def forward(model, order, sampled, roots, width=1, stop_at=()):
                 mass[b.target] += flow
             else:
                 stops[(k, j)] = flow
-    total = sum(stops.values(), np.zeros(width))+sum(entries.values(), np.zeros(width))
+    total = sum(stops.values(), np.zeros(width))+sum(entries.values(), np.zeros(width))+absorbed
     if not np.allclose(total, 1, atol=1e-9):
         raise AssertionError("Forward stopping mass does not sum to one")
     return stops, entries
@@ -82,19 +100,17 @@ def summarize(raw, posterior):
 
 
 def chapter_score(model, order, raw_sample, post_sample, values, post_values, root_weights, entries, simulations):
-    raw_stops, raw_entries = forward(model, order, raw_sample, root_weights, stop_at=entries)
-    post_stops, post_entries = forward(model, order, post_sample, root_weights, simulations, entries)
+    # Only positions that can still reach the chapter matter for its entry weights.
+    entering = can_enter(model, order, entries)
+    raw_stops, raw_entries = forward(model, order, raw_sample, root_weights, stop_at=entries, entering=entering)
+    _, post_entries = forward(model, order, post_sample, root_weights, simulations, entries, entering)
     raw_reach = sum(raw_entries.values(), np.zeros(1))
     post_reach = sum(post_entries.values(), np.zeros(simulations))
     r = sum((raw_entries[k]*values[k] for k in raw_entries), np.zeros((8, 1)))
     p = sum((post_entries[k]*post_values[k] for k in post_entries), np.zeros((8, simulations)))
     weights = {k: float(v[0]/raw_reach[0]) if raw_reach[0] else None for k, v in raw_entries.items()}
-    can_enter = {}
-    for k in order:
-        targets = [b.target for b in model[k].branches if b.target is not None]+model[k].potential_targets
-        can_enter[k] = k in entries or any(can_enter[t] for t in targets)
     unresolved_entry_mass = sum(float(flow[0]) for (k,j),flow in raw_stops.items()
-                                if model[k].branches[j].kind == "unresolved_distribution" and can_enter[k])
+                                if model[k].branches[j].kind == "unresolved_distribution" and entering[k])
     if unresolved_entry_mass > 0 and len(entries) > 1:
         return {"status": "unresolved_first_entry_weights", "entry_probability": None,
                 "entry_probability_bounds": [float(raw_reach[0]),float(raw_reach[0])+unresolved_entry_mass],

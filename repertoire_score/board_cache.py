@@ -44,3 +44,54 @@ def geometry(position):
 def owner_outcome(position, color):
     value = terminal_white(position)
     return value if value is None or color == chess.WHITE else 1 - value
+
+
+# Cheap position facts. Building a chess.Board costs far more than these string and
+# cache lookups, and the analyses ask for the same few thousand positions repeatedly.
+
+STARTING_POSITION = canonical(chess.Board())
+
+
+def turn(position):
+    """Side to move in a canonical position (or a full FEN): True for White."""
+    return position.split(' ', 2)[1] == 'w'
+
+
+def fen_position(fen):
+    """The canonical four-field position of a full FEN with legal en passant."""
+    return ' '.join(fen.split()[:4])
+
+
+def fen_number(fen):
+    return int(fen.split()[5])
+
+
+@lru_cache(maxsize=None)
+def children(position):
+    """Legal UCI moves mapped to the canonical position each one reaches."""
+    return dict(geometry(position).moves)
+
+
+@lru_cache(maxsize=None)
+def san(position, uci):
+    return chess.Board(position + ' 0 1').san(chess.Move.from_uci(uci))
+
+
+def move_text(position, number, uci):
+    """A move with its number, as python-chess prints it from a board at that full-move number."""
+    return f'{number}{"." if turn(position) else "..."}{san(position, uci)}'
+
+
+def next_number(position, number):
+    """The full-move number after a move from `position`; it increases after Black moves."""
+    return number if turn(position) else number + 1
+
+
+def after_fen(fen, uci):
+    """The full FEN after a move, matching python-chess's fen(en_passant='legal') without building a board."""
+    fields = fen.split()
+    position = ' '.join(fields[:4])
+    notation = san(position, uci)
+    # A pawn move or capture resets the halfmove clock; pawn moves are the SAN moves that start with a file.
+    halfmove = 0 if notation[0] in 'abcdefgh' or 'x' in notation else int(fields[4]) + 1
+    return f'{children(position)[uci]} {halfmove} {next_number(position, int(fields[5]))}'

@@ -5,11 +5,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import chess
 import numpy as np
 
+from .layout import data_json
 from . import SCHEMA_VERSION
-from .evaluate import KNOWN, UNKNOWN, backward, forward
+from .evaluate import KNOWN, UNKNOWN, backward, can_enter, forward
+from .board_cache import fen_number, move_text, san
 from .explorer import Explorer, add_token_option, apply_token_file, counts
 from .graph import parse, resolve, topology
 from .model import empirical, prepare, score
@@ -34,10 +35,6 @@ def reaches(model, order, sampled, roots):
     return mass
 
 
-def move_label(board, uci):
-    return f'{board.fullmove_number}{"." if board.turn else "..."}{board.san(chess.Move.from_uci(uci))}'
-
-
 def representative_lines(graph, model, order, sampled, roots, prefixes=None):
     """One legal policy route for labels; probabilities always use all routes."""
     paths, best = {}, dict.fromkeys(order, -1.0)
@@ -52,7 +49,7 @@ def representative_lines(graph, model, order, sampled, roots, prefixes=None):
         for b, (p, _) in zip(model[k].branches, sampled[k]):
             if b.target is not None and p > 0 and best[k]*p > best[b.target]:
                 best[b.target] = best[k]*p
-                paths[b.target] = (paths[k]+' '+move_label(chess.Board(graph.nodes[k].fen), b.move)).strip()
+                paths[b.target] = (paths[k]+' '+move_text(k, fen_number(graph.nodes[k].fen), b.move)).strip()
     return paths
 
 
@@ -62,7 +59,7 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
     for k, node in model.items():
         if node.mode == 'stop':
             continue
-        board = chess.Board(graph.nodes[k].fen)
+        number = fen_number(graph.nodes[k].fen)
         parent_data = evidence[k]
         parent_n = sum(counts(parent_data))
         rows = {r['uci']: r for r in parent_data['moves']}
@@ -73,8 +70,8 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
             row = rows.get(b.move)
             n = sum(counts(row)) if row else 0
             common = dict(id=f'{k}|{b.move}', position=k, move=b.move,
-                          move_san=board.san(chess.Move.from_uci(b.move)),
-                          move_label=move_label(board, b.move), branch_probability=float(p),
+                          move_san=san(k, b.move),
+                          move_label=move_text(k, number, b.move), branch_probability=float(p),
                           sample_count=n, parent_sample_count=parent_n,
                           counts_white_draw_black=counts(row) if row else [0, 0, 0],
                           sparse=n < sparse_threshold, chapters=sorted(graph.nodes[k].chapters),
@@ -100,7 +97,7 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
                 alternative = None
                 if move_database_score is not None and alternatives and score(counts(alternatives[0]), color) > move_database_score:
                     a = alternatives[0]
-                    alternative = dict(move=a['uci'], san=board.san(chess.Move.from_uci(a['uci'])),
+                    alternative = dict(move=a['uci'], san=san(k, a['uci']),
                                        score=score(counts(a), color), sample_count=sum(counts(a)),
                                        sparse=sum(counts(a)) < sparse_threshold,
                                        gap_pp=100*(score(counts(a), color)-move_database_score),
@@ -227,7 +224,7 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
         context = contexts[json.dumps(chapter.get('policy_overrides', {}), sort_keys=True)]
         cm, co, cs, cv = (context[k] for k in ('model', 'order', 'sampled', 'values'))
         entries = [e['position'] for e in chapter['entries']]
-        _, entry_mass = forward(cm, co, cs, roots, stop_at=entries)
+        _, entry_mass = forward(cm, co, cs, roots, stop_at=entries, entering=can_enter(cm, co, entries))
         probability = sum(float(w[0]) for w in entry_mass.values())
         weights = {k: float(v[0])/probability for k, v in entry_mass.items() if v[0] > 0} if probability else {}
         reported_probability = chapter['score'].get('entry_probability')
@@ -298,7 +295,7 @@ def main():
     apply_token_file(parser, args)
     for path in args.reports:
         result = analyze(path, args.cache, args.fetch_missing)
-        Path(path).with_suffix('.vulnerabilities.json').write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
+        Path(path).with_suffix('.vulnerabilities.json').write_text(data_json(result), encoding='utf-8')
         print(f"Generated {result['color']} vulnerabilities: overall and {len(result['chapters'])} chapters", flush=True)
     from .render import update_report_outputs
     update_report_outputs(args.reports[-1])

@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import chess
 import chess.pgn
-from .board_cache import geometry
+from .board_cache import children, terminal_white, turn
 
 
 def key(board):
@@ -82,17 +82,16 @@ def parse(path, exclusions=()):
 
 def conflicts(graph, color):
     return [{"position": k, "path": n.path, "choices": {m: sorted(n.provenance[m]) for m in n.edges}}
-            for k, n in graph.nodes.items() if chess.Board(n.fen).turn == color and len(n.edges) > 1]
+            for k, n in graph.nodes.items() if turn(k) == color and len(n.edges) > 1]
 
 
 def resolve(graph, color, policy):
     """Explicit overrides, otherwise first PGN move in first chapter order."""
     transitions = {}
     for k, n in graph.nodes.items():
-        facts = geometry(k)
-        if facts.outcome is not None:
+        if terminal_white(k) is not None:
             transitions[k] = {}
-        elif facts.turn == color:
+        elif turn(k) == color:
             if not n.edges:
                 transitions[k] = {}
                 continue
@@ -107,7 +106,7 @@ def resolve(graph, color, policy):
             # Even the last prepared own move has cached opponent replies.
             # An immediate reply into any known board resumes preparation.
             transitions[k] = {m: (target, None) for m, target in n.edges.items()}
-            for move, target in facts.moves:
+            for move, target in children(k).items():
                 if target in graph.nodes:
                     transitions[k][move] = (target, None)
     return transitions
@@ -122,7 +121,7 @@ def chapter_policy_overrides(graph, color, global_transitions, chapter_id):
     overrides = {}
     for k, node in graph.nodes.items():
         moves = node.chapter_moves.get(chapter_id, [])
-        if moves and chess.Board(node.fen).turn == color:
+        if moves and turn(k) == color:
             chosen = moves[0]
             if global_transitions[k] != {chosen: (node.edges[chosen], 1.0)}:
                 overrides[k] = chosen

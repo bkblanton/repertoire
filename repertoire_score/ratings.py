@@ -11,11 +11,12 @@ import json
 import math
 from pathlib import Path
 
-import chess
 
+from .layout import data_json
 from . import SCHEMA_VERSION
+from .board_cache import STARTING_POSITION, children, turn
 from .explorer import Explorer, counts
-from .graph import key, parse
+from .graph import parse
 from .preparation import Evaluator, chess_facts
 
 
@@ -109,7 +110,7 @@ class Context:
                                   mean=r['mean'], known_coverage=r['known_coverage'],
                                   **({'first_entry_origins': r['origins']} if parent is None and r.get('origins') else {}))
                              for p, r, parent, move in parts if p > 0])
-                if k == key(chess.Board()):
+                if k == STARTING_POSITION:
                     self.local[k]['reason'] = 'no_preceding_opponent_move'
         self.moments = {}
 
@@ -142,7 +143,7 @@ class Context:
         # A starting-board row is still an individual position. Keep its local
         # response average, without creating a whole-repertoire rating mean.
         positions = {k: dict(local=r, **({'continuation': self.continuation(k)}
-                          if k != key(chess.Board()) else {})) for k, r in self.local.items()}
+                          if k != STARTING_POSITION else {})) for k, r in self.local.items()}
         stops, deviations = {}, defaultdict(list)
         for k, mass in self.reach.items():
             if mass <= 0: continue
@@ -196,10 +197,9 @@ def first_entries(evaluator, roots, entries):
 
 
 def move_context(evidence, color, position, move):
-    if chess.Board(position + ' 0 1').turn != color:
+    if turn(position) != color:
         return reply_rating(evidence.get(position), move)
-    board = chess.Board(position + ' 0 1'); board.push_uci(move)
-    return response_rating(evidence.get(key(board)))
+    return response_rating(evidence.get(children(position)[move]))
 
 
 def comparison_fields(reply, parent):
@@ -242,18 +242,18 @@ def add_reply_differences(result, evidence):
 
     for scope in result['scopes']:
         for position, fields in scope.get('positions', {}).items():
-            if chess.Board(position + ' 0 1').turn == color:
+            if turn(position) == color:
                 # Copy so shared stopping/chapter means are not modified.
                 fields['local'] = dict(fields['local'], **arrivals(fields['local'].get('origins', [])))
         for identity, r in list(scope.get('moves', {}).items()):
             position, move = identity.rsplit('|', 1)
-            if chess.Board(position + ' 0 1').turn != color:
+            if turn(position) != color:
                 scope['moves'][identity] = dict(r, **direct(position, move))
         for identity, r in list(scope.get('stops', {}).items()):
             parent, move, kind = identity.rsplit('|', 2)
             if move:
                 scope['stops'][identity] = dict(r, **direct(parent, move))
-            elif kind == 'theory_leaf' and chess.Board(parent + ' 0 1').turn == color:
+            elif kind == 'theory_leaf' and turn(parent) == color:
                 local = scope.get('positions', {}).get(parent, {}).get('local', {})
                 scope['stops'][identity] = dict(r, **arrivals(local.get('origins', [])))
     result['manifest']['reply_difference_basis'] = (
@@ -294,8 +294,7 @@ def analyze(path, cache='.cache/explorer'):
             for row in scope.get('all_signed_rows', []):
                 alt = row.get('alternative')
                 if row['kind'] != 'own' or not alt: continue
-                board = chess.Board(row['position'] + ' 0 1'); board.push_uci(alt['move'])
-                k = key(board)
+                k = children(row['position'])[alt['move']]
                 if k in evidence or k in missing: continue
                 try: evidence[k] = explorer.get(k)
                 except ValueError as exc:
@@ -432,7 +431,7 @@ def main():
         for value in args.reports:
             path = Path(value)
             result = analyze(path, args.cache)
-            path.with_suffix('.ratings.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+            path.with_suffix('.ratings.json').write_text(data_json(result), encoding='utf-8')
             from .render import update_report_outputs
             update_report_outputs(path)
             print(f'{result["color"]}: opponent rating ledger generated; network requests: 0', flush=True)

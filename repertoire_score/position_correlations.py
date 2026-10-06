@@ -13,7 +13,7 @@ from .evaluate import COMPLETED, KNOWN, UNKNOWN, backward
 from .explorer import Explorer
 from .graph import parse, resolve, topology
 from .model import draws, empirical, prepare, score
-from .report_insights import database_samples
+from .report_insights import database_samples, database_table
 
 
 METRICS = ('reach_weighted_pearson', 'reach_weighted_spearman', 'slope_pp_per_move', 'pearson', 'spearman')
@@ -158,6 +158,8 @@ def analyze_color(path, cache, simulations, seed, batch_size=128):
     for row in eligible:
         chosen.setdefault(row['position'], set()).add(row['move'])
     samples = {k: [] for k in METRICS}
+    # Validate each cached table once, not once per sampling batch.
+    tables = {position: database_table(evidence[position], position, color, manifest['prior']) for position in chosen}
     for start in range(0, simulations, batch_size):
         width = min(batch_size, simulations - start)
         local_seed = seed + start // batch_size
@@ -166,7 +168,7 @@ def analyze_color(path, cache, simulations, seed, batch_size=128):
         sampled_depth = depths(model, order, sampled, width)
         sampled_reach = reaches(model, order, sampled, roots, width)
         selected = {position: database_samples(evidence[position], position, selected_moves, color, width,
-                                               manifest['prior'], local_seed)[1]
+                                               manifest['prior'], local_seed, tables[position])[1]
                     for position, selected_moves in chosen.items()}
         if eligible:
             x = np.stack([sampled_depth[r['target']] for r in eligible])

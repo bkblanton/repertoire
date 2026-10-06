@@ -7,13 +7,14 @@ import json
 import math
 from pathlib import Path
 
-import chess
 import numpy as np
 
+from .layout import data_json
 from . import SCHEMA_VERSION
+from .board_cache import STARTING_POSITION, children, fen_number, move_text, next_number
 from .explorer import Explorer, counts
 from .gaps import distribution as gap_distribution
-from .graph import key, parse
+from .graph import parse
 from .model import score
 from .preparation import Evaluator, chess_facts
 from .ratings import (comparison_fields, comparison_mixture, first_entries as rating_entries,
@@ -235,7 +236,7 @@ def first_entries(evaluator, roots, region):
                     reply = reply_rating(data, origin['move'])
                     paired.append((origin['weight'], comparison_fields(reply, response_rating(data))))
                 context.update(comparison_mixture(paired))
-                if k == key(chess.Board()):
+                if k == STARTING_POSITION:
                     context['reason'] = 'no_preceding_opponent_move'
         entry['opponent_rating'] = context
     return entries, total, missed
@@ -243,14 +244,14 @@ def first_entries(evaluator, roots, region):
 
 def example(evaluator, witness):
     probability, root, moves = witness
-    board = chess.Board(evaluator.graph.nodes[root].fen)
+    position, number = root, fen_number(evaluator.graph.nodes[root].fen)
     text = []
     for move in moves:
-        text.append(f'{board.fullmove_number}{"." if board.turn else "..."}{board.san(chess.Move.from_uci(move))}')
-        board.push_uci(move)
+        text.append(move_text(position, number, move))
+        position, number = children(position)[move], next_number(position, number)
     return dict(root_fen=evaluator.graph.nodes[root].fen, path_uci=list(moves),
                 line=' '.join(text) or '(PGN root)', root_probability=probability,
-                position=key(board))
+                position=position)
 
 
 def cohort(evaluator, entries, total, wdl):
@@ -464,7 +465,7 @@ def main():
     args = parser.parse_args()
     for path in args.reports:
         result = analyze(path, args.cache)
-        path.with_suffix('.openings.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+        path.with_suffix('.openings.json').write_text(data_json(result), encoding='utf-8')
         print(f"{result['color']}: {len(result['openings'])} reached openings; network requests: 0", flush=True)
     from .render import update_report_outputs
     update_report_outputs(args.reports[-1])

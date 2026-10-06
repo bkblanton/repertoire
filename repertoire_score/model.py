@@ -1,7 +1,7 @@
 """Evidence preparation, independent of network access."""
 from dataclasses import dataclass, field
-import chess
 import numpy as np
+from .board_cache import children, owner_outcome, turn
 from .explorer import counts, validate
 
 
@@ -34,18 +34,17 @@ def outcome(board, color):
 def prepare(graph, transitions, order, color, evidence):
     model = {}
     for k in order:
-        n, selected = graph.nodes[k], transitions[k]
-        board = chess.Board(n.fen)
-        result = outcome(board, color)
+        selected = transitions[k]
+        result = owner_outcome(k, color)
         if result is not None:
             model[k] = ModelNode("stop", [Branch(kind="theory_leaf" if not selected else "other_stop", fixed_score=result)])
-        elif selected and board.turn == color:
+        elif selected and turn(k) == color:
             model[k] = ModelNode("own", [Branch(move=m, target=t, weight=w) for m, (t, w) in selected.items()])
         else:
             data = evidence[k]
             residual = validate(data, k)
             total = sum(counts(data))
-            if board.turn == color:
+            if turn(k) == color:
                 model[k] = ModelNode("stop", [Branch(counts=counts(data), kind="theory_leaf")], total)
             elif not total:
                 model[k] = ModelNode("stop", [Branch(kind="unresolved_distribution")], 0,
@@ -53,14 +52,12 @@ def prepare(graph, transitions, order, color, evidence):
             else:
                 rows = {r["uci"]: counts(r) for r in data["moves"]}
                 branches = []
-                for move in sorted(board.legal_moves, key=lambda m: m.uci()):
-                    uci = move.uci()
-                    after = board.copy()
-                    after.push(move)
+                moves = children(k)
+                for uci in sorted(moves):
                     target = selected.get(uci, (None, None))[0]
                     branches.append(Branch(move=uci, target=target, counts=rows.get(uci, [0, 0, 0]),
                                            kind=None if target else "deviation",
-                                           fixed_score=None if target else outcome(after, color)))
+                                           fixed_score=None if target else owner_outcome(moves[uci], color)))
                 if sum(residual):
                     branches.append(Branch(counts=residual, kind="no_recorded_continuation"))
                 model[k] = ModelNode("opponent", branches, total)

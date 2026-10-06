@@ -9,14 +9,15 @@ import chess
 import numpy as np
 from . import SCHEMA_VERSION
 from .graph import parse, conflicts, resolve, topology, infer_entries, key, chapter_region, region_entries, chapter_policy_overrides
+from .board_cache import STARTING_POSITION, owner_outcome, turn
 from .explorer import Explorer, DEFAULT_FILTERS, add_token_option, apply_token_file
-from .model import prepare, outcome, empirical, draws
+from .model import prepare, empirical, draws
 from .evaluate import backward, forward, summarize, chapter_score, COMPLETED, KNOWN
 from .ledger import events, starting_position_reference
 from .attribution import enrich
 from .baseline import chapter_entry_baseline
 from .render import update_report_outputs
-from .layout import report_directory
+from .layout import data_json, report_directory
 from .transitions import chapter_transitions, hitting_bounds
 from .depth import prepared_depth_values, summarize_depth, chapter_prepared_depth
 
@@ -121,11 +122,9 @@ def analyze(args):
     evidence = {}
     try:
         required = [k for profile in profiles for k in profile['order']
-                    if outcome(chess.Board(graph.nodes[k].fen), color) is None and
-                    (not profile['transitions'][k] or chess.Board(graph.nodes[k].fen).turn != color)]
-        starting_position = key(chess.Board())
-        baseline_positions = [p for positions in entries.values() for p in positions
-                              if outcome(chess.Board(p + " 0 1"), color) is None]
+                    if owner_outcome(k, color) is None and (not profile['transitions'][k] or turn(k) != color)]
+        starting_position = STARTING_POSITION
+        baseline_positions = [p for positions in entries.values() for p in positions if owner_outcome(p, color) is None]
         required = list(dict.fromkeys([starting_position, *required, *baseline_positions]))
         for i, k in enumerate(required):
             evidence[k] = explorer.get(k)
@@ -247,7 +246,7 @@ def analyze(args):
         'Missing move distributions or first-entry weights remain unresolved with conditional bounds.')
     report["manifest"]["tolerance_met"] = bool(report["manifest"]["tolerance_met"])
     enrich(report, graph)
-    output.with_suffix(".json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
+    output.with_suffix(".json").write_text(data_json(report), encoding="utf-8")
     update_report_outputs(output.with_suffix(".json"))
     print(json.dumps({"overall": report["overall"], "report": str((report_directory(output)/'report.md').resolve())}, indent=2))
 

@@ -8,13 +8,14 @@ from pathlib import Path
 import chess
 import numpy as np
 
+from .layout import data_json
 from . import SCHEMA_VERSION
 from .explorer import Explorer, counts
-from .graph import key, parse
+from .graph import parse
 from .model import score
 from .attribution import enrich
 from .insights import depth_distribution, first_entry_examples
-from .board_cache import geometry, owner_outcome
+from .board_cache import children, fen_number, geometry, move_text, owner_outcome
 
 
 class MissingEvidence(ValueError):
@@ -186,15 +187,16 @@ def stopping_rows(evaluator, starts, baseline, lines):
     for k, reach in mass.items():
         if reach <= 0:
             continue
+        number = fen_number(evaluator.graph.nodes[k].fen)
         for move,p,kind,sample,fixed in evaluator.stops[k]:
-            board = chess.Board(evaluator.graph.nodes[k].fen)
             line = lines.get(k, k)
+            position = k
             if move:
-                line += f' {board.fullmove_number}{"." if board.turn else "..."}{board.san(chess.Move.from_uci(move))}'
-                board.push_uci(move)
+                line += ' ' + move_text(k, number, move)
+                position = children(k)[move]
             s = fixed if fixed is not None else score(sample, evaluator.color)
             probability = reach*p
-            rows.append(dict(position=key(board), parent_position=k, move=move, type=kind, line=line,
+            rows.append(dict(position=position, parent_position=k, move=move, type=kind, line=line,
                 reach=probability, score=s, sample_count=sum(sample), counts_white_draw_black=sample,
                 contribution_pp=None if s is None else 100*probability*s,
                 baseline_contribution_pp=None if s is None or baseline is None else 100*probability*(s-baseline),
@@ -299,7 +301,7 @@ def main():
     args=parser.parse_args()
     for source in args.reports:
         path=Path(source); result=analyze(path,args.cache)
-        path.with_suffix('.preparation.json').write_text(json.dumps(result,indent=2,allow_nan=False),encoding='utf-8')
+        path.with_suffix('.preparation.json').write_text(data_json(result),encoding='utf-8')
         print(f"Generated {result['color']} stopping contributions for {len(result['scopes'])} scopes",flush=True)
     from .render import update_report_outputs
     update_report_outputs(args.reports[-1])

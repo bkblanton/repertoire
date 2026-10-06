@@ -11,9 +11,11 @@ from pathlib import Path
 import chess
 import numpy as np
 
+from .layout import data_json
 from . import SCHEMA_VERSION
+from .board_cache import STARTING_POSITION, children, fen_number, move_text, next_number, san, turn
 from .explorer import Explorer, counts
-from .graph import key, parse
+from .graph import parse
 from .model import score
 from .preparation import Evaluator, chess_facts, position_lines, stopping_rows
 from .attribution import enrich
@@ -64,7 +66,6 @@ def predictability_metrics(evaluator, reach, lines):
     rows = []
     opportunities = recorded_opportunities = bits = sparse_opportunities = 0.0
     for k, mass in reach.items():
-        node = evaluator.graph.nodes[k]
         if mass <= 0 or evaluator.facts[k]['turn'] == evaluator.color or evaluator.facts[k]['outcome'] is not None:
             continue
         opportunities += mass
@@ -74,8 +75,7 @@ def predictability_metrics(evaluator, reach, lines):
         recorded = sum(n for _, n in observed)
         coverage = recorded/total if total else 0.0
         h = entropy(n/recorded for _, n in observed) if recorded else None
-        board = chess.Board(node.fen)
-        replies = sorted([dict(move=m, san=board.san(chess.Move.from_uci(m)), observations=n,
+        replies = sorted([dict(move=m, san=san(k, m), observations=n,
                                probability_given_recorded_reply=n/recorded) for m,n in observed],
                          key=lambda r: (-r['observations'], r['move']))
         weighted = mass * coverage
@@ -168,28 +168,27 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
     """Canonical reached boards, including the first unprepared opponent reply."""
     if wdl_values is None:
         wdl_values = recursive_wdl(evaluator)
-    paths, boards, best = {}, {}, {}
+    # Each route keeps its own full-move number: transposed routes can differ in length.
+    paths, numbers, best = {}, {}, {}
     for k, weight in starts.items():
         if weight <= 0: continue
         paths[k] = '' if lines[k] == '(PGN root)' else lines[k]
-        boards[k] = chess.Board(evaluator.graph.nodes[k].fen)
+        numbers[k] = fen_number(evaluator.graph.nodes[k].fen)
         best[k] = weight
 
     def after_move(k, move):
-        board = boards[k]
-        label = f'{board.fullmove_number}{"." if board.turn else "..."}{board.san(chess.Move.from_uci(move))}'
-        after = board.copy()
-        after.push_uci(move)
-        return (paths[k] + ' ' + label).strip(), after
+        label = move_text(k, numbers[k], move)
+        return (paths[k] + ' ' + label).strip(), children(k)[move], next_number(k, numbers[k])
 
     for k in reversed(evaluator.values):
         if k not in paths: continue
         for move, probability, target in evaluator.edges[k]:
             route_mass = best[k] * probability
             if probability <= 0 or route_mass <= best.get(target, -1): continue
-            path, after = after_move(k, move)
-            assert key(after) == target
-            paths[target], boards[target], best[target] = path, after, route_mass
+            path, after, number = after_move(k, move)
+            if after != target:
+                raise AssertionError('Repertoire edge does not match its move')
+            paths[target], numbers[target], best[target] = path, number, route_mass
     rows = {}
     for k, mass in reach.items():
         if mass <= 0: continue
@@ -206,7 +205,7 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
         value = evaluator.values[k]
         rows[k] = dict(position=k, line=paths[k] or '(PGN root)', reach=mass,
                        to_move='white' if evaluator.facts[k]['turn'] else 'black', kind=kind,
-                       is_starting_position=k == key(chess.Board()),
+                       is_starting_position=k == STARTING_POSITION,
                        repertoire_score=float(value[0]) if value[1] == 0 else None,
                        outcomes=summarize_outcomes(wdl_values[k]),
                        database_score=score(sample, evaluator.color) if sample is not None else None,
@@ -220,13 +219,12 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
         if mass <= 0: continue
         for move, probability, kind, sample, fixed in evaluator.stops[k]:
             if kind != 'deviation' or probability <= 0: continue
-            path, after = after_move(k, move)
-            target = key(after)
+            path, target, _ = after_move(k, move)
             assert target not in evaluator.graph.nodes
             row = rows.setdefault(target, dict(position=target, line=path, reach=0.,
-                to_move='white' if after.turn else 'black',
+                to_move='white' if turn(target) else 'black',
                 kind='terminal' if fixed is not None else 'unprepared_reply',
-                is_starting_position=target == key(chess.Board()), unprepared_origins=[],
+                is_starting_position=target == STARTING_POSITION, unprepared_origins=[],
                 repertoire_score=None, database_score=0., games=0, games_source='parent_move_rows',
                 counts_white_draw_black=[0,0,0]))
             branch_reach = mass * probability
@@ -262,11 +260,10 @@ def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probabili
     decisions = []
     for k, mass in reach.items():
         if mass <= 0 or evaluator.facts[k]['turn'] != evaluator.color: continue
-        board = chess.Board(evaluator.graph.nodes[k].fen)
         for move,p,_ in evaluator.edges[k]:
             probability = mass*p
             if probability > 1+1e-10: raise AssertionError('Decision revisited in an acyclic graph')
-            decisions.append(dict(position=k, move=move, san=board.san(chess.Move.from_uci(move)),
+            decisions.append(dict(position=k, move=move, san=san(k, move),
                                   line=lines[k], reach=min(1.0,probability)))
     reuse = reuse_metrics(decisions, games)
     if not math.isclose(reuse['expected_encounters_per_game'], value[2], abs_tol=1e-10):
@@ -373,7 +370,7 @@ def main():
     if any(n <= 0 for n in args.games): parser.error('Games must be positive')
     for path in args.reports:
         result=analyze(path,args.cache,sorted(set(args.games)))
-        path.with_suffix('.character.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+        path.with_suffix('.character.json').write_text(data_json(result),encoding='utf-8')
         print(f"{result['color']}: character report generated for {len(result['scopes'])} scopes; no network requests",flush=True)
     from .render import update_report_outputs
     update_report_outputs(args.reports[-1])

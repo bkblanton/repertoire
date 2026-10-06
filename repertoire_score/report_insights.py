@@ -7,11 +7,12 @@ import json
 import math
 from pathlib import Path
 
-import chess
 import numpy as np
 
+from .layout import data_json
 from . import SCHEMA_VERSION
 from .evaluate import COMPLETED, backward
+from .board_cache import children
 from .explorer import Explorer, counts, validate
 from .graph import parse, resolve, topology
 from .model import draws, prepare
@@ -85,21 +86,40 @@ def move_decomposition(row):
     return dict(database_move_gain_pp=a, continuation_gain_pp=b, total_gain_pp=total)
 
 
-def interval(values):
-    return [float(v) for v in np.quantile(values, [.025, .975])]
+class Intervals:
+    """Approximate 95% intervals, computed many sample arrays at a time."""
+
+    def __init__(self, block=512):
+        self.block, self.pending = block, []
+
+    def add(self, entry, field, values):
+        self.pending.append((entry, field, values))
+        if len(self.pending) >= self.block:
+            self.flush()
+
+    def flush(self):
+        if self.pending:
+            bounds = np.quantile(np.stack([values for _, _, values in self.pending]), [.025, .975], axis=1).T
+            for (entry, field, _), (low, high) in zip(self.pending, bounds):
+                entry[field] = [float(low), float(high)]
+            self.pending = []
 
 
-def database_samples(data, position, chosen, color, simulations, prior, seed):
-    """One joint move/result table keeps the move and parent scores correlated."""
-    board = chess.Board(position + ' 0 1')
-    moves = sorted(m.uci() for m in board.legal_moves)
+def database_table(data, position, color, prior):
+    """Legal moves and Dirichlet parameters for one cached position; reusable across sampling batches."""
+    moves = sorted(children(position))
     rows = {r['uci']: counts(r) for r in data['moves']}
     residual = validate(data, position)
     observations = [rows.get(move, [0, 0, 0]) for move in moves]
     if sum(residual):
         observations.append(residual)
     table_prior = np.asarray(prior if color else prior[::-1])
-    alpha = np.asarray(observations, dtype=float) + table_prior / len(observations)
+    return moves, np.asarray(observations, dtype=float) + table_prior / len(observations)
+
+
+def database_samples(data, position, chosen, color, simulations, prior, seed, table=None):
+    """One joint move/result table keeps the move and parent scores correlated."""
+    moves, alpha = table or database_table(data, position, color, prior)
     derived_seed = int.from_bytes(hashlib.sha256(f'{seed}:{position}'.encode()).digest()[:8], 'little')
     rng = np.random.default_rng(derived_seed)
     gamma = rng.gamma(alpha, size=(simulations, *alpha.shape))
@@ -250,6 +270,7 @@ def analyze(path, cache='.cache/explorer'):
     for scope in scopes:
         profiles[json.dumps(scope['overrides'], sort_keys=True)].append(scope)
     roots = [*manifest['root_weights'], *[e['position'] for c in saved['chapters'] for e in c['entries']]]
+    intervals = Intervals()
     for identity, group in profiles.items():
         transitions = default_transitions if identity == '{}' else resolve(graph, color,
             dict(manifest['configuration'].get('policy', {}), **json.loads(identity)))
@@ -279,14 +300,17 @@ def analyze(path, cache='.cache/explorer'):
                 branch = model[k].branches[j]
                 after = values[branch.target][COMPLETED] if branch.target else sampled[k][j][1]
                 before = database[k][0] if row['kind'] == 'own' else values[k][COMPLETED]
-                entry = dict(local_drop_interval_pp=interval(100 * (before-after)),
-                             local_gain_interval_pp=interval(100 * (after-before)))
+                # Intervals are filled in when the batch is flushed; create their keys now to keep field order.
+                entry = dict(local_drop_interval_pp=None, local_gain_interval_pp=None)
+                intervals.add(entry, 'local_drop_interval_pp', 100 * (before-after))
+                intervals.add(entry, 'local_gain_interval_pp', 100 * (after-before))
                 if row['kind'] == 'own':
                     selected = database[k][1][move]
-                    entry.update(move_decomposition(row),
-                        database_move_gain_interval_pp=interval(100 * (selected-before)),
-                        continuation_gain_interval_pp=interval(100 * (after-selected)))
+                    entry.update(move_decomposition(row), database_move_gain_interval_pp=None, continuation_gain_interval_pp=None)
+                    intervals.add(entry, 'database_move_gain_interval_pp', 100 * (selected-before))
+                    intervals.add(entry, 'continuation_gain_interval_pp', 100 * (after-selected))
                 results[scope['id']]['moves'][row['id']] = entry
+        intervals.flush()
         del sampled, values, model
     if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
         raise ValueError('PGN changed during report insight analysis')
@@ -311,7 +335,7 @@ def main():
     for path in args.reports:
         print(f'Generating {path.stem} report insights from cache', flush=True)
         value = analyze(path, args.cache)
-        path.with_suffix('.insights.json').write_text(json.dumps(value, indent=2, allow_nan=False), encoding='utf-8')
+        path.with_suffix('.insights.json').write_text(data_json(value), encoding='utf-8')
     from .render import update_report_outputs
     update_report_outputs(args.reports[-1])
 
