@@ -2,13 +2,14 @@
 
 Analyze White and Black Lichess study PGNs to see how often your preparation is reached, how it scores, and where the most common gaps remain. The program follows your chosen moves, weights the opponent's replies using Lichess opening statistics, and combines exact-position transpositions across chapters.
 
-It produces a [summary](reports/summary.md) for everyday review and a [full report](reports/report.md) for detailed analysis. The score describes database outcomes under a fixed repertoire policy; it is not an engine evaluation or a prediction of your personal rating gain.
+It produces a [summary](reports/summary.md) for everyday review, a [full report](reports/report.md) for detailed analysis, and one page per chapter. The score describes database outcomes under a fixed repertoire policy; it is not an engine evaluation or a prediction of your personal rating gain.
 
 The application uses Python 3.12+ and [uv](https://docs.astral.sh/uv/). [design.md](design.md) explains the statistical foundations and some earlier presentation plans. This README and the tests describe the current behavior.
 
 ## Contents
 
 - [Getting started](#getting-started)
+  - [Analyze other PGN files](#analyze-other-pgn-files)
 - [Reading the reports](#reading-the-reports)
 - [Updating results](#updating-results)
 - [Files and cache](#files-and-cache)
@@ -20,6 +21,7 @@ The application uses Python 3.12+ and [uv](https://docs.astral.sh/uv/). [design.
   - [Scores, baselines and conversions](#scores-baselines-and-conversions)
   - [Prepared depth](#prepared-depth)
   - [Equivalent gap reach](#equivalent-gap-reach)
+  - [Where preparation ends](#where-preparation-ends)
   - [Score spread and outcome volatility](#score-spread-and-outcome-volatility)
   - [Reuse, reply variety and position profiles](#reuse-reply-variety-and-position-profiles)
   - [Opponent ratings](#opponent-ratings)
@@ -41,7 +43,7 @@ The application uses Python 3.12+ and [uv](https://docs.astral.sh/uv/). [design.
 
 ## Getting started
 
-Run commands from the repository root. Source PGNs are read-only inputs: the program does not change them or edit live Lichess studies.
+Run commands from the repository root. The program reads Lichess studies but never edits them, and it never changes PGN files you supply.
 
 ### Setup
 
@@ -60,32 +62,69 @@ You can select an existing compatible interpreter with `uv sync --python C:/path
 
 ### Generate both reports
 
-Set the paths to your current study exports. The usual inputs on Bryce's machine are:
+The studies to analyze are listed in [studies.json](studies.json):
 
-```powershell
-$whiteStudy = 'path/to/white.pgn'
-$blackStudy = 'path/to/black.pgn'
+```json
+{
+  "white": "https://lichess.org/study/abcd1234",
+  "black": "https://lichess.org/study/mnop3456"
+}
 ```
 
-For a complete build, including any missing Lichess evidence:
+A study URL, a chapter URL (the whole study is exported) or a bare 8-character study ID all work. One command exports both studies and rebuilds every report:
 
 ```powershell
-./run-repertoires.ps1 -WhitePgn $whiteStudy -BlackPgn $blackStudy -TokenFile 'C:/path/to/lichess_token.txt'
+./run-repertoires.ps1 -TokenFile 'path/to/lichess_token.txt'
 ```
 
-The wrapper reads the token into `LICHESS_TOKEN` for the run and restores the previous environment afterward. The Python program reads credentials only from that variable. Tokens are never written to reports or cache files.
+The token needs the `study:read` scope to export private studies; the same token authenticates Explorer requests. The wrapper reads it into `LICHESS_TOKEN` for the run and restores the previous environment afterward. The Python program reads credentials only from that variable. Tokens are never written to reports, exports or cache files.
 
-The build scores both colors, generates the supporting analyses, and writes `reports/report.md` and `reports/summary.md`. Existing Explorer responses are reused; new or extended lines require only the missing tables. Network failures abort the build and retain completed work for a later retry.
+The export step writes `studies/white.pgn` and `studies/black.pgn` with all chapters, variations and comments. Each download is validated by parsing it before the previous export is replaced, and a file is left untouched when only its `Date` headers changed, so an unchanged study reuses every saved stage. The exports are tracked in Git, so `git diff studies/` shows what changed in your preparation since the last commit.
+
+The build then scores both colors, generates the supporting analyses, and writes `reports/report.md`, `reports/summary.md`, and the chapter and opening pages under `reports/chapters/` and `reports/openings/`. Existing Explorer responses are reused; new or extended lines require only the missing tables. Network failures abort the build and retain completed work for a later retry.
+
+Without the wrapper, the same run is:
+
+```powershell
+$env:LICHESS_TOKEN = (Get-Content -LiteralPath 'C:/path/to/lichess_token.txt' -Raw).Trim()
+uv run repertoire-build
+```
+
+`uv run repertoire-fetch` exports the studies without building. `repertoire-build --no-fetch` (wrapper `-NoFetch`) builds from the last export without contacting the study API. `--sources` and `--studies` select a different study list and export folder.
+
+Commands later in this README refer to the exported files:
+
+```powershell
+$whiteStudy = 'studies/white.pgn'
+$blackStudy = 'studies/black.pgn'
+```
+
+### Analyze other PGN files
+
+Pass two PGN paths to analyze files you already have instead of the configured studies; nothing is downloaded:
+
+```powershell
+./run-repertoires.ps1 -WhitePgn 'C:/path/to/white.pgn' -BlackPgn 'C:/path/to/black.pgn' -TokenFile 'C:/path/to/lichess_token.txt'
+uv run repertoire-build 'C:/path/to/white.pgn' 'C:/path/to/black.pgn' --offline
+```
+
+Both or neither path must be given. Supported inputs:
+
+- **Multi-chapter study exports**, such as a study downloaded from the Lichess UI. Each PGN game is a chapter; `ChapterURL` headers supply the chapter IDs used by the configuration files.
+- **A plain PGN** with one or more games and no study headers. Chapters are numbered `1`, `2`, ... in file order, and the variations are the repertoire.
+- **A PGN with an entry point**: a game with `SetUp`/`FEN` headers starts from that position. If the position is reachable from other chapters, it joins the merged repertoire there. A disconnected custom-FEN chapter is scored conditionally on reaching its root, unless `root_weights` assigns the roots weights (see [Other options](#other-options)). `entries` or `chapter_regions` in a configuration file can also place a chapter's entry at a later position.
+
+The configuration files are keyed by the chapter IDs of the configured studies. With a different PGN, pass a matching configuration via `--white-config`/`--black-config`, or start without overrides; `repertoire-score inspect` lists the chapter IDs and entry candidates. Analyzing a different PGN replaces the saved results in `reports/data/` and the generated reports, so pass `--directory` to keep separate results.
 
 ### Work offline
 
 If all required positions are already cached:
 
 ```powershell
-uv run repertoire-build $whiteStudy $blackStudy --offline
+uv run repertoire-build --offline
 ```
 
-Offline mode needs no token and makes no requests. A required cache miss stops the build with a diagnostic; it is not treated as a position with zero games.
+Offline mode needs no token and makes no requests, so it builds from the last study exports in `studies/`. A required cache miss stops the build with a diagnostic; it is not treated as a position with zero games.
 
 ### Inspect or score one repertoire
 
@@ -105,26 +144,32 @@ For Black, use `$blackStudy`, `--color black`, `configs/black.json` and the `rep
 
 ## Reading the reports
 
-Start with [summary.md](reports/summary.md). It shows scores and baseline differences, then the five most common prepared positions and five most common unprepared replies for each color. These are ranked by reach across all transpositions. Prepared positions show the score of the remaining repertoire; gaps show the cached database score for the opponent's reply.
+Start with [summary.md](reports/summary.md). After the headline scores, each color leads with what to work on:
 
-The expandable sections contain chapter comparisons, moves and gaps to review, strongest moves, and preparation and variability. Evidence and definitions appear at the end. Changed-source and missing-analysis notices stay visible above the scores.
+- **Where preparation ends** groups every unprepared reply by the last prepared position before it, so one study task is one row. *Games leaving prep here* is the share of all games with that color whose preparation ends at that position; *share of games at this position* separates a chapter that simply stops (100%) from rare sidelines at a busy position. Unlike other rankings, these rows do not overlap.
+- **Own moves to review** ranks selected moves by move reach times drag against the parent database score.
 
-Use [report.md](reports/report.md) for longer rankings, opening breakdowns, repeat-gap priorities, position contributions, correlations and individual chapter analyses. Its nested table of contents links to every major section. Chapter details include the actual entry positions and representative routes.
+Collapsed sections follow: the most common positions as a nested tree, chapter comparisons, costly unprepared replies, strongest moves, and preparation and variability. Evidence and definitions appear at the end. Changed-source and missing-analysis notices stay visible above the scores. The summary uses one decimal place and compact game counts.
+
+[report.md](reports/report.md) is the index for detailed analysis: per-color chapter tables, exit points, positions, openings, vulnerabilities, strengths, gap priorities, depth distributions, correlations, and a glossary (`Definitions and evidence`) with one anchor per metric. Tables state their main caveat in a sentence and link to the glossary entry instead of repeating it. Each chapter has its own page in `reports/chapters/` (W1, W2, ... and B1, B2, ...) with its exit points, positions, vulnerabilities, strengths, gaps, depth, entry positions and routes, plus links to the previous and next chapter and to the Lichess study chapter. Per-opening entry evidence is in `reports/openings/white.md` and `reports/openings/black.md`.
 
 | Column | How to read it |
 | --- | --- |
 | Repertoire score | Expected points from the repertoire owner's perspective: a win is 1, a draw is 0.5, a loss is 0. |
 | Baseline / delta | Ordinary database score at the start or chapter entry, and the repertoire score minus that reference. |
-| Reach | Probability of encountering a canonical position before preparation stops, including transpositions. Chapter tables use games after chapter entry. |
+| Position reach | Probability of encountering a canonical position before preparation stops, including transpositions. Chapter pages use games after chapter entry. |
+| Move reach | Probability of reaching the parent position and then playing that move. It can be lower than the reach of the resulting position when other routes transpose into it. |
+| Games leaving prep here | Probability that preparation ends right after that prepared position, combining all of its unprepared replies. |
 | Gap reach | Probability of first reaching a position without a prepared reply. It equals that unanswered position's reach. |
-| Score spread | How much continuation scores vary across the branches, including later replies. |
+| Score spread | How much continuation scores vary across the branches, including later replies. Unprepared replies end preparation, so their tables omit it. |
+| Per 1,000 games | Reach-weighted drag, gain, or contribution expressed as score points per 1,000 games with that color (or entering the chapter). |
 | Games | Games observed at that position or in the cached parent move row; this is not the sample size of the entire continuation score. |
 | Opponent rating | A local or chapter-level description of the database cohort, not a rating adjustment to the score. |
-| Chapter / opening source | Where the preparation was recorded and the most common opening label carried into the position. |
+| Chapter / opening source | Where the preparation was recorded and the most common opening label carried into the position. The share appears only when other labels also contribute. |
 
-A displayed line is a legal example route to the position, not an exclusive historical sequence. Positions immediately before a guaranteed prepared reply are collapsed into the position after that reply; unanswered positions remain visible. Position rows and chapters can overlap along a game, so their reach and contributions must not be added.
+A displayed line is a legal example route to the position, not an exclusive historical sequence. Each exact board uses one representative overall-policy route as its label in every table; move rows add their move to the parent board's label. Line links open the Lichess analysis board at the position where the repertoire owner decides: after the opponent's reply, or before our move. Positions immediately before a guaranteed prepared reply are collapsed into the position after that reply; unanswered positions remain visible. Position rows and chapters can overlap along a game, so their reach and contributions must not be added.
 
-Score cells pair percentages with centipawn equivalents. Differences such as `+5.00%` mean five percentage points, not a relative percentage increase. The [metric reference](#metric-reference) explains the formulas and uncertainty.
+Tables show percentages only; centipawn equivalents appear beside headline deltas (overview rows and chapter headlines). Differences such as `+5.00%` mean five percentage points, not a relative percentage increase. Columns that are identical in every row, such as all-zero depth endings, are omitted. The [metric reference](#metric-reference) explains the formulas and uncertainty.
 
 ### Display options
 
@@ -134,7 +179,7 @@ All Markdown generation is automated. To render matching saved results without r
 uv run repertoire-report reports/data/white.json reports/data/black.json --require-complete
 ```
 
-`--output` and `--summary` select destinations. `--top` (default 10) controls overall rankings, `--chapter-top` (default 5) controls chapter rankings, and `--position-top` (default 20) controls the prepared-position and unprepared-reply tables for each color and chapter. The summary keeps five rows in each visible position table. Filtering happens before the display limit; complete rankings remain in JSON.
+`--output` and `--summary` select destinations; chapter and opening pages go in `chapters/` and `openings/` beside the full report, and pages for chapters or colors that are no longer rendered are removed. `--top` (default 10) controls overall rankings, `--chapter-top` (default 5) controls chapter rankings (chapter exit tables show at least 10 rows), and `--position-top` (default 20) controls the prepared-position and unprepared-reply tables for each color and chapter. The summary keeps five rows in its exit and review tables and twelve positions in its tree. Filtering happens before the display limit; complete rankings remain in JSON.
 
 Unprepared positions use their cached parent-move outcomes and counts, or cached position outcomes for recorded endpoints. Transposed arrivals are combined using modeled reach. Pooled parent counts can overlap and are marked with a dagger (†). All reached canonical boards and exact FENs remain available in the character JSON.
 
@@ -144,7 +189,8 @@ Choose the workflow that matches what changed. Rebuilding from updated PGNs, ren
 
 | What changed | What to run | What it reads |
 | --- | --- | --- |
-| Study PGNs, move choices or chapter subjects | `uv run repertoire-build $whiteStudy $blackStudy --offline`, or the authenticated wrapper if tables are missing. | Current PGNs, configuration and cached evidence; online mode fetches missing required tables. |
+| The Lichess studies | `./run-repertoires.ps1 -TokenFile ...` | Fresh study exports, configuration and cached evidence; fetches missing required tables. |
+| Move choices or chapter subjects in the configs | `uv run repertoire-build --offline`, or the authenticated wrapper if tables are missing. | The last study exports, configuration and cached evidence. |
 | Report wording, layout or display limits | `uv run repertoire-report reports/data/white.json reports/data/black.json --require-complete` after editing the generator. | Saved JSON only; no Explorer cache reads, score recalculation or requests. |
 | Numerical analysis code | The incremental build, offline when possible. | Changed stages and their dependencies; unchanged results are reused. |
 | Lichess statistics themselves | An explicit score run with `--refresh`, then the complete build. | New responses replace the requested cache entries. |
@@ -161,12 +207,12 @@ try {
 } finally {
     Remove-Item Env:LICHESS_TOKEN
 }
-uv run repertoire-build $whiteStudy $blackStudy --offline
+uv run repertoire-build --offline
 ```
 
 To refresh Black too, run the corresponding Black score command inside the `try` block before rebuilding. This manual example clears its token variable afterward; the wrapper preserves a previously set token.
 
-Saved results describe a particular PGN and evidence snapshot. The dates in study filenames do not establish freshness because the files are replaced in place. A request for current results requires rebuilding from the current exports. Rendering an older result is supported, but its saved-snapshot notice must remain visible.
+Saved results describe a particular PGN and evidence snapshot. A request for current results requires exporting the studies again, which the default build does. Rendering an older result is supported, but its saved-snapshot notice must remain visible.
 
 Companion report hashes, input hashes, colors, and filters must match. Stale analyses cause the explicit rendering command to fail rather than silently mix snapshots. `--require-complete` also requires all companion analysis families and matching future preparation gain correlations. Without it, missing analyses are clearly marked pending. A changed or missing source PGN produces a prominent saved-snapshot notice; rendering an archived result does not pretend it describes the current study. Historical improvements and hypothetical comparisons remain separate because they use different policies or snapshots.
 
@@ -176,10 +222,13 @@ Standalone scoring and analysis commands refresh the reports automatically. Duri
 
 | Location | Purpose |
 | --- | --- |
+| [studies.json](studies.json) | The White and Black Lichess study URLs exported by the default build. |
+| `studies/` | The latest study exports, `white.pgn` and `black.pgn`, tracked in Git. |
 | [configs/white.json](configs/white.json), [configs/black.json](configs/black.json) | Maintained policy overrides and chapter subject anchors, keyed by Lichess chapter ID. Preserve explicit choices when importing newer PGNs. |
 | `.cache/explorer/` | Persistent raw Explorer responses, keyed by endpoint, canonical board and query filters. Each file wraps `identity`, `retrieved_at`, and `data`; score manifests identify the relevant cache keys. |
 | `reports/data/` | Score snapshots, companion JSON, correlation results, `.build-state.json` checkpoints and `.report-index.json` output registration. |
 | [reports/report.md](reports/report.md), [reports/summary.md](reports/summary.md) | The current generated full report and summary. |
+| `reports/chapters/`, `reports/openings/` | Generated chapter pages (`W1.md`, `B1.md`, ...) and per-color opening evidence pages, linked from the report and summary. |
 | `reports/comparisons/`, `reports/positions/` | Separate hypothetical comparisons and focused position reports; these can describe different snapshots. |
 
 Explorer cache and generated analysis JSON are ignored by Git because they can grow very large. Readable Markdown reports remain tracked, so a fresh checkout may include reports without the local evidence needed to regenerate them. Preserve local data when changing Git tracking; clearing the cache is not a routine repair.
@@ -258,7 +307,7 @@ All scores favor the repertoire owner, for both White and Black. Whole-repertoir
 
 Each color's section includes only that color's standard starting-position baseline. The overview and summary show both colors and their respective deltas, in percentage points. Both also include a combined row with 50% weight for White and 50% for Black, provided both use matching Explorer filters and standard starting positions. The row averages scores, starting baselines and prepared depths; chapter counts are summed across colors. Each overview row includes an **Elo equivalent**: `400 * log10(score / (1 - score)) - 400 * log10(baseline / (1 - baseline))`. This translates the modeled score edge to an Elo scale; it is not a measured rating gain. One-color reports omit the combined row. The reference uses ordinary database play under the same Explorer filters before forcing repertoire moves, with counts and retrieval provenance recorded in JSON. It does not alter the repertoire calculation. JSON retains both color references for compatibility.
 
-Every table containing expected scores also shows their direct **centipawn equivalents (CP)**, including baseline, before/after, stopping-score, and score-interval columns. Use `C(p) = ln(p / (1 - p)) / 0.00368208`, the inverse [Lichess score curve](https://lichess.org/page/accuracy). For example, Black's 52.50% score is about +27 cp from Black's perspective. **CP delta** is `C(after) - C(before)`, or score CP minus entry/starting-baseline CP. Negative changes indicate a worse score; positive drag has the opposite sign. Scores include half a point for draws. These are human-results conversions rather than engine evaluations. Convert weighted mixtures after averaging their scores, and score intervals by converting both endpoints. Reach, frequency, and contribution percentages are not expected scores. Missing scores remain unresolved and conversion at 0% or 100% is unavailable.
+Headline deltas (overview rows and chapter headlines) also show a whole-number **centipawn equivalent (CP)**; every other table shows percentages only, so three units for one quantity do not crowd the tables. Use `C(p) = ln(p / (1 - p)) / 0.00368208`, the inverse [Lichess score curve](https://lichess.org/page/accuracy). For example, Black's 52.50% score is about +27 cp from Black's perspective. **CP delta** is `C(after) - C(before)`, or score CP minus entry/starting-baseline CP. Negative changes indicate a worse score. Scores include half a point for draws. These are human-results conversions rather than engine evaluations. Convert weighted mixtures after averaging their scores, and score intervals by converting both endpoints. Reach, frequency, and contribution percentages are not expected scores. Missing scores remain unresolved and conversion at 0% or 100% is unavailable.
 
 Each chapter also includes an empirical entry baseline and the repertoire score minus that baseline in percentage points. Reports display score deltas, gains, drag, and weighted contributions with `%` in the value rather than `pp` in the heading. For example, 55% minus 50% displays as `+5.00%`, a five percentage point difference rather than a relative change. JSON retains the existing percentage-point units and field names. Multiple entries use their normalized first-entry probabilities, matching the chapter's empirical repertoire calculation. Database sample counts are not used as mixture weights. JSON retains the component weights, scores, counts and provenance; the table shows one weighted baseline per chapter. Missing entry evidence remains unresolved. A positive difference means higher modeled score, not demonstrated causal improvement or statistical significance.
 
@@ -280,13 +329,17 @@ Both consolidated files show each color's equivalent gap reach. Chapter tables i
 
 **Gap priorities** show each canonical first gap's share of repeat-gap probability, `p_i ** 2 / sum(p_j ** 2)`. Transposed arrivals are combined before squaring, and displayed rankings retain the full distribution as their denominator. These shares explain which gaps dominate equivalent gap reach. Unknown gap mass is labeled separately.
 
+### Where preparation ends
+
+**Exit points** group the saved stopping ledger by the last prepared board before each stop: the board where the opponent chose an unprepared reply (including database results with no individual move row), or an own-turn board with no recorded move. **Games leaving prep here** is the summed first-gap probability of those stops, and **share of games at this position** divides it by the board's own reach. Each modeled game stops once, so exit rows partition the stopping mass and, unlike position rows, do not overlap; finished games and missing opponent data are excluded. The database score is the reach-weighted mean of the cached parent-row results of those replies. Exit tables appear in the summary, each color's section of the full report, and every chapter page; they need no new queries. A board where many games leave through many rare replies, such as a chapter that ends one move early, appears as one row instead of being split across reply rows of about 1% each.
+
 ### Score spread and outcome volatility
 
 **Branch score spread** is now the primary variability metric in score tables. It is computed recursively: `B(s) = sum(p * (B(child) + (score(child) - score(s))**2))`, displayed as `100 * sqrt(B(s))` in percentage points. Known stopping scores have B=0, and forced own moves inherit their continuation. Exact transpositions reuse one continuation. Entry and combined-color mixtures include differences between their mean scores; standard deviations are never averaged. The result matches the complete stopping-event variance. **Reply** beneath a position's spread gives its immediate opponent-reply spread using recursive continuation scores. It is unavailable at own turns, stopping boundaries, or incomplete named reply tables. Sparse evidence stays included; unresolved outcomes remain unavailable. **Prep ends** indicates the model boundary, rather than a certain game result. The full report retains the stopping-board and arrival-cohort breakdown and shows the branch share of total outcome variance. Score spread replaces the previous Sharpness column; before/after spreads share one column, and the summary chapter table has one fewer column.
 
-**Outcome volatility (formerly sharpness):** the existing recursive WDL metric remains on a 0%-100% scale, calculated as `400 * (W + D/4 - (W + D/2)**2)`. It includes both branch-score variance and game-result variation within stopping outcomes. Use the same selected moves, empirical replies, stopping rules and canonical transpositions as repertoire score. Mix WDL before calculating volatility, including first entries and the 50/50 color mixture. Prepared continuations use recursive WDL; unprepared replies use their cached parent rows, and terminal results are exact. Missing results remain unresolved. It is 100% for equal wins and losses, 10% for 5% wins / 90% draws / 5% losses, and zero for a certain result. This secondary metric appears in headlines and detailed breakdowns; score tables show recursive branch spread instead. The `outcomes.sharpness` JSON field and underlying WDL are preserved.
+**Outcome volatility (formerly sharpness):** the existing recursive WDL metric remains on a 0%-100% scale, calculated as `400 * (W + D/4 - (W + D/2)**2)`. It includes both branch-score variance and game-result variation within stopping outcomes. Use the same selected moves, empirical replies, stopping rules and canonical transpositions as repertoire score. Mix WDL before calculating volatility, including first entries and the 50/50 color mixture. Prepared continuations use recursive WDL; unprepared replies use their cached parent rows, and terminal results are exact. Missing results remain unresolved. It is 100% for equal wins and losses, 10% for 5% wins / 90% draws / 5% losses, and zero for a certain result. Mostly decisive database games keep it near 90% to 95% for every chapter, so it no longer appears in headlines; the branch spread breakdowns retain it. The `outcomes.sharpness` JSON field and underlying WDL are preserved.
 
-Score tables show branch score spread; outcome volatility appears in headlines and detailed breakdowns. The `outcomes.sharpness` JSON field remains for compatibility. The two metrics answer different questions: spread describes differences between continuation scores, while volatility also includes variation in final game results within each stopping outcome.
+Score tables show branch score spread; outcome volatility appears only in detailed breakdowns. The `outcomes.sharpness` JSON field remains for compatibility. The two metrics answer different questions: spread describes differences between continuation scores, while volatility also includes variation in final game results within each stopping outcome.
 
 ### Reuse, reply variety and position profiles
 
@@ -344,13 +397,13 @@ Outputs are `data/white.vulnerabilities.json` and `data/black.vulnerabilities.js
 
 #### Gain and drag
 
-**Opponent reply drag** is `repertoire value before reply - value after reply`, in percentage points. **Weighted drag** multiplies that local drop by `parent reach * reply probability` and determines opponent rankings. Prepared replies use the full merged continuation; deviations use the parent move row's empirical score. **Our move drag** is `ordinary parent database score - repertoire continuation score after our move`, expressed in percentage points without multiplying by reach. The strengths section ranks the opposite difference, `repertoire continuation score - parent database score`. All before/after comparisons also show the signed CP delta after converting both scores. Our move's historical popularity is never applied. The benchmarks differ, so the two rankings remain separate. Historical same-table alternatives remain in JSON as separate screening information with their sample sizes; they compare database outcomes and are not substituted for prepared continuation scores. They are not evaluated replacement policies or recommendations, and the maximum observed score can exaggerate sampling noise.
+**Opponent reply drag** is `repertoire value before reply - value after reply`, in percentage points. **Weighted drag** multiplies that local drop by `parent reach * reply probability` and determines opponent rankings. Prepared replies use the full merged continuation; deviations use the parent move row's empirical score. **Our move drag** is `ordinary parent database score - repertoire continuation score after our move`, expressed in percentage points without multiplying by reach. The strengths section ranks the opposite difference, `repertoire continuation score - parent database score`. Weighted drag, weighted gain and position contributions are displayed as score points per 1,000 games (ten times the reach-weighted percentage points), so a weighted drag of `0.0317%` reads as `0.32`. Our move's historical popularity is never applied. The benchmarks differ, so the two rankings remain separate. Historical same-table alternatives remain in JSON as separate screening information with their sample sizes; they compare database outcomes and are not substituted for prepared continuation scores. They are not evaluated replacement policies or recommendations, and the maximum observed score can exaggerate sampling noise.
 
 **Own-move gains** are split into the selected move's database score minus its parent's database score, and its prepared continuation score minus the selected move's database score. Both components sum to total gain. The selected move's database evidence comes from the cached parent row. Local gain and drag intervals reuse the saved model's joint move/result sampling and shared transposition values; the parent and selected database scores share one joint table. They are approximate prior-completed model intervals, excluding game overlap and population selection effects. Headline intervals and sparse-evidence sensitivity remain distinct.
 
 Reach sums incoming mass across exact-position transpositions. Each position/move is counted once per ranking. Chapter rankings use the same normalized first-entry mixture and comparison policy as chapter scoring. Opponent weighted drag and all reported chapter reach are conditional on chapter entry. Own drag is a direct score subtraction at its parent. JSON also retains reach-weighted own comparisons and comparisons weighted again by chapter entry probability. For alternative chapters it is counterfactual, not an impact on the selected overall repertoire. A move that enters the chapter belongs to the overall or upstream ranking. Representative lines are legal route labels, not exclusive historical sequence probabilities. Reports retain the owner's overall baseline and delta, and each chapter's weighted entry baseline, score, delta and expected prepared depth for context.
 
-The summary's own-move highlights rank by **reach times local continuation gain or drag**, after the existing sparse filter. Full-report own-move rankings retain their local comparisons. Every highlighted gain includes the later prepared continuation, so these weighted comparisons overlap and must not be added. Line tables also show **Avg games per encounter**, `1 / reach`, for independent modeled games. In chapter tables this means games that enter the chapter; in overall tables it means games with that color. Zero reach is never encountered under the policy, rather than a finite waiting interval.
+The summary's own-move highlights rank by **move reach times local continuation gain or drag**, after the existing sparse filter. Full-report own-move rankings retain their local comparisons. Every highlighted gain includes the later prepared continuation, so these weighted comparisons overlap and must not be added. Line tables also show **Avg games per encounter**, `1 / reach`, for independent modeled games. In chapter tables this means games that enter the chapter; in overall tables it means games with that color. Zero reach is never encountered under the policy, rather than a finite waiting interval.
 
 #### Position contributions and stopping outcomes
 
@@ -491,7 +544,8 @@ Work from the repository root and preserve unrelated local changes. Use uv for P
 | Gain/drag comparisons, ratings, opening flows and source attribution | [vulnerabilities.py](repertoire_score/vulnerabilities.py), [ratings.py](repertoire_score/ratings.py), [openings.py](repertoire_score/openings.py), [attribution.py](repertoire_score/attribution.py) |
 | Saved gain intervals and spread/entry presentation data | [report_insights.py](repertoire_score/report_insights.py) |
 | Current correlations | [position_correlations.py](repertoire_score/position_correlations.py), [rating_correlations.py](repertoire_score/rating_correlations.py). `correlations.py` retains legacy chapter-level utilities. |
-| Consolidated Markdown, compact columns, anchors and nested full-report contents | [consolidated.py](repertoire_score/consolidated.py), [render.py](repertoire_score/render.py), [layout.py](repertoire_score/layout.py). `report.py` supplies core score/event helpers and legacy rendering utilities. |
+| Summary, full report, chapter and opening pages, exit points, Lichess links, cross-page link resolution and nested contents | [consolidated.py](repertoire_score/consolidated.py), [render.py](repertoire_score/render.py), [layout.py](repertoire_score/layout.py). `report.py` supplies core score/event helpers and legacy rendering utilities. |
+| Lichess study export | [studies.py](repertoire_score/studies.py) |
 | Incremental stage orchestration | [build.py](repertoire_score/build.py), [run-repertoires.ps1](run-repertoires.ps1) |
 
 Numerical analyses produce saved JSON; `consolidated.py` combines matching saved results and does not rerun estimates. Keep network access out of the renderer and cache-only metrics.
@@ -510,8 +564,9 @@ Ratings depend on preparation, character and vulnerabilities. Report insights de
 - Unprepared replies use the cached parent move row's score, counts and rating. Prepared scores use recursive continuation values. Comparison reports screen replies from those parent rows without requesting candidate child positions.
 - Chapter reach is first entry anywhere in its region, across all routes. Score, entry baseline, depth and chapter metrics use the same normalized first-entry mixture and policy. Overlapping positions, chapters, opening categories and gain comparisons are not additive.
 - Missing or zero evidence remains unresolved; API failure is not successful zero-data evidence. Sparse filtering applies to strengths and vulnerabilities, not to probability conservation or the repertoire score. Reuse shared samples at canonical transpositions.
-- Scores and CP favor the repertoire owner for both colors. Main tables use empirical **Repertoire score**; outcome volatility retains the `sharpness` JSON field while score tables use recursive branch spread. Opponent ratings describe chapters or lines, never a repertoire-wide average or a score adjustment.
-- The summary stays focused on five common prepared positions and five common gaps per color, plus opening names alongside lines. Chapter comparisons, deficits, strongest moves and preparation metrics are expandable. Separate opening rankings, repeat-gap-share tables and position-contribution tables remain in the full report. Trimming code and subsections have been removed.
+- Scores and CP favor the repertoire owner for both colors. Main tables use empirical **Repertoire score**; outcome volatility retains the `sharpness` JSON field while score tables use recursive branch spread. CP appears only beside headline deltas. Opponent ratings describe chapters or lines, never a repertoire-wide average or a score adjustment.
+- The summary leads each color with five exit points and five own moves to review, plus opening names alongside lines. The position tree, chapter comparisons, costly replies, strongest moves and preparation metrics are expandable. Separate opening rankings, repeat-gap-share tables and position-contribution tables remain in the full report; chapter detail lives on chapter pages. Trimming code and subsections have been removed.
+- Pages link to each other with in-page anchors and `@page` placeholders that `generate` resolves to relative paths, so a section can move between pages without broken links. Caveats belong in the glossary (`def-*` anchors); tables link to them rather than repeating paragraphs.
 
 The evaluator has no network dependency. `insights.py` implements traversal-derived metrics; `report_insights.py` prepares saved gain intervals and spread/entry presentation data. Keep these responsibilities distinct.
 
@@ -542,7 +597,7 @@ For a focused change, choose the relevant checks:
 
 Before publishing regenerated reports, check probability conservation, saved sanity checks, matching source and evidence hashes, legal representative lines, table columns and links. The full report's contents are generated from headings and anchors.
 
-For presentation-only changes, confirm that score and companion JSON hashes remain unchanged and that no requests were made. If only the summary changed, the full report should remain unchanged too. Keep the five-row summary limits and sparse filters intact. Check the final diff with `git diff --check`; documentation-only edits do not need a scoring run.
+For presentation-only changes, confirm that score and companion JSON hashes remain unchanged and that no requests were made. If only the summary changed, the full report should remain unchanged too. Keep the five-row summary limits and sparse filters intact. The presentation tests check that every relative link on every generated page reaches an existing file and anchor. Check the final diff with `git diff --check`; documentation-only edits do not need a scoring run.
 
 The supplied PGN source files are never modified. `prefetch.py` can warm the cache before policy selection, but normal runs fetch all required data themselves.
 
@@ -553,6 +608,7 @@ The supplied PGN source files are never modified. `prefetch.py` can warm the cac
 | `Offline cache miss` or missing parent comparison evidence | Cache path, filters and required board; an authenticated run can collect missing required tables. Keep missing data unresolved instead of inventing results. |
 | Companion belongs to a different snapshot, or supporting hashes changed | Rebuild the affected analysis and its dependents. [Targeted saved-analysis refreshes](#refreshing-saved-analyses) do not rescore newer PGNs. |
 | Scoring or a build stage fails | Read the CLI diagnostic and any `.error.json`. Completed checkpoints and cache remain available; rerun after resolving the error. Existing Markdown can still describe the previous snapshot. |
+| Study export fails with HTTP 401, 403 or 404 | Check the URL in `studies.json` and that the token has `study:read`; private studies are visible only to their owner and members. The previous export is kept. |
 | Unknown chapter ID or missing configured anchor | Compare the new PGN's inspection with the maintained config; removed or recreated chapters may have different IDs. Update intended subject definitions explicitly. |
 | Chapter defining position has less than 100% reach after entry | Inspect first-entry boards and routes: some games may enter through later transpositions and bypass that position. |
 | Cache is complete but a batch is slow | Inspect `reports/data/.build-state.json` stage timings and reused/built counts. Changes limited to `consolidated.py` or `render.py` should rebuild only the render stage. |

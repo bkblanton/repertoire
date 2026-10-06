@@ -8,8 +8,8 @@ import time
 from types import SimpleNamespace
 
 from . import __main__ as scoring
-from . import character, openings, position_correlations, preparation, rating_correlations, ratings, report_insights, vulnerabilities
-from .consolidated import generate
+from . import character, openings, position_correlations, preparation, rating_correlations, ratings, report_insights, studies, vulnerabilities
+from .consolidated import generate, page_names
 from .explorer import observe_cache
 from .layout import report_directory
 from .render import defer_report_outputs
@@ -42,8 +42,9 @@ def write_json(path, value):
 
 def code_inputs(presentation=False):
     package = Path(__file__).parent
-    files = [p for p in sorted(package.glob('*.py'))
-             if presentation or p.name not in ('consolidated.py', 'render.py')]
+    # Study export code never affects analyses or rendering.
+    files = [p for p in sorted(package.glob('*.py')) if p.name != 'studies.py'
+             and (presentation or p.name not in ('consolidated.py', 'render.py'))]
     # Changes to pinned dependencies invalidate numerical analyses as well.
     files += [p for p in (package.parent / 'uv.lock', package.parent / 'pyproject.toml') if p.exists()]
     return file_inputs(files)
@@ -147,8 +148,10 @@ def build(white_pgn, black_pgn, *, white_config='configs/white.json', black_conf
     def render():
         generate(paths, require_complete=True)
         write_json(registry, {path.stem: path.name for path in paths})
+    # Chapter and opening pages are outputs too, so a deleted page triggers a fresh render.
+    pages = [folder / name for path in paths for name in page_names(json.loads(path.read_text(encoding='utf-8')))]
     runner.step('render', lambda: dict(code=presentation_code, files=file_inputs(render_inputs)),
-                [folder / 'report.md', folder / 'summary.md', registry], render)
+                [folder / 'report.md', folder / 'summary.md', registry, *pages], render)
     result = dict(created_at=datetime.now(timezone.utc).isoformat(), seconds=time.perf_counter() - started,
                   built=sum(t['status'] == 'built' for t in runner.timings),
                   reused=sum(t['status'] == 'reused' for t in runner.timings), steps=runner.timings)
@@ -160,8 +163,11 @@ def build(white_pgn, black_pgn, *, white_config='configs/white.json', black_conf
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('white_pgn')
-    parser.add_argument('black_pgn')
+    parser.add_argument('white_pgn', nargs='?', help='Exported White PGN; omit both to use the Lichess studies')
+    parser.add_argument('black_pgn', nargs='?')
+    parser.add_argument('--sources', default=studies.SOURCES, help='JSON file with white and black study URLs')
+    parser.add_argument('--studies', default=studies.DIRECTORY, help='Folder for exported study PGNs')
+    parser.add_argument('--no-fetch', action='store_true', help='Use the previously exported study PGNs')
     parser.add_argument('--white-config', default='configs/white.json')
     parser.add_argument('--black-config', default='configs/black.json')
     parser.add_argument('--directory', default='reports/data')
@@ -169,8 +175,17 @@ def main():
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--force', action='store_true', help='Rebuild all analyses using existing cached evidence')
     args = parser.parse_args()
+    if (args.white_pgn is None) != (args.black_pgn is None):
+        parser.error('give both PGN paths, or neither to use the exported studies')
+    options = vars(args)
+    sources, folder, no_fetch = options.pop('sources'), options.pop('studies'), options.pop('no_fetch')
     try:
-        build(**vars(args))
+        if args.white_pgn is None:
+            # Offline builds never contact Lichess, so they reuse the last export.
+            paths = (studies.default_paths(folder) if no_fetch or args.offline
+                     else studies.fetch(sources, folder))
+            options.update(white_pgn=paths['white'], black_pgn=paths['black'])
+        build(**options)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         parser.exit(1, f'Batch failed: {exc}\nCompleted checkpoints and Explorer cache are preserved.\n')
 

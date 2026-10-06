@@ -17,6 +17,7 @@ dev = [
 
 [project.scripts]
 repertoire-build = "repertoire_score.build:main"
+repertoire-fetch = "repertoire_score.studies:main"
 repertoire-score = "repertoire_score.__main__:main"
 repertoire-report = "repertoire_score.render:main"
 repertoire-correlations = "repertoire_score.position_correlations:main"
