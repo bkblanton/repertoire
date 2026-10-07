@@ -9,7 +9,7 @@ from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import counts
 from .gaps import distribution as gap_distribution
 from .model import score
-from .preparation import Evaluator, chess_facts
+from .preparation import Evaluators, chess_facts
 from .ratings import (comparison_fields, comparison_mixture, first_entries as rating_entries,
                       mixture as rating_mixture, reply_rating, response_rating)
 from .sharpness import recursive_wdl, stopping_wdl, summarize
@@ -127,7 +127,7 @@ def most_common_source(weights):
     return dict(id=identity, share=mass / total)
 
 
-def chapter_sources(graph, saved, evidence, facts, exact, overall_flows):
+def chapter_sources(evaluators, saved, exact, overall_flows):
     scopes = [dict(id='overall', positions={k: most_common_source(v) for k, v in overall_flows.items()}, entry_sources={})]
     manifest = saved['manifest']
     for chapter in saved['chapters']:
@@ -139,8 +139,7 @@ def chapter_sources(graph, saved, evidence, facts, exact, overall_flows):
             scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
             scopes.append(scope)
             continue
-        evaluator = Evaluator(graph, saved['color'] == 'white', evidence, facts,
-            manifest['configuration'].get('policy', {}), chapter=chapter['id'], sparse=manifest['sparse_threshold'])
+        evaluator = evaluators(chapter['id'])
         entry_flow = name_flow(evaluator, manifest['root_weights'], exact, stop_at=starts)
         initial = {}
         for k in starts:
@@ -342,8 +341,9 @@ def analyze(path, cache=DEFAULT_CACHE):
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     evidence = analysis.read_evidence(cache)
     facts = chess_facts(graph, color, evidence)
-    evaluator = Evaluator(graph, color, evidence, facts, manifest['configuration'].get('policy', {}),
-                          sparse=manifest['sparse_threshold'])
+    evaluators = Evaluators(graph, color, evidence, facts, manifest['configuration'].get('policy', {}),
+                            manifest['sparse_threshold'])
+    evaluator = evaluators()
     roots = manifest['root_weights']
     value = evaluator.evaluate(roots)
     for actual, expected in [(value[0], saved['overall']['resolved_contribution']),
@@ -393,7 +393,7 @@ def analyze(path, cache=DEFAULT_CACHE):
                          chapter_ids=[c['id'] for c in graph.chapters if c['id'] in chapter_ids],
                          **cohort(evaluator, entries, total, wdl)))
     _, classified_reach, _ = first_entries(evaluator, roots, set(exact))
-    sources = chapter_sources(graph, saved, evidence, facts, exact, flows)
+    sources = chapter_sources(evaluators, saved, exact, flows)
     analysis.require_source('opening analysis')
     return dict(color=saved['color'], openings=sorted(rows, key=lambda r: (-r['reach'], r['name'], r['eco'])),
         catalog=sorted(catalog.values(), key=lambda r: (r['name'], r['eco'])),

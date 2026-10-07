@@ -11,7 +11,7 @@ from .board_cache import STARTING_POSITION, children, fen_number, route_line, sa
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import counts
 from .model import score
-from .preparation import Evaluator, chess_facts, position_lines, stopping_rows
+from .preparation import Evaluators, chess_facts, position_lines, stopping_rows
 from .attribution import enrich
 from .gaps import distribution as gap_distribution
 from .sharpness import recursive_wdl, scope_outcomes, stopping_wdl, summarize as summarize_outcomes
@@ -282,13 +282,14 @@ def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
     facts = chess_facts(graph,color,evidence)
     lines = position_lines(graph)
     scopes = analysis.scopes()
+    evaluators = Evaluators(graph, color, evidence, facts, manifest['configuration'].get('policy', {}),
+                            manifest['sparse_threshold'])
     for scope in scopes:
         expected = scope.pop('score')
         if not scope['starts']:
             scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
             continue
-        evaluator = Evaluator(graph,color,evidence,facts,manifest['configuration'].get('policy',{}),
-                              chapter=scope['chapter'],sparse=manifest['sparse_threshold'])
+        evaluator = evaluators(scope['chapter'])
         scope.update(scope_metrics(evaluator,scope['starts'],lines,games,scope['entry_probability']))
         validation = scope['validation']
         for actual, desired in [(validation['resolved_score'],expected['resolved_contribution']),

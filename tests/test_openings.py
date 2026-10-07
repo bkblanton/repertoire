@@ -11,7 +11,7 @@ from repertoire_score.report.sections import openings_section
 from repertoire_score.report.markdown import table
 from repertoire_score.openings import (analyze, classify, cohort, entered_reach, first_entries,
                                        chapter_sources, most_common_source, name_flow, named_regions, opening_identity)
-from repertoire_score.preparation import Evaluator, chess_facts
+from repertoire_score.preparation import Evaluator, Evaluators, chess_facts
 from repertoire_score.sharpness import recursive_wdl
 from helpers import run_fixture
 from helpers import data, graph, position
@@ -304,7 +304,7 @@ def test_chapter_sources_keep_alternative_policy_and_first_entry_context(tmp_pat
         value = own.evaluate({shared: 1.})
         saved['chapters'].append(dict(id=chapter['id'], entries=[dict(position=shared)],
             score=dict(first_entry_weights={shared: 1.}, resolved_contribution=value[0], unresolved_mass=value[1])))
-    sources = {r['id']: r for r in chapter_sources(g, saved, e, ev.facts, exact, name_flow(ev, roots, exact))}
+    sources = {r['id']: r for r in chapter_sources(Evaluators(g, True, e, ev.facts, ev.policy), saved, exact, name_flow(ev, roots, exact))}
     assert sources['overall']['positions'][shared] == dict(id=b, share=.6)
     for cid, expected in [('1', a), ('2', b)]:
         assert sources[cid]['positions'][shared] == dict(id=expected, share=1.)

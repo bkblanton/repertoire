@@ -115,6 +115,25 @@ class Evaluator:
         return best_routes(self.model, list(self.values), self.sampled, starts, stop_at, replies)
 
 
+class Evaluators:
+    """One Evaluator per distinct comparison policy. Chapters whose first recorded moves agree with the overall
+    policy share its evaluator, so each position is compiled once per policy rather than once per chapter."""
+    def __init__(self, graph, color, evidence, facts, policy=None, sparse=30):
+        self.graph, self.color, self.evidence, self.facts = graph, color, evidence, facts
+        self.policy, self.sparse = policy or {}, sparse
+        self.transitions = resolve(graph, color, self.policy)
+        self.shared = {}
+
+    def __call__(self, chapter=None):
+        """The evaluator for a chapter's comparison policy, or for the overall policy when `chapter` is None."""
+        overrides = {} if chapter is None else chapter_policy_overrides(self.graph, self.color, self.transitions, chapter)
+        key = json.dumps(overrides, sort_keys=True)
+        if key not in self.shared:
+            self.shared[key] = Evaluator(self.graph, self.color, self.evidence, self.facts,
+                                         dict(self.policy, **overrides), sparse=self.sparse)
+        return self.shared[key]
+
+
 def chess_facts(graph, color, evidence):
     result = {}
     for k,n in graph.nodes.items():
@@ -191,20 +210,14 @@ def analyze(path, cache=DEFAULT_CACHE):
     scopes = [dict(id=s['id'], name=s['name'], starts=s['starts'], baseline=baselines[s['chapter']], chapter=s['chapter'],
                    expected=s['score'], policy_basis=s['policy_basis']) for s in analysis.scopes()]
     lines = position_lines(graph)
-    contexts = {}
+    evaluators = Evaluators(graph, color, evidence, facts, policy, sparse)
     for scope in scopes:
         expected = scope.pop('expected')
         if not scope['starts']:
             scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS; scope['stops'] = []
             scope['depth_distribution'] = depth_distribution(None, {})
             continue
-        local = {k:n.chapter_moves[scope['chapter']][0] for k,n in graph.nodes.items()
-                 if facts[k]['turn'] == color and n.chapter_moves.get(scope['chapter'])
-                 and policy.get(k, next(iter(n.edges))) != n.chapter_moves[scope['chapter']][0]}
-        identity = json.dumps(local, sort_keys=True)
-        if identity not in contexts:
-            contexts[identity] = Evaluator(graph, color, evidence, facts, dict(policy, **local), sparse=sparse)
-        evaluator = contexts[identity]
+        evaluator = evaluators(scope['chapter'])
         value = evaluator.evaluate(scope['starts'])
         depth = expected.get('prepared_depth', {}).get('expected_moves')
         if (not np.isclose(value[0], expected['resolved_contribution'], atol=1e-10)

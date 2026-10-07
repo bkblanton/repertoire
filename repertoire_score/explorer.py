@@ -10,6 +10,8 @@ from contextvars import ContextVar
 import chess
 import httpx
 
+from .board_cache import children
+
 ENDPOINT = "https://explorer.lichess.org/lichess"
 DEFAULT_FILTERS = {"variant": "standard", "speeds": "blitz,rapid,classical",
                    "ratings": "0,1000,1200,1400,1600,1800,2000,2200,2500",
@@ -59,19 +61,19 @@ def counts(row):
 
 def validate(data, position):
     parent = counts(data)
-    board = chess.Board(position + " 0 1")
-    legal = {m.uci() for m in board.legal_moves}
+    legal = children(position)
     if not isinstance(data.get("moves"), list):
         raise ValueError("Explorer response missing moves")
     seen, sums = set(), [0, 0, 0]
     for row in data["moves"]:
         move = row.get("uci")
-        # Explorer can encode castling as king-to-rook, even for standard chess.
-        try:
-            move = board.parse_uci(move).uci()
-        except (ValueError, TypeError):
-            raise ValueError(f"Illegal Explorer move: {move}") from None
-        row["uci"] = move
+        if not isinstance(move, str) or move not in legal:
+            # Explorer can encode castling as king-to-rook, even for standard chess.
+            try:
+                move = chess.Board(position + " 0 1").parse_uci(move).uci()
+            except (ValueError, TypeError):
+                raise ValueError(f"Illegal Explorer move: {move}") from None
+            row["uci"] = move
         if move not in legal or move in seen:
             raise ValueError(f"Illegal or duplicate Explorer move: {move}")
         seen.add(move)
@@ -97,7 +99,7 @@ class Explorer:
         self.last_request = 0
 
     def get(self, position):
-        query = dict(self.filters, fen=position+" 0 1", moves=chess.Board(position+" 0 1").legal_moves.count(), topGames=0, recentGames=0)
+        query = dict(self.filters, fen=position+" 0 1", moves=len(children(position)), topGames=0, recentGames=0)
         identity = {"endpoint": ENDPOINT, "query": query}
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         path = self.cache / (digest+".json")

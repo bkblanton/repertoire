@@ -61,11 +61,22 @@ def beta_cdf(x, a, b):
 
 @lru_cache(maxsize=65536)
 def beta_quantile(p, a, b):
-    low, high = 0., 1.
-    for _ in range(60):
-        middle = (low + high) / 2
-        low, high = (middle, high) if beta_cdf(middle, a, b) < p else (low, middle)
-    return (low + high) / 2
+    """The p-quantile of Beta(a, b): Newton steps from the mean, kept inside a shrinking bisection bracket."""
+    log_norm = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
+    low, high, x = 0., 1., a / (a + b)
+    for _ in range(200):
+        f = beta_cdf(x, a, b) - p
+        if f == 0:
+            return x
+        low, high = (x, high) if f < 0 else (low, x)
+        density = math.exp(log_norm + (a - 1) * math.log(x) + (b - 1) * math.log1p(-x))
+        candidate = x - f / density if density > 0 else -1.
+        if not low < candidate < high:
+            candidate = (low + high) / 2
+        if abs(candidate - x) <= 1e-15 * candidate:
+            return candidate
+        x = candidate
+    return x
 
 
 def score_interval(mean, variance):

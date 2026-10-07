@@ -11,7 +11,7 @@ from pathlib import Path
 from .board_cache import STARTING_POSITION, children, turn
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256, stage_main
 from .explorer import counts
-from .preparation import Evaluator, chess_facts
+from .preparation import Evaluators, chess_facts
 from .status import Status
 
 
@@ -269,8 +269,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     chapters = {c['id']: c for c in saved['chapters']}
     output = []
 
-    def evaluator(chapter):
-        return Evaluator(graph, color, evidence, facts, policy, chapter=chapter, sparse=m['sparse_threshold'])
+    evaluator = Evaluators(graph, color, evidence, facts, policy, m['sparse_threshold'])
 
     for sid, prep in prep_scopes.items():
         cid = None if sid == 'overall' else sid
