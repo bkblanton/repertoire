@@ -15,8 +15,8 @@ from ..layout import report_directory
 LICHESS_WIN_CHANCE_COEFFICIENT = 0.00368208
 
 
-# The summary uses one decimal and compact game counts; the full report keeps two decimals.
-_display = ContextVar('display', default=MappingProxyType({'digits': 2, 'compact_counts': False}))
+# Every page shows one decimal and compact game counts; scores are rarely known more precisely than that.
+_display = ContextVar('display', default=MappingProxyType({'digits': 1, 'compact_counts': True}))
 
 
 @contextmanager
@@ -31,7 +31,11 @@ def display(**options):
 def percentage(value, digits=None):
     if value is None:
         return 'unresolved'
-    digits = _display.get()['digits'] if digits is None else digits
+    if digits is None:
+        digits = _display.get()['digits']
+        # Rare positions and moves keep a second significant digit, so 0.43% and 0.38% stay distinct.
+        if 0 < abs(100 * value) < 1:
+            digits += 1
     smallest = 10**-digits
     return f'<{smallest:.{digits}f}%' if 0 < 100 * value < smallest / 2 else f'{100 * value:.{digits}f}%'
 
@@ -83,6 +87,19 @@ def games_per_encounter(probability):
         return 'never'
     value = 1 / probability
     return f'{value:,.0f}' if value >= 10 else f'{value:.1f}'
+
+
+def encounters(probability, color=''):
+    """How often a reach comes up, in words: 1 in 43 games, or 1 in 43 White games."""
+    noun = f'{color} game'.strip()
+    if probability is not None and probability > 0.995:
+        return f'every {noun}'
+    games = games_per_encounter(probability)
+    return games if games in ('unavailable', 'never') else f'1 in {games} {noun}s'
+
+
+def reach_cell(probability):
+    return percentage(probability) + '<br>' + encounters(probability)
 
 
 def escape(value):
@@ -239,6 +256,16 @@ def rating_difference(context):
     if context.get('parent_known_coverage', 1.0) < 1 - 1e-9:
         notes.append(f"parent {100 * context['parent_known_coverage']:.1f}% rated")
     return result + (' (' + '; '.join(notes) + ')' if notes else '')
+
+
+def rating_cell(context):
+    """Average opponent rating, with its difference from the parent position when there is one."""
+    rating = opponent_rating(context)
+    difference = rating_difference(context)
+    if difference.startswith(('n/a', 'unavailable')):
+        return rating
+    value, _, notes = difference.partition(' (')
+    return f'{rating}<br>{value} vs parent' + (f' ({notes}' if notes else '')
 
 
 def gap_percentage(metrics, weighted=False):

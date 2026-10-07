@@ -231,8 +231,8 @@ def test_cli_fixture_end_to_end(tmp_path, monkeypatch):
     from repertoire import score as cli
     from repertoire.report.format import headline_delta
 
-    white_row = f'| White | 80.00% | 70.00% | {headline_delta(0.7, 0.8)} |'
-    black_row = f'| Black | 20.00% | 30.00% | {headline_delta(0.3, 0.2)} |'
+    white_row = f'| White | 80.0% | 70.0% | {headline_delta(0.7, 0.8)} |'
+    black_row = f'| Black | 20.0% | 30.0% | {headline_delta(0.3, 0.2)} |'
     graph(tmp_path, '1. e4 e5 *')  # writes the fixture PGN
     evidence = {
         position(''): data(7, 2, 1, [('e2e4', 7, 2, 1)]),
@@ -284,8 +284,8 @@ def test_cli_fixture_end_to_end(tmp_path, monkeypatch):
     assert result['diagnostics']['sanity_checks_passed']
     assert len(result['chapters']) == 1
     assert len(result['prior_sensitivity']) == 2
-    assert 'Approximate model-based 95% score interval' in (tmp_path / 'report.md').read_text()
-    assert '| White | 80.00% |' in (tmp_path / 'report.md').read_text()
+    assert 'Approximate 95% score interval' in (tmp_path / 'report.md').read_text()
+    assert '| White | 80.0% |' in (tmp_path / 'report.md').read_text()
     assert '| Black |' not in (tmp_path / 'report.md').read_text()
     assert white_row in (tmp_path / 'report.md').read_text()
     assert '| Repertoire score |' in (tmp_path / 'report.md').read_text()

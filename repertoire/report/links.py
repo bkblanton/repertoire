@@ -31,7 +31,6 @@ class Chapters:
         # One representative overall-policy route per exact board keeps labels identical across tables.
         self.boards = boards or {}
         self.scope = 'overall'
-        self.compact = False
         self.source_scopes = {s['id']: s for s in self.openings.get('source_scopes', [])}
         self.opening_anchors = {
             r['id']: f'{self.color}-opening-{i}' for i, r in enumerate(self.openings.get('openings', []), 1)
@@ -129,20 +128,19 @@ class Chapters:
         return SourceCell(self.chapter_sources(row), self.opening_source(row))
 
     def chapter_sources(self, row):
+        """Chapters holding the position, as ranges such as W1-W3; replies off preparation name their chapters."""
         attribution = row.get('chapter_attribution') or {}
         ids, prefix = attribution.get('source_ids', []), ''
         if not ids:
             ids = attribution.get('transposition_ids', [])
-            prefix = 'Transposition: '
+            prefix = 'transposes to '
         if not ids:
             ids = attribution.get('context_ids', [])
-            prefix = 'Unprepared; context: '
+            prefix = 'unprepared in '
         if not ids:
             return 'None'
         if set(ids) == set(self.entries) and len(ids) > 2:
-            return prefix + f'[All {len(ids)} {self.color.title()} chapters](#{self.color}-chapters)'
-        if not self.compact:
-            return prefix + ', '.join(self.label(cid) for cid in ids)
+            return prefix + f'[all {len(ids)} {self.color.title()} chapters](#{self.color}-chapters)'
         ordered = sorted(ids, key=lambda cid: self.entries.get(cid, (float('inf'),))[0])
         groups = []
         for cid in ordered:

@@ -289,9 +289,9 @@ def test_opening_tables_show_spread_baselines_and_entry_details(tmp_path):
     details = '\n'.join(opening_details_page(bundle, refs))
     text = table_text + '\n' + details
     # Per-opening evidence moved to its own page; the report keeps the table and links there.
-    assert 'First-entry example' not in table_text and '](@openings/white)' in table_text
+    assert 'Entry position (example route)' not in table_text and '](@openings/white)' in table_text
     assert details.startswith('# White openings') and '<a id="white-opening-1"></a>' in details
-    assert 'Family: One' in text and 'First-entry example' in text
+    assert 'Family: One' in text and 'Entry position (example route)' in text
     assert '| Entry baseline | Repertoire score | Delta | Score spread |' in text
     assert ' cp' not in text and '| Score CP |' not in text
     assert 'white-opening-1' in text and '[W1]' in text
@@ -399,23 +399,29 @@ def test_opening_source_move_uses_parent_flow_and_named_child_resets(tmp_path):
         ],
     )
     refs = Chapters(dict(color='white', chapters=g.chapters), data)
-    assert refs.opening_source(dict(position=shared)) == '[Common](#white-opening-2) (60.00%)'
+    assert refs.opening_source(dict(position=shared)) == '[Common](#white-opening-2) (60.0%)'
     # A sole source needs no share; partial sources keep theirs.
     assert refs.opening_source(dict(position=parent, move='g8f6')) == '[First route](#white-opening-1)'
     assert refs.for_scope('1').opening_source(dict(position=shared)) == '[First route](#white-opening-1)'
-    assert refs.for_scope('1').opening_source(dict(position=shared, _opening_entry=True)) == 'Entry route (75.00%)'
+    assert refs.for_scope('1').opening_source(dict(position=shared, _opening_entry=True)) == 'Entry route (75.0%)'
     data['positions'][shared]['exact_name'] = 'Named child'
     assert refs.opening_source(dict(position=parent, move='g8f6')) == 'Named child'
     assert refs.opening_source(dict(position='invalid', move='g8f6')) == 'unavailable'
 
 
-def test_source_cells_add_opening_column_without_duplicates():
+def test_source_cells_go_under_the_line_they_describe():
     from repertoire.report.markdown import SourceCell
 
-    source = SourceCell('[W1](#white-chapter-1)', 'Vienna (90.00%)')
-    rendered = table(['Line', 'Chapter source', 'Reach'], [['e4', source, '10.00%']])
-    assert rendered[0] == '| Line | Chapter source | Most common opening source | Reach |'
-    assert rendered[2] == '| e4 | [W1](#white-chapter-1) | Vienna (90.00%) | 10.00% |'
-    explicit = table(['Line', 'Chapter source', 'Most common opening source'], [['e4', source, 'Already given']])
-    assert explicit[0].count('Most common opening source') == 1
-    assert 'Most common opening source' not in table(['Opening', 'Chapters'], [['Vienna', source]])[0]
+    source = SourceCell('[W1](#white-chapter-1)', 'Vienna (90.0%)')
+    rendered = table(['Line', 'Chapter source', 'Reach'], [['e4', source, '10.0%']])
+    assert rendered[0] == '| Line | Reach |'
+    assert rendered[2] == '| e4<br>Vienna (90.0%) · [W1](#white-chapter-1) | 10.0% |'
+    # Context follows the column before it, so a later example route keeps its own context.
+    later = table(['Structure', 'Share', 'Example route', 'Chapter source'], [['e4 d4', '5.0%', 'e4', source]])
+    assert later[2] == '| e4 d4 | 5.0% | e4<br>Vienna (90.0%) · [W1](#white-chapter-1) |'
+    # Missing pieces are left out, and a note goes on its own line.
+    bare = SourceCell('None', 'unavailable', 'Name inherited')
+    assert table(['Line', 'Chapter source'], [['e4', bare]])[2] == '| e4<br>Name inherited |'
+    assert table(['Line', 'Chapter source'], [['e4', SourceCell('None', 'unavailable')]])[2] == '| e4 |'
+    # A chapter list column stays a column of its own.
+    assert table(['Opening', 'Chapters'], [['Vienna', source]])[0] == '| Opening | Chapters |'

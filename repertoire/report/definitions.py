@@ -12,6 +12,7 @@ DEFINITIONS = files(__package__).joinpath('definitions.md').read_text(encoding='
 
 def methods(bundles):
     text = section('## Definitions and evidence', 'methods')
+    text += ['What each measure means and where its limits lie. Tables link to the entries they rely on.', '']
     text += DEFINITIONS
     text += ['<details>', '<summary>Saved analysis files and validation</summary>', '']
     for b in bundles:

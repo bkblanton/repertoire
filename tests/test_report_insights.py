@@ -74,8 +74,8 @@ def test_gap_priority_table_retains_full_denominator_and_five_summary_rows():
     scope = dict(id='overall', positions=positions, gap_coverage=metrics, gap_priorities=gap_priorities(metrics))
     text = '\n'.join(gap_section(scope, refs=Chapters(dict(color='white', chapters=[])), top=5))
     assert text.count('| [gap ') == 5
-    assert '**50.00%**' in text
-    assert text.count('10.00% | 50.00%') == 5
+    assert '**50.0%**' in text
+    assert text.count('10.0% | 50.0%') == 5
 
 
 def test_cached_insights_preserve_scores_cache_and_source_and_reject_stale_inputs(tmp_path, monkeypatch):
@@ -151,6 +151,6 @@ def test_summary_is_narrow_and_new_insights_and_entry_explanations_are_visible(c
         < page.index('## Where preparation ends')
         < page.index('## Exact first-entry positions')
     )
-    assert 'Gain split: move / prep' in full and '95%:' in full
+    assert '| Gain split |' in full and '95%:' in full
     anchors = set(re.findall(r'<a id="([^"]+)"', full))
     assert all(a in anchors for a in re.findall(r'\]\(report.md#([^)]+)\)', summary))

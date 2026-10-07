@@ -35,7 +35,7 @@ A few rules hold throughout:
 
 Start with `reports/summary.md`. After the headline scores, each color leads with what to work on:
 
-- **Where preparation ends** groups every unprepared reply by the last prepared position before it, so one row is one study task. *Games leaving prep here* is the share of all games with that color whose preparation ends at that position. *Share of games at this position* separates a chapter that simply stops (100%) from rare sidelines at a busy position. Unlike other rankings, these rows do not overlap.
+- **Where preparation ends** groups every unprepared reply by the last prepared position before it, so one row is one study task. *Games leaving prep here* is the share of all games with that color whose preparation ends at that position. *Of games at this position* separates a chapter that simply stops (100%) from rare sidelines at a busy position. Unlike other rankings, these rows do not overlap.
 - **Own moves to review** ranks your moves by how often they are played times how far they fall below the database score of their position.
 
 Collapsed sections follow: the most common positions as a tree, chapter comparisons, costly unprepared replies, your strongest moves, and preparation and variability. Where chapters compete in the same position, each alternative is listed with its score (see [Move selection](usage.md#move-selection)). Saved [comparisons](usage.md#comparing-alternative-preparation) are listed at the end. Notices about changed studies or missing analyses appear above the scores.
@@ -44,7 +44,7 @@ Collapsed sections follow: the most common positions as a tree, chapter comparis
 
 `reports/report.md` holds the detail for both colors: chapter tables, exit points, positions, openings, vulnerabilities, strengths, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
 
-Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...) with its exit points, positions, vulnerabilities, strengths, gaps, depth, entry positions and routes, and links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
+Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, its exit points, positions, vulnerabilities, strengths, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
 
 ### Columns
 
@@ -57,16 +57,16 @@ Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and 
 | Games leaving prep here | Probability that preparation ends right after this prepared position, over all of its unprepared replies. |
 | Gap reach | Probability of first reaching a position where you have no prepared move. |
 | Score spread | How much the scores of the continuations vary, including later replies. Omitted for unprepared replies, where preparation has ended. |
+| 1 in N games | How often a position or move comes up, shown under its reach: 1 / reach, assuming independent games. |
 | Per 1,000 games | A reach-weighted gain, drag or contribution, in score points per 1,000 games with that color (or entering the chapter). |
 | Games | Games in the database at that position or in the parent table's row for that move. Not the sample size of the whole continuation. |
-| Opponent rating | The average rating of the opponents at that point. It describes the database games and never adjusts a score. |
-| Chapter / opening source | The chapters that contain the position, and the most common opening name on the way to it. |
+| Opponent rating | The average rating of the opponents at that point, with its difference from the parent position on reply rows. It describes the database games and never adjusts a score. |
 
 ### Lines, links and units
 
-A line shown in a table is one legal route to the position, not the only way games get there. Each position uses the same representative route as its label in every table, and a move row adds its move to its parent's label. Line links open the Lichess analysis board where you are to move: after the opponent's reply, or before your move. A position followed by a move you always play is merged into the position after that move.
+A line shown in a table is one legal route to the position, not the only way games get there. Under it are the most common opening name on the way to the position and the chapters that contain it, with consecutive chapters as ranges such as W1-W3. Unprepared replies name the chapters they leave (*unprepared in W1*), and replies that transpose name the chapters they reach (*transposes to W5*). Each position uses the same representative route as its label in every table, and a move row adds its move to its parent's label. Line links open the Lichess analysis board where you are to move: after the opponent's reply, or before your move. A position followed by a move you always play is merged into the position after that move.
 
-Tables show percentages. A difference such as `+5.00%` means five percentage points, not a relative change. Centipawn equivalents appear only beside headline deltas. Columns that are the same in every row are left out. A dagger (†) marks pooled game counts that may count the same historical games more than once.
+Tables show percentages with one decimal, or two below 1% so that rare lines stay distinct. A difference such as `+5.0%` means five percentage points, not a relative change. Large game counts are abbreviated (`27k`, `3.1M`). Centipawn equivalents appear only beside headline deltas. Columns that are the same in every row are left out. A dagger (†) marks pooled game counts that may count the same historical games more than once.
 
 ## How the score is calculated
 
@@ -166,7 +166,7 @@ Names and ECO codes come from the bundled [lichess-org/chess-openings](https://g
 
 The full report has an opening table for each color with every opening reached. Openings with the same name under several ECO codes share one row. An opening's **reach** is first arrival at that name or a more specific variation of it, where a variation's name extends the opening's at a colon or comma (Sicilian Defense: Accelerated Dragon is part of Sicilian Defense). Openings overlap, so their reach does not add up. Opening scores, baselines, deltas, depth and gap reach use the same first-arrival weights. Opening tables use the repertoire you actually play, not chapter alternatives.
 
-The **opening source** column shows the last name carried by the largest share of arrivals, followed by that share when other names also contribute. Position rows combine every route; move rows count only arrivals through that move; chapter tables follow the chapter's own moves.
+The **opening source** under each line shows the last name carried by the largest share of arrivals, followed by that share when other names also contribute. Position rows combine every route; move rows count only arrivals through that move; chapter tables follow the chapter's own moves.
 
 ### Opponent ratings
 
@@ -182,7 +182,7 @@ The full report includes two reach-weighted correlations. Both are point estimat
 
 **Prepared depth and gain.** Each of your moves is one observation, weighted by how often it is played. Its depth is the expected number of prepared moves after it, and its gain is the repertoire score after it minus that move's database score. The report shows weighted linear and rank correlations and the weighted slope of gain on depth, with unweighted results and a check that excludes zero depth in collapsed details.
 
-**Opponent rating and score.** `reports/comparisons/opponent-rating-score.md` compares replies within the same parent position, and chapter scores and deltas with their chapters' opponent ratings, grouping chapters that share positions. It repeats the reply comparison using only replies with at least 1,000 games. It describes the database cohorts, not what would happen against a particular rating.
+**Opponent rating and score.** The full report compares replies within the same parent position, overall and separately for prepared replies, unprepared replies and replies with at least 1,000 games. Running `repertoire rating-correlations` on its own also writes `reports/comparisons/opponent-rating-score.md`, which adds chapter scores and deltas against their chapters' opponent ratings, grouping chapters that share positions. Both describe the database cohorts, not what would happen against a particular rating.
 
 ## Strengths and vulnerabilities
 
@@ -192,7 +192,7 @@ The full report includes two reach-weighted correlations. Both are point estimat
 - **Own move drag** is the database score of the parent position minus your score after your move. It measures how your move and the preparation after it compare with what players do there in general. The strengths section ranks the reverse, your gain.
 - **Gain** splits into the **move gain**, your move's database score minus the position's, and the **preparation gain**, your score after the move minus the move's database score. The two add up to the total.
 
-Weighted values are shown in score points per 1,000 games, so a weighted drag of `0.0317%` reads as `0.32`. The summary ranks your moves by reach times gain or drag; the full report ranks them by the gain or drag itself. Intervals on gains and drags combine every table the comparison depends on. **Avg games per encounter** is `1 / reach`: how many games with that color (or entering the chapter) pass before a position comes up once on average.
+Weighted values are shown in score points per 1,000 games, so a weighted drag of `0.0317%` reads as `0.32`. The summary ranks your moves by reach times gain or drag; the full report ranks them by the gain or drag itself. Intervals on gains and drags combine every table the comparison depends on. **1 in N games** is `1 / reach`: how many games with that color (or entering the chapter) pass before a position comes up once on average.
 
 The JSON also lists the database scores of the other moves in each of your positions. They are screening information, not recommendations: the best of several observed scores tends to be high by chance.
 

@@ -153,10 +153,9 @@ def check_score_tables(text):
             for header, value in zip(headers, row):
                 if ' cp)' not in value:
                     continue
-                assert header == 'Delta' and {'Starting baseline', 'Repertoire score'} <= set(headers), (header, value)
-                base, score = (
-                    float(row[headers.index(h)].rstrip('%')) / 100 for h in ('Starting baseline', 'Repertoire score')
-                )
+                baseline = next((h for h in ('Starting baseline', 'Entry baseline') if h in headers), None)
+                assert header == 'Delta' and baseline and 'Repertoire score' in headers, (header, value)
+                base, score = (float(row[headers.index(h)].rstrip('%')) / 100 for h in (baseline, 'Repertoire score'))
                 shown = float(re.search(r'\(([+-]?\d+) cp\)', value)[1])
                 # Displayed scores are rounded, so allow for their rounding as well as the whole-number CP.
                 assert shown == pytest.approx(centipawn_delta(score, base), abs=2.0)

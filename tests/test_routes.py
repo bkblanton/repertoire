@@ -1,3 +1,5 @@
+import re
+
 import chess
 import pytest
 from helpers import data, graph, position, sample
@@ -157,9 +159,9 @@ def test_own_summary_ranking_weights_reach_filters_sparse_and_shows_points_per_t
     assert games_per_encounter(None) == 'unavailable'
     refs = Chapters(dict(color='white', chapters=[]))
     rendered = '\n'.join(summary_own_priorities(ranked, refs, strongest=True))
-    assert '| 10.00%<br>1 per 10 games |' in rendered
+    assert '| 10.0%<br>1 in 10 games |' in rendered
     # Reach 10% times a 1-point gain is 0.1 percentage points per game, or one point per 1,000 games.
-    assert '| +10.00%<br>95%: unavailable | +1.0 |' in rendered and ' cp)' not in rendered
+    assert '| +10.0%<br>95%: unavailable | +1.0 |' in rendered and ' cp)' not in rendered
     assert '| Gain | Gain per 1,000 games |' in rendered
     assert 'sparse' not in rendered
 
@@ -176,10 +178,10 @@ def test_new_insights_are_automated_in_report_and_summary(complete):
         for i in range(1, len(bundle['report']['chapters']) + 1)
     )
     assert chapters.count('\n## Prepared-depth distribution\n') == len(bundle['report']['chapters'])
-    assert 'Entry-position weight' in chapters and 'Example-route weight' in chapters
-    assert 'any position in this chapter, through any move order' in chapters
+    assert '| Share of entries | Share of this route |' in chapters
+    assert 'Every position where games first enter this chapter' in chapters
     assert 'Own moves to review' in summary
-    assert 'Avg games per encounter' in full and 'Avg games per encounter' in summary
+    assert re.search(r'<br>(1 in [\d,.]+ games|every game) \|', full + summary)
     assert 'Median prepared depth' in summary
     assert 'Depth and improvement' not in summary
     assert 'white-prepared-depth' in full and 'report.md#white-prepared-depth' in summary

@@ -69,13 +69,13 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     chapters = chapter_pages(path.parent, report)
-    prefix = f'| White | 50.00% | 40.00% | {headline_delta(0.4, 0.5)} |'
-    assert prefix in full and headline_delta(0.4, 0.5) == f'-10.00% ({centipawn_delta(0.4, 0.5):+.0f} cp)'
+    prefix = f'| White | 50.0% | 40.0% | {headline_delta(0.4, 0.5)} |'
+    assert prefix in full and headline_delta(0.4, 0.5) == f'-10.0% ({centipawn_delta(0.4, 0.5):+.0f} cp)'
     assert '| White | 50.0% | 40.0% | -10.0% (-110 cp) | -70 |' in summary
     assert not re.search(r'^\| Black \|', full, flags=re.M) and '[Black repertoire](#black)' not in full
-    assert prefix + ' -70.4 |' in full
+    assert prefix + ' -70 |' in full
     assert '[Combined repertoire](#combined)' not in full
-    assert 'Chapter reach (incl. transpositions)' in summary and 'Overall-policy reach' in summary
+    assert 'Chapter reach<br>Overall-policy reach' in summary
     assert 'Tarrasch Nf6' in summary and '**(alternative)**' in summary
     assert 'Prepared opponent replies' in '\n'.join([full, *chapters])
     assert '**Unprepared opponent replies**' not in '\n'.join([full, *chapters])  # no positive unprepared drag here
@@ -94,14 +94,13 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     everything = '\n'.join([full, summary, *chapters])
     assert 'Study description' not in everything and '\u2014' not in everything
     for rendered in (full, summary, *chapters):
-        assert 'Most common opening source' in rendered and 'French Defense' in rendered
+        # Opening names and chapters sit under each line instead of in columns of their own.
+        assert re.search(r'<br>\[French Defense[^]]*\]\([^)]*\) · ', rendered)
         # A sole source shows no arrival share.
         assert not re.search(r'(Unclassified|\(#white-opening-\d+\)) \(100\.0+%\)', rendered)
         for header in rendered.splitlines():
-            if header.startswith('| ') and any(
-                label in header for label in ('Chapter source', 'Chapter context', 'Entry-position sources')
-            ):
-                assert 'Most common opening source' in header
+            if header.startswith('| '):
+                assert 'Chapter source' not in header and 'Most common opening source' not in header
     assert not bundles[0]['unavailable'] and bundles[0]['current_source']
     for p, content in originals.items():
         assert p.read_bytes() == content
@@ -125,9 +124,8 @@ def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
     assert '### Equivalent gap reach' in full
     with display(digits=1):
         assert f'Equivalent gap reach **{gap_percentage(overall)}**' in summary
-    for text in (full, summary):
-        assert 'Weighted gap reach contribution' in text
-        assert 'Equivalent gap reach after entry' in text
+    assert '| Equivalent gap reach<br>Weighted contribution |' in full
+    assert '| Equivalent gap reach |' in summary
     for chapter, page in zip(bundle['report']['chapters'], chapter_pages(path.parent, report)):
         metrics = chapter['gap_coverage']
         assert metrics
@@ -135,7 +133,7 @@ def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
             assert metrics['weighted_equivalent_gap_reach_bounds'] == pytest.approx(
                 [metrics['entry_probability'] * p for p in metrics['equivalent_gap_reach_bounds']]
             )
-        assert f"weighted gap reach contribution **{gap_percentage(metrics, weighted=True)}**" in page
+        assert f'**Gaps:** adds {gap_percentage(metrics, weighted=True)} to the White equivalent gap reach' in page
         assert '## Equivalent gap reach' in page
     assert 'so reaches and scores are not additive' in full
 
@@ -144,12 +142,14 @@ def test_gap_display_keeps_unknown_reach_bounded():
     from repertoire.report.format import gap_percentage
 
     assert gap_percentage(None) == 'unavailable'
-    assert gap_percentage(dict(equivalent_gap_reach=0.0)) == '0.00%'
-    assert gap_percentage(dict(equivalent_gap_reach_bounds=[0.1, 0.2])) == '10.00% to 20.00% (bounds)'
+    assert gap_percentage(dict(equivalent_gap_reach=0.0)) == '0.0%'
+    assert gap_percentage(dict(equivalent_gap_reach_bounds=[0.1, 0.2])) == '10.0% to 20.0% (bounds)'
     assert (
         gap_percentage(dict(weighted_equivalent_gap_reach_bounds=[0.02, 0.04]), weighted=True)
-        == '2.00% to 4.00% (bounds)'
+        == '2.0% to 4.0% (bounds)'
     )
+    # Values under one percent keep a second digit.
+    assert gap_percentage(dict(equivalent_gap_reach=0.0043)) == '0.43%'
 
 
 def test_recursive_sharpness_in_overall_and_every_chapter(complete):
@@ -302,11 +302,14 @@ def test_compact_chapter_sources_and_readable_notation(complete):
     _, report = complete
     refs = Chapters(report)
     row = {'chapter_attribution': {'source_ids': [c['id'] for c in report['chapters']]}}
-    assert refs.sources(row) == '[All 3 White chapters](#white-chapters)'
+    assert refs.sources(row) == '[all 3 White chapters](#white-chapters)'
     row = {'chapter_attribution': {'context_ids': ['advance']}}
-    assert refs.sources(row) == 'Unprepared; context: [W1](#white-chapter-1)'
+    assert refs.sources(row) == 'unprepared in [W1](#white-chapter-1)'
     row = {'chapter_attribution': {'transposition_ids': ['split']}}
-    assert refs.sources(row) == 'Transposition: [W3](#white-chapter-3)'
+    assert refs.sources(row) == 'transposes to [W3](#white-chapter-3)'
+    # Consecutive chapters collapse into ranges on every page.
+    row = {'chapter_attribution': {'source_ids': [c['id'] for c in report['chapters']][:2]}}
+    assert refs.sources(row) == '[W1](#white-chapter-1), [W2](#white-chapter-2)'
     assert line('1.e4 1...e6 2.d4 2...d5 3.Nd2') == '1. e4 e6 2. d4 d5 3. Nd2'
     assert line('1...c5') == '1... c5'
     assert line('A|B <tag>') == 'A&#124;B &lt;tag&gt;'
@@ -319,7 +322,7 @@ def test_destinations_and_relative_links(complete):
     generate([path], full, summary)
     assert '[Summary](../short/short.md)' in full.read_text()
     assert '[Scores](../white.json)' in full.read_text()
-    assert '[Complete report](../full/all.md)' in summary.read_text()
+    assert '[Full report](../full/all.md)' in summary.read_text()
     assert '../full/chapters/W1.md' in summary.read_text() and '../full/all.md#def-' in summary.read_text()
     page = (full.parent / 'chapters' / 'W1.md').read_text(encoding='utf-8')
     assert '[Summary](../../short/short.md)' in page and '[Full report](../all.md)' in page
@@ -428,23 +431,21 @@ def test_compressed_columns_preserve_values_and_inputs():
     headers = [
         'Line',
         'Position reach',
-        'Avg games per encounter',
         'Opening',
         'ECO',
-        'Avg opponent rating',
+        'Opponent rating',
         'Rating Δ vs parent',
     ]
-    rows = [['1. e4', '20.00%', '5', 'Kings Pawn', 'B00', '1,800 (90.0% rated)', '+30']]
+    rows = [['1. e4', '20.0%<br>1 in 5 games', 'Kings Pawn', 'B00', '1,800 (90.0% rated)', '+30 (95.0% compared)']]
     original = [r[:] for r in rows]
     names, values = compressed_columns(headers, rows)
-    assert names == [
-        'Line',
-        'Position reach<br>Avg games per encounter',
-        'Opening / ECO',
-        'Avg opponent rating<br>Rating Δ vs parent',
+    assert names == ['Line', 'Position reach', 'Opening / ECO', 'Opponent rating']
+    assert values == [
+        ['1. e4', '20.0%<br>1 in 5 games', 'Kings Pawn<br>B00', '1,800 (90.0% rated)<br>+30 vs parent (95.0% compared)']
     ]
-    assert values == [['1. e4', '20.00%<br>1 per 5 games', 'Kings Pawn<br>B00', '1,800 (90.0% rated)<br>Δ +30']]
-    assert rows == original and len(headers) == 7
+    # A missing difference leaves the rating on its own.
+    assert compressed_columns(headers[-2:], [['1,800', 'n/a']]) == (['Opponent rating'], [['1,800']])
+    assert rows == original and len(headers) == 6
     assert compressed_columns(names, values) == (names, values)
     with pytest.raises(ValueError, match='lengths differ'):
         table(['One'], [['one', 'extra']])
@@ -516,12 +517,11 @@ def test_cp_appears_only_beside_headline_deltas(complete):
     for name in ('report.md', 'summary.md'):
         assert check_score_tables((path.parent / name).read_text(encoding='utf-8')) == 1
     for page in chapter_pages(path.parent, report):
-        assert check_score_tables(page) == 0
-        assert [row for row in page.splitlines() if ' cp)' in row] == [
-            row for row in page.splitlines() if row.startswith('Chapter reach **')
-        ]
-        headline = next(row for row in page.splitlines() if row.startswith('Chapter reach **'))
-        assert re.search(r'delta \*\*[+-][\d.]+% \([+-]\d+ cp\)\*\*', headline)
+        assert check_score_tables(page) == 1
+        rows = [row for row in page.splitlines() if ' cp)' in row]
+        assert len(rows) == 1 and re.search(r'\| [+-][\d.]+% \([+-]\d+ cp\) \|', rows[0])
+        lines = page.splitlines()
+        assert lines[lines.index(rows[0]) - 2].startswith('| Chapter reach | Entry baseline | Repertoire score |')
 
 
 def test_all_repertoire_score_tables_show_spread_without_extra_columns(complete):
@@ -593,8 +593,8 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     full = '\n'.join(vulnerabilities_section(scope, refs, 10))
     before, after = (spread_display(common.get(k), False) for k in ('reference_spread', 'move_spread'))
     prepared, unprepared = full.split('**Prepared opponent replies**')[::-1]
-    assert f'| 57.50% | 52.50% | {before}<br>{after} | 5.00%<br>95%:' in prepared
-    assert f'| 57.50% | 52.50% | {before} | 5.00%<br>95%:' in unprepared  # nothing after an unprepared reply
+    assert f'| 57.5% | 52.5% | {before}<br>{after} | 5.0%<br>95%:' in prepared
+    assert f'| 57.5% | 52.5% | {before} | 5.0%<br>95%:' in unprepared  # nothing after an unprepared reply
     assert '| Score spread before reply |' in unprepared and '| Score spread<br>Before / after |' in prepared
     # 0.1 percentage points per game is one point per 1,000 games.
     assert per_thousand(0.1) == '1.0' and full.count('| 1.0 |') == 2
@@ -604,7 +604,7 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     bundle['vulnerabilities']['overall'] = scope
     summary = summary_report([bundle])
     # Summary rows label the parent board with its shared route, so identify the unprepared reply by its scores.
-    assert summary.count('57.5%<br>52.5%') == 1 and '<summary>Costly unprepared replies</summary>' in summary
+    assert summary.count('57.5% → 52.5%') == 1 and '<summary>Costly unprepared replies</summary>' in summary
     assert check_score_tables(summary) == 1  # only the headline delta
 
 
@@ -739,7 +739,7 @@ def test_position_contributions_include_intermediate_boards_and_cached_unprepare
     assert '| [1. e4](' in displayed and '| [1. e4 e5 2. Nc3](' in displayed
     assert 'prepared endpoint' not in displayed
     assert 'Position reach after chapter entry' in displayed
-    assert 'Rows overlap and must not be added' in displayed
+    assert 'Rows overlap, so do not add them' in displayed
     # Both displayed rows are prepared positions, so the uniform type column is dropped.
     assert '| Position type |' not in displayed and per_thousand(57.0) == '570' and '| 570 |' in displayed
     assert check_score_tables(displayed) == 0
@@ -835,23 +835,14 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
     bundles = generate([path, black_path])
     result = combined_overall(bundles)
     delta = headline_delta(result['repertoire_score'], result['starting_baseline'])
-    assert delta == f"{result['difference_pp']:+.2f}% ({result['centipawn_delta']:+.0f} cp)"
+    assert delta == f"{result['difference_pp']:+.1f}% ({result['centipawn_delta']:+.0f} cp)"
     prefix = (
-        f"| **Combined** | {100 * result['starting_baseline']:.2f}% | {100 * result['repertoire_score']:.2f}% | "
-        f"{delta} | {result['elo_equivalent']:+.1f} |"
+        f"| **Combined** | {100 * result['starting_baseline']:.1f}% | {100 * result['repertoire_score']:.1f}% | "
+        f"{delta} | {result['elo_equivalent']:+.0f} |"
     )
     for filename in ['report.md', 'summary.md']:
         text = (path.parent / filename).read_text(encoding='utf-8')
-        if filename == 'report.md':
-            assert prefix in text
-        else:
-            with display(digits=1):
-                short = headline_delta(result['repertoire_score'], result['starting_baseline'])
-            assert (
-                f"| **Combined** | {100 * result['starting_baseline']:.1f}% | "
-                f"{100 * result['repertoire_score']:.1f}% | "
-                f"{short} | {result['elo_equivalent']:+.0f} |"
-            ) in text
+        assert prefix in text
         assert 'Elo equivalent' in text and '50% each' in text
         assert '| Score CP |' not in text and '| Baseline CP |' not in text and '| CP delta |' not in text
         assert check_score_tables(text) == 3  # White, Black and Combined headline deltas
@@ -886,7 +877,7 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
         elo = elo_equivalent(
             report['overall']['raw_empirical_score'], report['starting_position_reference']['owner_score']
         )
-        assert f'| {color.title()} |' in full and f'| {elo:+.1f} |' in full
+        assert f'| {color.title()} |' in full and f'| {elo:+.0f} |' in full
         assert subsection.index(f'{color.title()} repertoire') < subsection.index(f'<a id="{color}-exits"')
         assert subsection.index(f'<a id="{color}-exits"') < subsection.index(f'<a id="{color}-common-positions"')
         if '### Vulnerabilities' in subsection:
@@ -913,21 +904,17 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     )
     assert not re.search(r'^## Most common positions$', full, flags=re.M)
     block = full.split('### Most common positions', 1)[1].split('### Openings reached', 1)[0]
-    assert (
-        '| Position (representative line) | Chapter source | Most common '
-        'opening source | Position reach<br>Avg games per encounter | '
-        'Repertoire score | Score spread | Games at position / reply |' in block
-    )
+    assert '| Position | Position reach | Repertoire score | Score spread | Games | Opponent rating |' in block
     scope = bundles[0]['character']['scopes'][0]
     e4 = next(r for r in scope['positions'] if r['line'] == '1.e4')
     url = 'https://lichess.org/analysis/standard/' + '_'.join(e4['position'].split() + ['0', '1'])
-    assert f'| [1. e4]({url}) |' in block
-    assert f"| 100.00%<br>1 per 1.0 games | 40.00% | {spread_display(e4['branch_score_spread'])} | 100 |" in block
+    assert f'| [1. e4]({url})<br>' in block
+    assert f"| 100.0%<br>every game | 40.0% | {spread_display(e4['branch_score_spread'])} | 100 |" in block
     assert '(PGN root)' not in block
     assert '[1. e4 e6](' not in block
     assert '| [1. e4 e6 2. d4](' in block
     assert 'Showing 2 of' in block
-    assert '(chapters/W' in block or '(#white-chapters)' in block
+    assert ' · [W' in block or ' · [all ' in block
     assert sum(r.startswith('| [1.') for r in block.splitlines()) == 2
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     tree = summary.split('<summary>Most common positions</summary>', 1)[1].split('</details>', 1)[0]
@@ -974,18 +961,15 @@ def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoi
     assert re.search(r'\[e4 c5\]\([^)]+\)<br>White to move; no prepared reply', text)
     assert 'e4 e6 d4<br>' not in text and 'e4 e6 d4)<br>' not in text
     assert 'Black to move' not in text and '| To move |' not in text
-    assert '50.00%' in text and '30.00%' in text
+    assert '50.0%' in text and '30.0%' in text
     prepared, unprepared = text.split('#### Unprepared opponent replies', 1)
     assert 'e4 e5 Nf3' in prepared and 'e4 c5' not in prepared
     assert 'e4 c5' in unprepared and 'e4 e5 Nf3' not in unprepared
     assert re.search(r'\[e4 d5\]\([^)]+\)<br>White to move; no prepared reply', unprepared)
     assert 'e4 d5' not in prepared
-    assert (
-        '| Repertoire score | Score spread | Games at position / reply |' in prepared
-        and '| 60.00% | unavailable | 1,234 |' in prepared
-    )
+    assert '| Repertoire score | Score spread | Games |' in prepared and '| 60.0% | unavailable | 1,234 |' in prepared
     # Unprepared replies end preparation, so the always-zero spread column is omitted.
-    assert '| Database score | Games at position / reply |' in unprepared and '| 45.00% | 1,234† |' in unprepared
+    assert '| Database score | Games |' in unprepared and '| 45.0% | 1,234† |' in unprepared
     # Filter before the limit: the lower-frequency unprepared reply still appears.
     limited = '\n'.join(common_positions_section([bundle], 1))
     assert 'e4 e5 Nf3' in limited and 'e4 c5' in limited and 'e4 e6 d4' not in limited
@@ -1028,7 +1012,7 @@ def test_position_tree_nests_by_route_and_shows_only_new_moves():
     tree = position_tree(scope, Chapters({'color': 'white', 'chapters': []}))
     labels = [re.match(r'( *)- \*\*\[([^\]]+)\]', item).groups() for item in tree if item]
     assert labels == [('', '1. e4'), ('  ', '1... e5 2. Nc3'), ('    ', '2... Nc6 3. g3'), ('  ', '1... c5 2. Nc3')]
-    assert '50.00% of games, score 55.00%' in '\n'.join(tree)
+    assert '50.0% of games, score 55.0%' in '\n'.join(tree)
 
 
 def test_exit_points_group_unprepared_replies_by_last_prepared_board():
@@ -1081,13 +1065,16 @@ def test_exit_points_group_unprepared_replies_by_last_prepared_board():
     )  # unresolved replies stay out of the score
     assert rows[1]['share'] == pytest.approx(0.04 / 0.6) and rows[2]['leaf'] and not rows[2]['replies']
     text = '\n'.join(exits_section(scope, Chapters({'color': 'black', 'chapters': []}), 2))
-    assert '| [1. e4 c5 2. Nf3 Nc6 3. Bc4 e6](' in text and '| 6.00%<br>1 per 17 games | 100.00% | 3 |' in text
-    assert re.search(r'\[4\. O-O\]\([^)]+\) 3\.00%, \[4\. d4\]\([^)]+\) 2\.00%, \[4\. Nc3\]\([^)]+\) 1\.00%', text)
-    assert '| 4.00%<br>1 per 25 games | 6.67% | 1 |' in text and 'leaf' not in text
+    assert '| [1. e4 c5 2. Nf3 Nc6 3. Bc4 e6](' in text and '| 6.0%<br>1 in 17 games | 100.0% |' in text
+    assert re.search(r'\[4\. O-O\]\([^)]+\) 3\.0%<br>\[4\. d4\]\([^)]+\) 2\.0%<br>\[4\. Nc3\]\([^)]+\) 1\.0% \|', text)
+    assert '| 4.0%<br>1 in 25 games | 6.7% |' in text and 'leaf' not in text
     assert (
-        'These 2 positions are where **10.00%** of Black games leave '
+        'These 2 positions are where **10.0%** of Black games leave '
         'preparation. Preparation ends at 3 positions in all.' in text
     )
+    # A board with no prepared move of ours says so instead of listing replies.
+    leaf = '\n'.join(exits_section(scope, Chapters({'color': 'black', 'chapters': []}), 3))
+    assert '| No prepared Black move |' in leaf
 
 
 def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(tmp_path, monkeypatch):
@@ -1106,7 +1093,7 @@ def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(t
         assert f'<a id="{anchor}-common-positions"></a>' in block
         assert '\n## Most common positions\n' in block
         assert 'Position reach after chapter entry' in block
-        assert ' cp)' in block and 'Avg opponent rating' in block
+        assert ' cp)' in block and 'Opponent rating' in block
         assert block.index('\n## Most common positions\n') < block.index('\n## Strengths\n')
         assert chapter['url'] in block
     alternative = next(c for c in report['chapters'] if c['id'] == 'tarrasch')
@@ -1114,9 +1101,7 @@ def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(t
     block = (tmp_path / 'chapters' / 'W2.md').read_text(encoding='utf-8')
     block = block.split('<a id="white-chapter-2-common-positions"></a>', 1)[1].split('## Strengths', 1)[0]
     assert '| [1. e4 e6 2. d4 d5 3. Nd2 Nf6 4. e5](' in block
-    assert (
-        '| 100.00%<br>1 per 1.0 games | 90.00% |' in block
-    )  # conditional on entry, not multiplied by the 60% chapter reach
+    assert '| 100.0%<br>every game | 90.0% |' in block  # conditional on entry, not multiplied by the 60% reach
     overall = text.split('### Most common positions', 1)[1].split('### Openings reached', 1)[0]
     assert '3. Nd2 Nf6' not in overall  # overall still selects the Advance
     assert all(p.read_bytes() == data for p, data in before.items())
@@ -1130,7 +1115,7 @@ def test_summary_leads_with_exits_and_own_moves_and_keeps_snapshot_notices_visib
         content = (path.parent / name).read_text(encoding='utf-8')
         assert 'source PGN has changed' in content
         assert content.count('<details>') == content.count('</details>')
-    for name, row in (('report.md', '| White | 50.00% |'), ('summary.md', '| White | 50.0% |')):
+    for name, row in (('report.md', '| White | 50.0% |'), ('summary.md', '| White | 50.0% |')):
         content = (path.parent / name).read_text(encoding='utf-8')
         assert content.index('snapshot notice') < content.index('| Repertoire |')
         assert 'scored ' in content and 'database evidence retrieved' in content
@@ -1143,7 +1128,7 @@ def test_summary_leads_with_exits_and_own_moves_and_keeps_snapshot_notices_visib
     assert '<summary>Chapter comparisons (3 chapters)</summary>' in summary
     assert '### Openings reached' not in summary
     assert '| Opening family / variation |' not in summary
-    assert 'Most common opening source' in summary
+    assert re.search(r'<br>\[French Defense[^]]*\]\([^)]*\) · ', summary)
     summary_headings = re.findall(r'^### (.+)$', summary.split('## White repertoire', 1)[1], flags=re.M)
     assert summary_headings == [h for h in ('Where preparation ends', 'Own moves to review') if h in summary_headings]
     assert 'Where preparation ends' in summary_headings
@@ -1160,10 +1145,8 @@ def test_summary_leads_with_exits_and_own_moves_and_keeps_snapshot_notices_visib
     assert depth == 0
     visible = '\n'.join(visible)
     assert 'snapshot notice' in visible
-    assert (
-        '| Preparation ends after |' in visible and '| Games leaving prep here<br>Avg games per encounter |' in visible
-    )
-    assert 'Costly unprepared replies' not in visible and '| Position (representative line) |' not in visible
+    assert '| Preparation ends after | Games leaving prep here | Of games at this position |' in visible
+    assert 'Costly unprepared replies' not in visible and '| Position |' not in visible
     assert re.findall(r'^### (.+)$', visible, flags=re.M) == summary_headings
     assert 'Chapters |' not in visible and 'Outcome volatility' not in visible
     assert 'database evidence retrieved' not in visible
@@ -1182,6 +1165,7 @@ def test_summary_leads_with_exits_and_own_moves_and_keeps_snapshot_notices_visib
     assert '<summary>Evidence and definitions</summary>' in summary
     assert 'Depth and improvement' not in summary and 'cluster-bootstrap' not in summary
     assert 'Strongest and weakest' not in full
-    # One decimal place and compact counts in the summary; two decimals in the full report.
-    assert not re.search(r'\d+\.\d{2}%', summary.split('<summary>Evidence and definitions</summary>')[0])
-    assert re.search(r'\d+\.\d{2}%', full)
+    # One decimal place everywhere; values under one percent keep a second digit.
+    for text in (summary, full):
+        assert not re.search(r'\b[1-9]\d*\.\d{2}%', text)
+        assert re.search(r'\b\d+\.\d%', text)

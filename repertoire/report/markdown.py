@@ -10,12 +10,18 @@ def about(key, text='Definitions'):
 
 
 class SourceCell(str):
-    """Chapter links carry their neighboring opening cell through table rendering."""
+    """Chapter links that carry the opening name shown with them, and an optional further note."""
 
-    def __new__(cls, text, opening):
+    def __new__(cls, text, opening, note=''):
         result = super().__new__(cls, text)
         result.opening = opening
+        result.note = note
         return result
+
+    def context(self):
+        """The line under a table's board label: the opening name, then the chapters."""
+        parts = [part for part in (self.opening, str(self)) if part and part not in ('unavailable', 'None')]
+        return '<br>'.join(([' · '.join(parts)] if parts else []) + ([self.note] if self.note else []))
 
 
 def compressed_columns(headers, rows):
@@ -34,82 +40,80 @@ def compressed_columns(headers, rows):
             del row[second]
         del headers[second]
 
+    def rating(value, difference):
+        if str(difference).startswith(('n/a', 'unavailable')):
+            return value
+        number, _, notes = str(difference).partition(' (')
+        return f'{value}<br>{number} vs parent' + (f' ({notes}' if notes else '')
+
     combine('Opening', 'ECO', 'Opening / ECO', lambda opening, eco: f'{opening}<br>{eco}')
-    for reach in (
-        'Position reach',
-        'Position reach after chapter entry',
-        'Move reach',
-        'Move reach after chapter entry',
-        'Games leaving prep here',
-        'Games leaving prep here after chapter entry',
-    ):
-        combine(
-            reach,
-            'Avg games per encounter',
-            reach + '<br>Avg games per encounter',
-            lambda probability, games: f'{probability}<br>1 per {games} games',
-        )
-    combine(
-        'Avg opponent rating',
-        'Rating Δ vs parent',
-        'Avg opponent rating<br>Rating Δ vs parent',
-        lambda rating, difference: f'{rating}<br>Δ {difference}',
-    )
+    combine('Opponent rating', 'Rating Δ vs parent', 'Opponent rating', rating)
     return headers, rows
 
 
+# Headers of columns that hold words rather than numbers, so they stay left-aligned.
+TEXT_COLUMNS = (
+    'Line',
+    'Position',
+    'Chapter',
+    'Source',
+    'Your move',
+    'Option',
+    'Verdict',
+    'Color',
+    'Common reply',
+    'Observed alternative',
+    'Opening',
+    'Most common opening',
+    'ECO',
+    'Current names',
+    'Name source',
+    'Evidence source',
+    'Feature',
+    'Stopping type',
+    'Measure',
+    'Destination',
+    'Frequent pawn',
+    'Preparation ends',
+    'Most common unprepared',
+    'Most common reply',
+    'Example route',
+    'Comparison',
+)
+
+# Numeric headers that share a prefix with a text column.
+NUMBER_COLUMNS = ('Position reach', 'Chapter reach')
+
+
 def table(headers, rows):
+    """A Markdown table; chapter and opening context moves under the board label in the column before it."""
     if not rows:
         return []
     headers, rows = compressed_columns(headers, rows)
-    if 'Most common opening source' not in headers:
-        source_columns = [
-            i
-            for i in range(len(headers))
-            if any(isinstance(row[i], SourceCell) for row in rows) and headers[i] != 'Chapters'
-        ]
-        for i in reversed(source_columns):
-            headers = [*headers[: i + 1], 'Most common opening source', *headers[i + 1 :]]
-            rows = [
-                [*row[: i + 1], row[i].opening if isinstance(row[i], SourceCell) else 'unavailable', *row[i + 1 :]]
-                for row in rows
-            ]
-    text_columns = (
-        'Line',
-        'Position',
-        'Chapter',
-        'Source',
-        'Your move',
-        'Option',
-        'Verdict',
-        'Color',
-        'Common reply',
-        'Observed alternative',
-        'Opening',
-        'Most common opening',
-        'ECO',
-        'Current names',
-        'Name source',
-        'Evidence source',
-        'Feature',
-        'Stopping type',
-        'Measure',
-        'Destination',
-        'Frequent pawn',
-        'Preparation ends',
-        'Most common unprepared',
-    )
+    sources = [
+        i
+        for i in range(1, len(headers))
+        if headers[i] != 'Chapters' and any(isinstance(row[i], SourceCell) for row in rows)
+    ]
+    for i in reversed(sources):
+        headers = headers[:i] + headers[i + 1 :]
+        rows = [[*row[: i - 1], _with_context(row[i - 1], row[i]), *row[i + 1 :]] for row in rows]
     return [
         '| ' + ' | '.join(headers) + ' |',
         '| '
         + ' | '.join(
-            '---' if i == 0 or (h.startswith(text_columns) and not h.startswith('Position reach')) else '---:'
+            '---' if i == 0 or (h.startswith(TEXT_COLUMNS) and not h.startswith(NUMBER_COLUMNS)) else '---:'
             for i, h in enumerate(headers)
         )
         + ' |',
         *['| ' + ' | '.join(map(str, row)) + ' |' for row in rows],
         '',
     ]
+
+
+def _with_context(label, source):
+    context = source.context() if isinstance(source, SourceCell) else str(source)
+    return f'{label}<br>{context}' if context and context != 'None' else str(label)
 
 
 def drop_uniform(headers, rows, optional):

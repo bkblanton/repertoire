@@ -18,10 +18,10 @@ from .derive import (
 )
 from .format import (
     _display,
+    count,
     elo_equivalent,
     escape,
     evidence_date,
-    games_per_encounter,
     gap_percentage,
     headline_delta,
     line,
@@ -31,7 +31,9 @@ from .format import (
     percentage,
     population_text,
     position_reach_label,
+    rating_cell,
     rating_difference,
+    reach_cell,
     score_points,
     spread_display,
 )
@@ -66,10 +68,9 @@ def evidence_snapshot(bundles):
     return [
         '**Score uncertainty**',
         '',
-        'Model intervals describe sampling under the saved population and '
-        'priors. Sparse sensitivity lets flagged outcomes take any score from '
-        '0 to 1; '
-        f'it is a separate evidence stress test. {about("evidence", "Limits and definitions")}.',
+        'The 95% interval covers sampling in the database games. The sparse-evidence range lets every thinly '
+        'sampled outcome take any score from 0% to 100%: a stress test, not an interval. '
+        f'{about("evidence", "Limits and definitions")}.',
         '',
         *table(
             ['Repertoire', 'Approximate 95% score interval', 'Sparse-evidence sensitivity', 'Sparse probability'], rows
@@ -97,7 +98,7 @@ def overview(bundles, headline_only=False):
                 percentage(score),
                 headline_delta(score, base),
                 elo_text(elo_equivalent(score, base)),
-                number(o.get('prepared_depth', {}).get('expected_moves')),
+                number(o.get('prepared_depth', {}).get('expected_moves'), 1),
                 spread_display(o.get('branch_score_spread'), False),
                 len(r['chapters']),
             ]
@@ -111,7 +112,7 @@ def overview(bundles, headline_only=False):
                 percentage(combined['repertoire_score']),
                 headline_delta(combined['repertoire_score'], combined['starting_baseline']),
                 elo_text(combined['elo_equivalent']),
-                number(combined['expected_prepared_depth']),
+                number(combined['expected_prepared_depth'], 1),
                 spread_display(combined.get('branch_score_spread'), False),
                 combined['chapters'],
             ]
@@ -135,10 +136,9 @@ def overview(bundles, headline_only=False):
 
 def overview_notes(bundles):
     text = (
-        'Delta is repertoire score minus its starting baseline, in percentage '
-        'points. The CP and Elo equivalents translate that delta '
-        'to familiar scales; they are not engine evaluations or rating '
-        'forecasts. Scores include half a point for draws. '
+        'Delta is the repertoire score minus the database score from the starting '
+        'position, in percentage points; its cp and Elo equivalents put it on familiar scales but are not engine '
+        'evaluations or rating forecasts. '
     )
     combined = combined_overall(bundles)
     if combined:
@@ -146,7 +146,7 @@ def overview_notes(bundles):
             text += 'Combined score unavailable: ' + combined['unavailable'] + '. '
         else:
             text += 'Combined gives White and Black equal weight (50% each). '
-    return text + f'Prepared depth counts remaining own moves. {about("score", "Scores, deltas and conversions")}.'
+    return text + f'Prepared depth counts your own moves before preparation ends. {about("score", "Definitions")}.'
 
 
 def snapshot_notes(bundles):
@@ -188,9 +188,8 @@ def gap_section(scope, level='###', refs=None, top=10, anchor=None):
         ]
     text = [
         *section(f'{level} Equivalent gap reach', anchor),
-        f'**{gap_percentage(metrics)}**: the reach of one gap with the same '
-        'repeat probability as all first unprepared positions combined. '
-        f'Lower is better. {about("gap-reach")}.',
+        f'**{gap_percentage(metrics)}**: the reach of a single gap that would repeat as often as all of your '
+        f'first gaps together. Lower means gaps are rarer or more spread out. {about("gap-reach")}.',
         '',
     ]
     if metrics.get('unresolved_mass', 0):
@@ -207,8 +206,6 @@ def gap_section(scope, level='###', refs=None, top=10, anchor=None):
         rows = []
         for priority in selected:
             row = positions[priority['position']]
-            rating = opponent_rating(row.get('opponent_rating'))
-            diff = rating_difference(row.get('opponent_rating'))
             rows.append(
                 [
                     refs.position_cell(row),
@@ -217,7 +214,7 @@ def gap_section(scope, level='###', refs=None, top=10, anchor=None):
                     percentage(priority['repeat_probability_share']),
                     percentage(row.get('database_score')),
                     position_games(row),
-                    rating + '<br>Δ ' + diff,
+                    rating_cell(row.get('opponent_rating')),
                 ]
             )
         text += [
@@ -231,7 +228,7 @@ def gap_section(scope, level='###', refs=None, top=10, anchor=None):
                     'Repeat-gap share',
                     'Database score',
                     'Games',
-                    'Avg opponent rating',
+                    'Opponent rating',
                 ],
                 rows,
             ),
@@ -250,9 +247,8 @@ def branch_spread_section(scope, level='###', anchor=None):
         return []
     return [
         *section(f'{level} Branch score spread', anchor),
-        'Recursive spread of expected scores across preparation branches. '
-        'Outcome volatility also includes game-result variation after '
-        'preparation ends. '
+        'How much expected scores differ between the branches of your preparation, including later replies. '
+        'Outcome volatility also counts how much game results vary once preparation ends. '
         f'{about("spread")}.',
         '',
         *table(
@@ -291,9 +287,9 @@ def character_section(scope, refs, top, level='###', anchor=None):
     profile = scope['position_profiles']['all']
     text = [
         *section(f'{level} Preparation, replies, and resulting positions', anchor),
-        f"**{reuse['reachable_distinct_decisions']} distinct own decisions**, "
-        f"**{number(p['effective_replies'])} effective opponent replies**, and "
-        f"**{number(profile['effective_pawn_structures'])} effective pawn structures** where preparation ends. "
+        f"**{reuse['reachable_distinct_decisions']:,} distinct own decisions**, "
+        f"**{number(p['effective_replies'], 1)} effective opponent replies**, and "
+        f"**{number(profile['effective_pawn_structures'], 1)} effective pawn structures** where preparation ends. "
         f"Reply data cover {percentage(p['recorded_reply_coverage'])} of reached opponent opportunities; "
         f"{percentage(p['sparse_recorded_opportunity_fraction'])} of recorded opportunities have sparse samples.",
         '',
@@ -302,46 +298,39 @@ def character_section(scope, refs, top, level='###', anchor=None):
         ['Games entering this scope', 'Distinct decisions encountered', 'Still unseen', 'Repeat encounters'],
         [
             [
-                row['games'],
-                number(row['expected_distinct_decisions']),
-                number(row['expected_unseen_decisions']),
-                number(row['expected_repeat_encounters']),
+                f"{row['games']:,}",
+                number(row['expected_distinct_decisions'], 1),
+                number(row['expected_unseen_decisions'], 1),
+                f"{row['expected_repeat_encounters']:,.0f}",
             ]
             for row in reuse['curve']
         ],
     )
-    text += ['Opponent positions contributing the most reply information:', '']
+    text += ['Opponent positions with the widest choice of replies, weighted by reach:', '']
     text += table(
         [
-            'Position reached by',
+            'Position',
             'Chapter source',
             'Reach',
             'Effective replies',
-            'Common reply (share)',
+            'Most common reply',
             'Games',
-            'Avg opponent rating',
+            'Opponent rating',
         ],
         [
             [
                 refs.position_cell(r),
                 refs.sources(r),
                 percentage(r['reach']),
-                number(r['effective_replies']),
-                escape(r['replies'][0]['san'])
-                + ' ('
-                + percentage(r['replies'][0]['probability_given_recorded_reply'])
-                + ')'
-                + '<br>Rating Δ vs parent: '
-                + rating_difference(r['replies'][0].get('opponent_rating'))
-                if r['replies']
-                else 'unavailable',
-                f"{r['recorded_reply_observations']:,}" + (' *' if r['sparse'] else ''),
+                number(r['effective_replies'], 1),
+                _common_reply(r['replies'][0]) if r['replies'] else 'unavailable',
+                count(r['recorded_reply_observations']) + (' *' if r['sparse'] else ''),
                 opponent_rating(r.get('opponent_rating')),
             ]
             for r in p['positions'][:top]
         ],
     )
-    text += ['Positions at the boundary of preparation:', '']
+    text += ['The positions where preparation ends:', '']
     features = []
     for name in ('queens', 'king_placement'):
         features.extend(
@@ -361,7 +350,7 @@ def character_section(scope, refs, top, level='###', anchor=None):
         ],
     )
     text += table(
-        ['Frequent pawn structure', 'Share', 'Example route', 'Chapter source / context', 'Example opponent rating']
+        ['Frequent pawn structure', 'Share', 'Example route', 'Chapter source', 'Example opponent rating']
         + (['Group opponent rating'] if scope.get('id') != 'overall' else []),
         [
             [
@@ -380,15 +369,21 @@ def character_section(scope, refs, top, level='###', anchor=None):
     return text
 
 
+def _common_reply(reply):
+    text = escape(reply['san']) + ' (' + percentage(reply['probability_given_recorded_reply']) + ')'
+    difference = rating_difference(reply.get('opponent_rating'))
+    return text if difference.startswith(('n/a', 'unavailable')) else f'{text}<br>{difference} rating vs parent'
+
+
 def vulnerabilities_section(scope, refs, top, level='###', anchor=None):
     if not scope:
         return []
     refs = refs.for_scope(scope.get('id'))
     text = [
         *section(f'{level} Vulnerabilities', anchor),
-        'Opponent replies rank by drag per 1,000 games; our moves rank by the '
-        'deficit against the parent database score. '
-        f'Rows overlap and cannot be added. {about("drag")}.',
+        'Drag is how far a move lowers the expected score. Opponent replies rank by drag per 1,000 games, which '
+        'also counts how often they come up; your moves rank by drag against the database score of the position '
+        f'they are played from. Rows overlap, so do not add them. {about("drag")}.',
         '',
     ]
     for prepared, name in ((False, 'Unprepared opponent replies'), (True, 'Prepared opponent replies')):
@@ -401,10 +396,10 @@ def vulnerabilities_section(scope, refs, top, level='###', anchor=None):
     rows = non_sparse_rows(scope.get('rankings', {}).get('own', []))[:top]
     if rows:
         text += [
-            '**Our selected moves**',
+            '**Your moves**',
             '',
-            'Drag = parent database score − repertoire score after our move. Reach '
-            'is context, not a multiplier in this ranking.',
+            'Drag = database score of the position − repertoire score after your move. '
+            'Gain split shows how much comes from the move itself and how much from later preparation.',
             '',
         ]
         text += own_move_table(rows, scope, refs)
@@ -424,9 +419,9 @@ def strengths_section(moves, positions, refs, top, level='###', sparse_threshold
     rows = non_sparse_rows((moves or {}).get('strengths', []))[:top]
     if rows:
         text += [
-            '**Our strongest moves**',
+            '**Your strongest moves**',
             '',
-            'Gain = repertoire score after our move − parent database score. Ranked by this direct difference.',
+            'Gain = repertoire score after your move − database score of the position.',
             '',
         ]
         text += own_move_table(rows, moves, refs, strongest=True)
@@ -436,7 +431,7 @@ def strengths_section(moves, positions, refs, top, level='###', sparse_threshold
             '**Positions contributing the most to the repertoire score**',
             '',
             'Contribution = reach × score, in points per 1,000 games, for prepared positions and unprepared replies. '
-            f'Rows overlap and must not be added. {about("contribution")}.',
+            f'Rows overlap, so do not add them. {about("contribution")}.',
             '',
         ]
         text += position_contribution_table(rows, positions, refs)
@@ -692,9 +687,9 @@ def common_positions_for_scope(scope, refs, limit=20, level='###', anchor=None):
     color = refs.color
     text = section(f'{level} Most common positions', anchor)
     text += [
-        'Reach includes every transposed route, and nested positions overlap, so do not add their reach. '
-        'Prepared rows show continuation scores; unprepared replies show cached database scores. '
-        f'Boards immediately before our prepared move are omitted. {about("position-reach")}.',
+        'Reach counts every move order, and a position\'s reach includes the positions after it, so do not add '
+        'rows. Prepared positions show the repertoire score; unprepared replies show the database score. '
+        f'A position where you always play the same move appears after that move. {about("position-reach")}.',
         '',
     ]
     if 'positions' not in scope:
@@ -721,21 +716,19 @@ def common_positions_for_scope(scope, refs, limit=20, level='###', anchor=None):
         if rows is prepared:
             text += table(
                 [
-                    'Position (representative line)',
+                    'Position',
                     'Chapter source',
                     reach,
-                    'Avg games per encounter',
                     'Repertoire score',
                     'Score spread',
-                    'Games at position / reply',
-                    'Avg opponent rating',
+                    'Games',
+                    'Opponent rating',
                 ],
                 [
                     [
                         position_label(r, color, refs),
                         refs.sources(r),
-                        percentage(r['reach']),
-                        games_per_encounter(r['reach']),
+                        reach_cell(r['reach']),
                         percentage(r.get('repertoire_score')),
                         spread_display(r.get('branch_score_spread')),
                         position_games(r),
@@ -748,21 +741,19 @@ def common_positions_for_scope(scope, refs, limit=20, level='###', anchor=None):
             # Preparation stops at these boards, so branch spread is zero by definition and is not shown.
             text += table(
                 [
-                    'Position (representative line)',
+                    'Position',
                     'Chapter source',
                     reach,
-                    'Avg games per encounter',
                     'Database score',
-                    'Games at position / reply',
-                    'Avg opponent rating',
+                    'Games',
+                    'Opponent rating',
                     'Rating Δ vs parent',
                 ],
                 [
                     [
                         position_label(r, color, refs),
                         refs.sources(r),
-                        percentage(r['reach']),
-                        games_per_encounter(r['reach']),
+                        reach_cell(r['reach']),
                         percentage(r.get('database_score')),
                         position_games(r),
                         opponent_rating(r.get('opponent_rating')),
@@ -799,8 +790,8 @@ def exits_section(scope, refs, top, level='###', anchor=None):
         return text + ['No modeled game leaves preparation in this scope.', '']
     shown = rows[:top]
     text += [
-        'Each row is a prepared position where games leave preparation, combining every unprepared reply from it. '
-        f'Unlike other rankings, these rows do not overlap. {about("exits")}.',
+        'The prepared positions where games leave your preparation, each combining every unprepared reply from it. '
+        f'Every game leaves preparation once, so unlike other tables these rows do not overlap. {about("exits")}.',
         '',
     ]
     values = []
@@ -810,25 +801,20 @@ def exits_section(scope, refs, top, level='###', anchor=None):
             label = f'[Starting position]({analysis_url(row["position"])})'
         else:
             label = linked_line(route, row['position'])
-        if row['leaf']:
-            label += f'<br>{color.title()} to move; no prepared reply'
         replies = row['replies']
-        listed = ', '.join(exit_reply(r, route) + ' ' + percentage(r['reach']) for r in replies[:3])
+        listed = '<br>'.join(exit_reply(r, route) + ' ' + percentage(r['reach']) for r in replies[:3])
         if len(replies) > 3:
             listed += f'<br>and {len(replies) - 3:,} more'
         if row['unrecorded']:
             listed += ('<br>' if listed else '') + f"Unrecorded replies {percentage(row['unrecorded'])}"
-        number_of_replies = (
-            'Your move' if row['leaf'] else f'{len(replies):,}' + (' + unrecorded' if row['unrecorded'] else '')
-        )
+        if row['leaf']:
+            listed = f'No prepared {color.title()} move'
         values.append(
             [
                 label,
                 refs.sources(row),
-                percentage(row['reach']),
-                games_per_encounter(row['reach']),
+                reach_cell(row['reach']),
                 percentage(row['share']),
-                number_of_replies,
                 listed or 'n/a',
                 percentage(row['score']),
             ]
@@ -839,9 +825,7 @@ def exits_section(scope, refs, top, level='###', anchor=None):
             'Preparation ends after',
             'Chapter source',
             reach,
-            'Avg games per encounter',
-            'Share of games at this position',
-            'Unprepared replies',
+            'Of games at this position',
             'Most common unprepared replies',
             'Database score after leaving',
         ],
@@ -907,24 +891,22 @@ def depth_section(scope, level='###', anchor=None):
     overall = scope.get('id', 'overall') == 'overall'
     text += [
         (
-            'Probabilities count games with this color. '
+            'How many of your own moves games stay in preparation for. '
             if overall
-            else 'Probabilities are conditional on first reaching any position in this '
-            'chapter, through any move order. '
+            else 'How many of your own moves games stay in preparation for, among games entering this chapter. '
         )
-        + 'Depth counts remaining own prepared moves; the second column is '
-        'cumulative and ending columns stop at exactly that depth. '
-        f'Ending columns that are zero at every depth are omitted. {about("depth-distribution")}.',
+        + '*At least this many* is cumulative; the other columns show where games end at exactly that depth. '
+        f'Columns that are zero at every depth are left out. {about("depth-distribution")}.',
         '',
     ]
     bounds = distribution['expected_bounds']
     mean = (
-        number(distribution['expected_moves'])
+        number(distribution['expected_moves'], 1)
         if distribution['expected_moves'] is not None
-        else ' to '.join(map(number, bounds))
+        else ' to '.join(number(bound, 1) for bound in bounds)
     )
     median = distribution.get('median_moves')
-    text += [f'Mean **{mean} own moves**; median **{median if median is not None else "unresolved"}**.', '']
+    text += [f'Average **{mean} own moves**; median **{median if median is not None else "unresolved"}**.', '']
     endings = {r['own_moves']: r for r in distribution['endings']}
     rows = []
     for r in distribution['survival']:
@@ -946,13 +928,13 @@ def depth_section(scope, level='###', anchor=None):
         [
             'Own moves prepared',
             'At least this many',
-            'Prepared endpoint at this depth',
-            'Unprepared reply at this depth',
-            'Other ending at this depth',
-            'Unresolved from this depth',
+            'Ends at a prepared endpoint',
+            'Ends at an unprepared reply',
+            'Ends otherwise',
+            'Unresolved from here',
         ],
         rows,
-        {'Prepared endpoint at this depth', 'Other ending at this depth', 'Unresolved from this depth'},
+        {'Ends at a prepared endpoint', 'Ends otherwise', 'Unresolved from here'},
     )
     return text + table(headers, rows)
 
@@ -961,11 +943,9 @@ def entry_routes_section(chapter, scope, refs, level='##'):
     refs = refs.for_scope(chapter['id'])
     text = [
         *section(f'{level} Exact first-entry positions', f'{refs.anchor(chapter["id"])}-entries'),
-        'Weights are conditional on first reaching any position in this '
-        'chapter, through any move order; each game counts once. '
-        'Entry-position weight combines every first-arrival route to the same '
-        'board; example-route weight belongs only to the displayed route. '
-        f'{about("first-entry")}.',
+        'Every position where games first enter this chapter, as a share of the games that enter it; each game '
+        'counts once. The example is the most likely route to the position, and *share of this route* counts that '
+        f'route alone. {about("first-entry")}.',
         '',
     ]
     routes = (scope or {}).get('entry_routes', {})
@@ -978,19 +958,19 @@ def entry_routes_section(chapter, scope, refs, level='##'):
             rows.append(
                 [
                     linked_line(example['line'], r['position']),
+                    refs.sources(dict(original, _opening_entry=True)),
                     percentage(r['conditional_first_entry_weight']),
                     percentage(example['conditional_probability']),
-                    refs.sources(dict(original, _opening_entry=True)),
                     opponent_rating(original.get('opponent_rating')),
                 ]
             )
         text += table(
             [
-                'First-entry example',
-                'Entry-position weight',
-                'Example-route weight',
-                'Entry-position sources',
-                'Entry-position opponent rating',
+                'Entry position (example route)',
+                'Chapter source',
+                'Share of entries',
+                'Share of this route',
+                'Opponent rating',
             ],
             rows,
         )
@@ -1004,12 +984,12 @@ def entry_routes_section(chapter, scope, refs, level='##'):
         '',
     ]
     return text + table(
-        ['Entry position (representative line)', 'First-entry weight', 'Chapter sources', 'Avg opponent rating'],
+        ['Entry position', 'Chapter source', 'Share of entries', 'Opponent rating'],
         [
             [
                 linked_line(' '.join(e['path']), e['position']),
-                percentage(e.get('conditional_first_entry_weight')),
                 refs.sources(dict(e, _opening_entry=True)),
+                percentage(e.get('conditional_first_entry_weight')),
                 opponent_rating(e.get('opponent_rating')),
             ]
             for e in chapter['entries']
@@ -1027,9 +1007,8 @@ def openings_section(bundle, refs):
     rows = data['openings']
     anchors = {row['id']: f'{color}-opening-{i}' for i, row in enumerate(rows, 1)}
     text += [
-        'Reach counts first arrival at a named opening or its named '
-        'variations, across all move orders under the selected repertoire. '
-        f'Families and variations overlap, so their reaches must not be added. {about("opening-names")}.',
+        'Reach counts the first arrival at a named opening or one of its named variations, by any move order. '
+        f'Openings and their variations overlap, so do not add their reach. {about("opening-names")}.',
         '',
     ]
     if not rows:
@@ -1037,10 +1016,9 @@ def openings_section(bundle, refs):
     text += opening_table(rows[:20], refs, anchors)
     coverage = data['coverage']
     text += [
-        f"{len(rows)} reached categories; "
-        f"{coverage['named_repertoire_positions']} repertoire boards have exact "
-        "opening names. "
-        f"A known name is reached in {percentage(coverage['ever_classified_probability'])} of modeled games.",
+        f"{len(rows)} openings and variations are reached; "
+        f"{coverage['named_repertoire_positions']:,} repertoire positions have an exact opening name. "
+        f"{percentage(coverage['ever_classified_probability'])} of games reach a named opening.",
         '',
     ]
     if len(rows) > 20:

@@ -297,7 +297,7 @@ def test_cache_only_ledger_preserves_scores_and_has_no_overall_mean(tmp_path, mo
     color_totals = full.split('### Score and evidence limits')[1].split('### Uncertainty priorities')[0]
     assert 'opponent rating' not in overview.lower() + color_totals.lower()
     chapters = '\n'.join(p.read_text(encoding='utf-8') for p in (tmp_path / 'chapters').glob('W*.md'))
-    assert 'Avg opponent rating' in full and 'entry-baseline opponent rating' in chapters
+    assert 'Opponent rating' in full and 'at entry' in chapters and 'in the scored games' in chapters
     assert '\u2014' not in full + chapters
     assert 'Rating Δ vs parent' in full
     changed = path.with_suffix('.character.json')
