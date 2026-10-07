@@ -51,7 +51,7 @@ def test_pooled_estimate_from_group_moments():
     result = estimate([[1, 1, 1], [1, -1, 1]], True)
     assert result['correlation'] == pytest.approx(0)
     assert result['clusters'] == 2 and 'confidence_intervals_95' not in result
-    assert estimate([], True)['status'] == 'too few groups'
+    assert estimate([], True)['status'] == 'too_few_groups'
 
 
 def fixture(tmp_path):

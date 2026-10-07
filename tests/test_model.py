@@ -5,37 +5,8 @@ import numpy as np
 import pytest
 from repertoire_score.graph import parse, key, resolve, topology, conflicts, infer_entries
 from repertoire_score.explorer import validate, Explorer
-from repertoire_score.model import prepare, empirical
-from repertoire_score.uncertainty import Posterior
-from repertoire_score.evaluate import backward, forward, summarize, chapter_score, KNOWN, UNKNOWN, COMPLETED, LEAF, DEVIATION, OTHER
-
-
-def graph(tmp_path, text):
-    path = tmp_path / 'fixture.pgn'
-    path.write_text(text, encoding='utf-8')
-    return parse(path)
-
-
-def position(moves):
-    b = chess.Board()
-    for m in moves.split():
-        b.push_san(m)
-    return key(b)
-
-
-def data(w, d, b, moves=()):
-    return dict(white=w, draws=d, black=b, moves=[dict(uci=m, white=a, draws=c, black=e) for m,a,c,e in moves])
-
-
-def setup(g, color, evidence, policy=None):
-    """Model, order, empirical sample, Posterior, empirical values and posterior-mean values."""
-    t = resolve(g, color, policy or {})
-    order = topology(t, g.roots)
-    model = prepare(g, t, order, color, evidence)
-    raw = empirical(model, color)
-    values = backward(model, order, raw, 30)
-    posterior = Posterior(model, order, color, [0.5]*3, 30)
-    return model, order, raw, posterior, values, posterior.values
+from repertoire_score.evaluate import forward, summarize, chapter_score, KNOWN, UNKNOWN, COMPLETED, LEAF, DEVIATION, OTHER
+from helpers import graph, position, data, setup
 
 
 def test_forced_own_move_deviations_and_conservation(tmp_path):
@@ -228,7 +199,7 @@ def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
         def close(self):
             pass
     monkeypatch.setattr(cli,'Explorer',FakeExplorer)
-    args = SimpleNamespace(config=None,pgn=str(tmp_path/'fixture.pgn'),color='white',output=str(tmp_path/'report'),command='run',cache=str(tmp_path/'cache'),offline=True,refresh=False,simulations=100,seed=1,prior=[.5]*3,sparse_threshold=30,tolerance=1)
+    args = SimpleNamespace(config=None,pgn=str(tmp_path/'fixture.pgn'),color='white',output=str(tmp_path/'report'),command='run',cache=str(tmp_path/'cache'),offline=True,refresh=False,prior=[.5]*3,sparse_threshold=30,tolerance=1)
     cli.analyze(args)
     result = json.loads((tmp_path/'report.json').read_text())
     assert result['overall']['raw_empirical_score'] == pytest.approx(.7)

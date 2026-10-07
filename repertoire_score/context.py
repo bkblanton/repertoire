@@ -13,6 +13,7 @@ from . import SCHEMA_VERSION
 from .explorer import CacheMiss, Explorer
 from .graph import parse
 from .layout import data_json
+from .schema import CompanionManifest
 
 DEFAULT_CACHE = '.cache/explorer'
 
@@ -115,7 +116,7 @@ class AnalysisContext:
                                score=c['score']))
         return result
 
-    def companion_manifest(self, **fields):
+    def companion_manifest(self, **fields) -> CompanionManifest:
         """Provenance shared by every companion: the score snapshot, its source and the cache reads."""
         manifest = dict(created_at=datetime.now(timezone.utc).isoformat(), schema_version=SCHEMA_VERSION,
                         report_path=str(self.path.resolve()), report_sha256=self.report_sha256,

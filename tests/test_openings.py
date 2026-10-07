@@ -13,8 +13,8 @@ from repertoire_score.openings import (analyze, classify, cohort, entered_reach,
                                        chapter_sources, most_common_source, name_flow, named_regions, opening_identity)
 from repertoire_score.preparation import Evaluator, chess_facts
 from repertoire_score.sharpness import recursive_wdl
-from test_chapter_policies import run_fixture
-from test_model import data, graph, position
+from helpers import run_fixture
+from helpers import data, graph, position
 
 
 def named(evidence, k, name, eco='A00'):
@@ -234,7 +234,7 @@ def test_cache_only_analysis_preserves_scores_sources_and_validates_staleness(tm
 
 
 def test_opening_tables_show_spread_baselines_and_entry_details(tmp_path):
-    from test_consolidated import check_score_tables
+    from helpers import check_score_tables
     g, e, ev = transposing(tmp_path)
     identity = named(e, position('Nf3 d5'), 'Family: One')
     catalog, exact, labels, memberships = classify(g, e, ev.facts, True)

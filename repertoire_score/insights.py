@@ -4,6 +4,7 @@ import math
 
 
 from .board_cache import children, fen_number, move_text, next_number, san
+from .status import Status
 
 
 ENDING_TYPES = ('prepared_endpoint', 'unprepared_reply', 'game_over', 'other_stop', 'unresolved_distribution')
@@ -16,7 +17,7 @@ def depth_distribution(evaluator, starts):
     a finite interval between moves already played and the longest continuation.
     """
     if not starts:
-        return dict(status='unresolved_entry_weights', unit='own_moves', endings=[], survival=[],
+        return dict(status=Status.UNRESOLVED_ENTRY_WEIGHTS, unit='own_moves', endings=[], survival=[],
                     expected_moves=None, expected_bounds=None, median_moves=None, median_bounds=None)
     if any(not math.isfinite(w) or w < 0 for w in starts.values()) or not math.isclose(sum(starts.values()), 1., abs_tol=1e-10):
         raise ValueError('Depth distribution requires normalized nonnegative starting weights')
@@ -90,7 +91,7 @@ def depth_distribution(evaluator, starts):
         return None
 
     median_bounds = [median(False), median(True)]
-    return dict(status='resolved' if low == high else 'unresolved_move_distribution', unit='own_moves',
+    return dict(status=Status.RESOLVED if low == high else Status.UNRESOLVED_MOVE_DISTRIBUTION, unit='own_moves',
                 expected_moves=low if low == high else None, expected_bounds=[low, high],
                 median_moves=median_bounds[0] if median_bounds[0] == median_bounds[1] else None,
                 median_bounds=median_bounds,
@@ -130,7 +131,7 @@ def first_entry_examples(evaluator, roots, region, expected_probability=None, ex
     if expected_probability is not None and not math.isclose(total, expected_probability, abs_tol=1e-10):
         raise AssertionError('First-entry examples differ from saved chapter reach')
     if not total:
-        return dict(status='no_reachable_entry', entry_probability=total, positions=[])
+        return dict(status=Status.NO_REACHABLE_ENTRY, entry_probability=total, positions=[])
     if expected_weights is not None:
         for k in set(arrivals) | set(expected_weights):
             if not math.isclose(arrivals.get(k, 0.) / total, expected_weights.get(k, 0.), abs_tol=1e-10):
@@ -152,4 +153,4 @@ def first_entry_examples(evaluator, roots, region, expected_probability=None, ex
                          example=dict(root_position=root, root_fen=evaluator.graph.nodes[root].fen,
                                       path_uci=list(path), path_san=sans, line=' '.join(text) or '(PGN root)',
                                       root_probability=probability, conditional_probability=probability / total)))
-    return dict(status='resolved', entry_probability=total, positions=rows)
+    return dict(status=Status.RESOLVED, entry_probability=total, positions=rows)

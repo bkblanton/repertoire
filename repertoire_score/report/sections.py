@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..status import Status
 from ..stats import cell
 from .bundle import scope_by_id
 from .derive import combined_overall, exit_points, non_sparse_rows, position_contributions, unanswered_position, visible_positions
@@ -428,7 +429,7 @@ def entry_routes_section(chapter, scope, refs, level='##'):
             f'{about("first-entry")}.', '']
     routes = (scope or {}).get('entry_routes', {})
     entries = {e['position']: e for e in chapter['entries']}
-    if routes.get('status') == 'resolved':
+    if routes.get('status') == Status.RESOLVED:
         rows = []
         for r in routes['positions']:
             original = entries[r['position']]

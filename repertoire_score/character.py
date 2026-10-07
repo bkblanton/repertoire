@@ -6,6 +6,7 @@ import math
 import chess
 import numpy as np
 
+from .status import Status
 from .board_cache import STARTING_POSITION, children, fen_number, move_text, next_number, san, turn
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import counts
@@ -297,7 +298,7 @@ def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
     for scope in scopes:
         expected = scope.pop('score')
         if not scope['starts']:
-            scope['status'] = 'unavailable: unresolved entry weights'
+            scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
             continue
         evaluator = Evaluator(graph,color,evidence,facts,manifest['configuration'].get('policy',{}),
                               chapter=scope['chapter'],sparse=manifest['sparse_threshold'])
@@ -310,7 +311,7 @@ def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
         depth = expected.get('prepared_depth',{}).get('expected_moves')
         if depth is not None and not math.isclose(depth,scope['reuse']['expected_encounters_per_game'],abs_tol=1e-10):
             raise AssertionError('Character report did not reproduce saved prepared depth')
-        scope['status'] = 'partial: unknown opponent distribution' if scope['unresolved_opponent_distribution_mass'] else 'resolved'
+        scope['status'] = Status.UNRESOLVED_OPPONENT_DISTRIBUTION if scope['unresolved_opponent_distribution_mass'] else Status.RESOLVED
     analysis.require_source('character analysis')
     result = dict(color=analysis.saved['color'],scopes=scopes,manifest=analysis.companion_manifest(
                 games=list(games),source_pgn_unchanged=True,

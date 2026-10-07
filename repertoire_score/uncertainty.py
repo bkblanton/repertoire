@@ -14,6 +14,7 @@ from functools import lru_cache
 
 import numpy as np
 
+from .schema import Posterior
 from .evaluate import COMPLETED, KNOWN, LEAF, DEVIATION, OTHER, UNKNOWN, backward, can_enter
 
 Z95 = 1.959963984540054
@@ -114,7 +115,7 @@ def comparison_interval(mean, variance, component=None, coefficient=1., scale=10
     return [scale * (mean - math.sqrt(below * below + rest)), scale * (mean + math.sqrt(above * above + rest))]
 
 
-def summary(mean, variance):
+def summary(mean, variance) -> Posterior:
     """The saved `posterior` block for a score: mean component vector (see evaluate) and score variance."""
     unresolved = float(mean[UNKNOWN])
     return {

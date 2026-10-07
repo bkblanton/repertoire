@@ -1,4 +1,5 @@
 """Directed chapter reach after first entering another chapter."""
+from .status import Status
 
 
 def hitting_bounds(model, order, sampled, destination):
@@ -46,10 +47,10 @@ def chapter_transitions(model, order, sampled, chapters, destinations):
                 high = sum(w * hits[k][1] for k, w in weights.items())
                 row['conditional_bounds'] = [low, high]
                 if high == low:
-                    row.update(conditional_probability=low, joint_probability=reach*low, status='resolved')
+                    row.update(conditional_probability=low, joint_probability=reach*low, status=Status.RESOLVED)
                 else:
-                    row['status'] = 'unresolved_destination_reach'
+                    row['status'] = Status.UNRESOLVED_DESTINATION_REACH
             else:
-                row['status'] = 'unresolved_or_zero_source_reach'
+                row['status'] = Status.UNRESOLVED_SOURCE_REACH
             rows.append(row)
     return rows

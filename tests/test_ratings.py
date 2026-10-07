@@ -9,8 +9,8 @@ from repertoire_score.preparation import Evaluator, chess_facts
 from repertoire_score.ratings import (Context, analyze, first_entries, mixture, move_context,
                                       reply_rating, response_rating, unavailable,
                                       comparison_fields, add_reply_differences)
-from test_model import data, graph, position
-from test_chapter_policies import run_fixture
+from helpers import data, graph, position
+from helpers import run_fixture
 
 
 def rated(w, d, b, moves=()):

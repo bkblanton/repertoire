@@ -10,6 +10,7 @@ from .explorer import Explorer, add_token_option, apply_token_file, counts
 from .graph import resolve, topology
 from .model import empirical, prepare, score
 from .attribution import enrich
+from .status import Status
 
 
 def reaches(model, order, sampled, roots):
@@ -207,7 +208,7 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
         # A single disconnected entry has a meaningful conditional report but no study mass.
         if not weights and len(entries) == 1:
             weights = {entries[0]: 1.0}
-        if chapter['score'].get('status') == 'unresolved_first_entry_weights':
+        if chapter['score'].get('status') == Status.UNRESOLVED_ENTRY_WEIGHTS:
             weights = {}
         if weights:
             conditional = sum(w*cv[k] for k, w in weights.items())
@@ -226,7 +227,7 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
                              entry_baseline_score=chapter.get('entry_baseline', {}).get('raw_score'),
                              delta_vs_entry_baseline_pp=chapter.get('entry_baseline', {}).get('difference_pp'),
                              expected_prepared_depth=chapter['score'].get('prepared_depth', {}).get('expected_moves'),
-                             status='evaluated' if weights else 'unresolved_entry_weights', **scope))
+                             status=Status.EVALUATED if weights else Status.UNRESOLVED_ENTRY_WEIGHTS, **scope))
     # The signed deviations from each opponent mean must cancel, including residual stops.
     max_balance_error = 0.0
     for context in contexts.values():

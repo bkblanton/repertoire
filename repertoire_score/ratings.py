@@ -12,6 +12,7 @@ from .board_cache import STARTING_POSITION, children, turn
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256, stage_main
 from .explorer import counts
 from .preparation import Evaluator, chess_facts
+from .status import Status
 
 
 def rating(known=0., moment=0., *, basis, **details):
@@ -289,13 +290,13 @@ def analyze(path, cache=DEFAULT_CACHE):
                     raise AssertionError('Rating first-entry flow differs from saved chapter weights')
         scope = dict(id=sid, policy_basis=prep['policy_basis'], positions={}, stops={}, moves={})
         if not prep['starts']:
-            scope['status'] = 'unresolved entry weights'; output.append(scope); continue
+            scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS; output.append(scope); continue
         context = Context(e, prep['starts'], initial)
         value = e.evaluate(prep['starts'])
         expected = saved['overall'] if not cid else chapters[cid]['score']
         if not math.isclose(value[0], expected['resolved_contribution'], abs_tol=1e-10) or not math.isclose(value[1], expected['unresolved_mass'], abs_tol=1e-10):
             raise AssertionError('Rating context did not reproduce saved score')
-        scope.update(context.inventory()); scope['status'] = 'available'
+        scope.update(context.inventory()); scope['status'] = Status.AVAILABLE
         if cid:
             scope['score_evidence'] = context.score_evidence()
             scope['entry_baseline'] = mixture([(p, initial[k]) for k, p in prep['starts'].items()], 'weighted local first-entry ratings')

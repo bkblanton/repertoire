@@ -13,6 +13,7 @@ from .preparation import Evaluator, chess_facts
 from .ratings import (comparison_fields, comparison_mixture, first_entries as rating_entries,
                       mixture as rating_mixture, reply_rating, response_rating)
 from .sharpness import recursive_wdl, stopping_wdl, summarize
+from .status import Status
 
 
 def opening_identity(value):
@@ -135,7 +136,7 @@ def chapter_sources(graph, saved, evidence, facts, exact, overall_flows):
             starts = {chapter['entries'][0]['position']: 1.}
         scope = dict(id=chapter['id'], positions={}, entry_sources={})
         if not starts:
-            scope['status'] = 'unresolved entry weights'
+            scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
             scopes.append(scope)
             continue
         evaluator = Evaluator(graph, saved['color'] == 'white', evidence, facts,
@@ -155,7 +156,7 @@ def chapter_sources(graph, saved, evidence, facts, exact, overall_flows):
             raise AssertionError('Opening sources did not reproduce the chapter comparison score')
         flow = name_flow(evaluator, starts, exact, initial=initial)
         scope['positions'] = {k: most_common_source(v) for k, v in flow.items()}
-        scope['status'] = 'resolved'
+        scope['status'] = Status.RESOLVED
         scopes.append(scope)
     return scopes
 

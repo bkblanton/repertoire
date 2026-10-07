@@ -11,8 +11,8 @@ from repertoire_score.character import board_fingerprint
 from repertoire_score.explorer import Explorer
 from repertoire_score.graph import Graph, Node, key, parse, resolve
 from repertoire_score.preparation import chess_facts
-from test_model import data, position
-from test_vulnerabilities import cache_row
+from helpers import data, position
+from helpers import cache_row
 
 
 def test_shared_geometry_preserves_legal_moves_terminals_and_graph_membership():

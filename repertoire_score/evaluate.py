@@ -1,6 +1,9 @@
 """DAG evaluation, first-entry weighting and probability conservation checks."""
 import numpy as np
 
+from .schema import ScoreSummary
+from .status import Status
+
 # Vector components: resolved contribution, unresolved mass, sparse contribution,
 # sparse mass, leaf mass, deviation mass, other mass, prior-completed score.
 KNOWN, UNKNOWN, SPARSE_KNOWN, SPARSE, LEAF, DEVIATION, OTHER, COMPLETED = range(8)
@@ -74,7 +77,7 @@ def forward(model, order, sampled, roots, width=1, stop_at=(), entering=None):
     return stops, entries
 
 
-def summarize(raw, posterior):
+def summarize(raw, posterior) -> ScoreSummary:
     """Empirical score fields from the raw component vector, plus the posterior block from uncertainty.py."""
     r = raw[:, 0]
     u = float(r[UNKNOWN])
@@ -100,7 +103,7 @@ def chapter_score(model, order, raw_sample, values, root_weights, entries, poste
     unresolved_entry_mass = sum(float(flow[0]) for (k,j),flow in raw_stops.items()
                                 if model[k].branches[j].kind == "unresolved_distribution" and entering[k])
     if unresolved_entry_mass > 0 and len(entries) > 1:
-        return {"status": "unresolved_first_entry_weights", "entry_probability": None,
+        return {"status": Status.UNRESOLVED_ENTRY_WEIGHTS, "entry_probability": None,
                 "entry_probability_bounds": [float(raw_reach[0]),float(raw_reach[0])+unresolved_entry_mass],
                 "conditional_score_bounds": [min(values[k][KNOWN,0] for k in entries),
                                              max(values[k][KNOWN,0]+values[k][UNKNOWN,0] for k in entries)]}
@@ -111,7 +114,7 @@ def chapter_score(model, order, raw_sample, values, root_weights, entries, poste
             summary = summarize(values[k], posterior.mixture({k: 1.}))
             summary["conditional_basis"] = "single entry position, even though root reach is zero"
         else:
-            summary = {"status": "unreachable_multiple_entries_require_conditional_weights"}
+            summary = {"status": Status.UNREACHABLE_MULTIPLE_ENTRIES}
     else:
         if chapter['summary'] is None:
             raise ValueError("Posterior first-entry weights are zero; use a stronger prior or explicit entries")

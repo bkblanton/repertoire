@@ -20,6 +20,8 @@ Work from the repository root and preserve unrelated local changes. Use uv for P
 | Summary, full report, chapter and opening pages, exit points, Lichess links, cross-page link resolution and nested contents | the [report](../repertoire_score/report) package: `format`, `markdown`, `bundle` (loading saved analyses), `links`, `derive`, `tables`, `sections`, `definitions`, `pages` and `generate`; [render.py](../repertoire_score/render.py) is its command line |
 | Lichess study export | [studies.py](../repertoire_score/studies.py) |
 | Incremental stage orchestration | [build.py](../repertoire_score/build.py) |
+| Shared loading, evidence reads and companion manifests for the cache-only stages | [context.py](../repertoire_score/context.py) |
+| Saved JSON format and status values | [schema.py](../repertoire_score/schema.py) (TypedDicts), [status.py](../repertoire_score/status.py) |
 
 Numerical analyses produce saved JSON; the `report` package combines matching saved results and does not rerun estimates. Keep network access out of the renderer and cache-only metrics.
 
@@ -53,7 +55,7 @@ uv run --no-sync pytest -q
 uv run --no-sync ruff check
 ```
 
-GitHub Actions runs both on Ubuntu and Windows for every push to `main` and every pull request. Shared pytest fixtures live in `tests/conftest.py`. Tests use synthetic data and cache fixtures; a live token is not required. On Windows, if pytest cannot write to the default temp folder:
+GitHub Actions runs both on Ubuntu and Windows for every push to `main` and every pull request. Shared test helpers (small PGN graphs, Explorer tables, cached runs) live in `tests/helpers.py`, and pytest fixtures in `tests/conftest.py`. Tests use synthetic data and cache fixtures; a live token is not required. On Windows, if pytest cannot write to the default temp folder:
 
 ```powershell
 $env:TMP = Join-Path $PWD '.cache/tmp'

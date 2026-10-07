@@ -2,51 +2,14 @@ import json
 from types import SimpleNamespace
 
 import chess
-import httpx
 import pytest
 
 from repertoire_score import score as cli
 from repertoire_score.graph import chapter_policy_overrides, resolve
 from repertoire_score.vulnerabilities import analyze as vulnerabilities
-from test_model import data, graph, position
-from test_vulnerabilities import cache_row
-
-
-ADVANCE = '[ChapterURL "https://lichess.org/study/test/advance"]\n[ChapterName "Advance"]\n\n1. e4 e6 2. d4 d5 3. e5 c5 4. c3 *'
-TARRASCH = '[ChapterURL "https://lichess.org/study/test/tarrasch"]\n[ChapterName "Tarrasch Nf6"]\n\n1. e4 e6 2. d4 d5 3. Nd2 Nf6 4. e5 *'
-SPLIT = '[ChapterURL "https://lichess.org/study/test/split"]\n[ChapterName "Tarrasch c5"]\n\n1. e4 e6 2. d4 d5 3. Nd2 c5 4. exd5 *'
-
-
-def run_fixture(tmp_path, monkeypatch, common_entry=False, alternative_first=False, multiple_entries=False):
-    def forbidden(*args, **kwargs):
-        raise AssertionError('A fully cached comparison must not use the network')
-    monkeypatch.setattr(httpx.Client, 'request', forbidden)
-    parts = [TARRASCH, SPLIT, ADVANCE] if alternative_first else [ADVANCE, TARRASCH, SPLIT]
-    g = graph(tmp_path, '\n\n'.join(parts))
-    cache = tmp_path/'cache'
-    cache.mkdir(exist_ok=True)
-    leaves = {position('e4 e6 d4 d5 e5 c5 c3'): 40,
-              position('e4 e6 d4 d5 Nd2 Nf6 e5'): 90,
-              position('e4 e6 d4 d5 Nd2 c5 exd5'): 80}
-    for k, n in g.nodes.items():
-        if k in leaves:
-            evidence = data(leaves[k], 0, 100-leaves[k])
-        else:
-            moves = list(n.edges)
-            weights = [60, 40] if k == position('e4 e6 d4 d5 Nd2') else [100//len(moves)]*len(moves)
-            evidence = data(50, 0, 50, [(move, weight//2, 0, weight//2) for move, weight in zip(moves, weights)])
-        cache_row(cache, k, evidence)
-    config = tmp_path/'config.json'
-    configuration = {'entries': {c['id']: [{'path': ['e4', 'e6']}] for c in g.chapters}} if common_entry else {}
-    if multiple_entries:
-        configuration.setdefault('entries', {})['tarrasch'] = [
-            {'path': ['e4', 'e6', 'd4', 'd5', 'Nd2', move]} for move in ('Nf6', 'c5')]
-    config.write_text(json.dumps(configuration))
-    args = SimpleNamespace(config=str(config), pgn=str(tmp_path/'fixture.pgn'), color='white',
-                           output=str(tmp_path/'white'), command='run', cache=str(cache), offline=True,
-                           refresh=False, simulations=100, seed=1, prior=[.5]*3, sparse_threshold=30, tolerance=1)
-    cli.analyze(args)
-    return json.loads((tmp_path/'white.json').read_text()), cache
+from helpers import data, graph, position
+from helpers import cache_row
+from helpers import run_fixture
 
 
 def test_chapter_local_mainline_order_is_independent_of_global_edge_order(tmp_path):
@@ -128,8 +91,8 @@ def test_automatic_entry_falls_back_when_only_discarded_variations_are_unique(tm
                    position('e4 e5'): data(70, 0, 30)}.items():
         cache_row(cache, k, row)
     args = SimpleNamespace(config=None, pgn=str(tmp_path/'fixture.pgn'), color='white', output=str(tmp_path/'white'),
-                           command='run', cache=str(cache), offline=True, refresh=False, simulations=100,
-                           seed=1, prior=[.5]*3, sparse_threshold=30, tolerance=1)
+                           command='run', cache=str(cache), offline=True, refresh=False,
+                           prior=[.5]*3, sparse_threshold=30, tolerance=1)
     cli.analyze(args)
     report = json.loads((tmp_path/'white.json').read_text())
     assert [c['score']['raw_empirical_score'] for c in report['chapters']] == pytest.approx([.7, .7])

@@ -5,7 +5,7 @@ import pytest
 
 from repertoire_score.gaps import distribution
 from repertoire_score.preparation import Evaluator, chess_facts
-from test_model import graph, data, position
+from helpers import graph, data, position
 
 
 def evaluator(g, evidence, policy=None, color=True):

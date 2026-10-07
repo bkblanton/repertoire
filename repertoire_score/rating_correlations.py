@@ -10,6 +10,7 @@ import numpy as np
 
 from .stats import connected_groups, correlation, rank
 from .report.format import score_cell, score_points
+from .status import Status
 
 
 def finite(value):
@@ -38,11 +39,11 @@ def estimate(moments, centered):
     """Pooled correlation and slope from per-group sufficient moments."""
     a = np.asarray(moments, dtype=float)
     if not len(a):
-        return dict(correlation=None, slope_percent_per_100_rating=None, clusters=0, status='too few groups')
+        return dict(correlation=None, slope_percent_per_100_rating=None, clusters=0, status=Status.TOO_FEW_GROUPS)
     r, slope = point(a.sum(axis=0), centered)
     return dict(correlation=float(r) if finite(float(r)) else None,
                 slope_percent_per_100_rating=float(slope) if finite(float(slope)) else None,
-                clusters=len(a), status='calculated')
+                clusters=len(a), status=Status.CALCULATED)
 
 
 def within_parent(rows):

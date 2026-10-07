@@ -4,9 +4,9 @@ import pytest
 from repertoire_score.character import (analyze, board_fingerprint, entropy, exposure,
                                        position_profile, reuse_metrics, scope_metrics)
 from repertoire_score.preparation import Evaluator, chess_facts
-from test_model import graph, data, position
-from test_preparation import sample
-from test_chapter_policies import run_fixture
+from helpers import graph, data, position
+from helpers import sample
+from helpers import run_fixture
 
 
 def test_reuse_exact_independent_games_and_numerical_stability():

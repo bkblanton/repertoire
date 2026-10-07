@@ -15,7 +15,8 @@ from repertoire_score.report.bundle import load
 from repertoire_score.report.pages import summary_report
 from repertoire_score.report.format import spread_display
 from repertoire_score.report.markdown import compressed_columns, report_navigation, table
-from test_chapter_policies import run_fixture
+from helpers import run_fixture
+from helpers import check_score_tables
 
 
 def chapter_pages(directory, report):
@@ -362,26 +363,6 @@ def test_centipawn_equivalent_is_direct_and_delta_subtracts_converted_scores():
         assert cp_change(score, baseline) == 'unavailable'
 
 
-def check_score_tables(text):
-    """CP appears only beside headline deltas, and each one reproduces C(score) - C(baseline)."""
-    checked = 0
-    for block in re.findall(r'(?m)(?:^\|.*\|\n)+', text):
-        rows = [[cell.strip() for cell in row.strip().strip('|').split('|')] for row in block.splitlines()]
-        headers = rows[0]
-        for row in rows[2:]:
-            assert len(row) == len(headers)
-            for header, value in zip(headers, row):
-                if ' cp)' not in value:
-                    continue
-                assert header == 'Delta' and {'Starting baseline', 'Repertoire score'} <= set(headers), (header, value)
-                base, score = (float(row[headers.index(h)].rstrip('%')) / 100 for h in ('Starting baseline', 'Repertoire score'))
-                shown = float(re.search(r'\(([+-]?\d+) cp\)', value)[1])
-                # Displayed scores are rounded, so allow for their rounding as well as the whole-number CP.
-                assert shown == pytest.approx(centipawn_delta(score, base), abs=2.)
-                checked += 1
-    return checked
-
-
 def test_compressed_columns_preserve_values_and_inputs():
     headers = ['Line', 'Position reach', 'Avg games per encounter', 'Opening', 'ECO', 'Avg opponent rating', 'Rating Δ vs parent']
     rows = [['1. e4', '20.00%', '5', 'Kings Pawn', 'B00', '1,800 (90.0% rated)', '+30']]
@@ -503,7 +484,7 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
 
 
 def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(complete):
-    from test_model import position
+    from helpers import position
     path, report = complete
     bundle = load([path])[0]
     refs = Chapters(bundle['report'])
@@ -648,7 +629,7 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
     path, white = complete
     args = SimpleNamespace(config=str(path.parent/'config.json'), pgn=white['manifest']['input_path'], color='black',
                            output=str(path.parent/'black'), command='run', cache=str(path.parent/'cache'), offline=True,
-                           refresh=False, simulations=100, seed=1, prior=[.5]*3, sparse_threshold=30, tolerance=1)
+                           refresh=False, prior=[.5]*3, sparse_threshold=30, tolerance=1)
     cli.analyze(args)
     black_path = path.parent/'black.json'
     bundles = generate([path, black_path])
@@ -735,7 +716,7 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
 
 
 def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoints():
-    from test_model import position
+    from helpers import position
     def row(path, kind, turn, reach):
         return dict(position=position(path), line=path, kind=kind, to_move=turn, reach=reach, is_starting_position=False,
                     repertoire_score=.6, database_score=.45, games=1234)
@@ -776,7 +757,7 @@ def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoi
 
 
 def test_position_tree_nests_by_route_and_shows_only_new_moves():
-    from test_model import position
+    from helpers import position
     def row(route, reach):
         moves = ' '.join(token.split('.')[-1] for token in route.split())
         return dict(position=position(moves), line=route, kind='opponent_reply', to_move='black', reach=reach,
@@ -790,7 +771,7 @@ def test_position_tree_nests_by_route_and_shows_only_new_moves():
 
 
 def test_exit_points_group_unprepared_replies_by_last_prepared_board():
-    from test_model import position
+    from helpers import position
     parent, other = position('e4 c5 Nf3 Nc6 Bc4 e6'), position('e4 c5')
     def stop(board, move, reach, score):
         child = chess.Board(board + ' 0 1'); child.push_uci(move)

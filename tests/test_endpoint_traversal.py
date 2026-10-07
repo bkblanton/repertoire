@@ -6,7 +6,7 @@ from repertoire_score.graph import region_entries, resolve
 from repertoire_score.insights import depth_distribution
 from repertoire_score.openings import classify, name_flow
 from repertoire_score.preparation import Evaluator, chess_facts, position_lines
-from test_model import data, graph, position, setup
+from helpers import data, graph, position, setup
 
 
 def test_cached_endpoint_replies_merge_transposed_gaps_and_scores(tmp_path):

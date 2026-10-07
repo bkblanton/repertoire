@@ -2,7 +2,7 @@
 
 from repertoire_score.attribution import Attribution, enrich, chapter_text, write_text
 from repertoire_score.graph import parse
-from test_model import graph, position
+from helpers import graph, position
 
 
 def test_recorded_move_sources_do_not_inherit_all_parent_chapters(tmp_path):

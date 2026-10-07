@@ -1,5 +1,6 @@
 """Expected remaining repertoire-owner moves, with no discount or depth cutoff."""
 import math
+from .status import Status
 
 
 def prepared_depth_values(model, order, sampled):
@@ -37,18 +38,18 @@ def summarize_depth(values, weights):
     high = sum(w * values[k][1] for k, w in weights.items())
     return {'expected_moves': low if low == high else None,
             'conditional_bounds': [low, high], 'unit': 'own_moves',
-            'status': 'resolved' if low == high else 'unresolved_move_distribution'}
+            'status': Status.RESOLVED if low == high else Status.UNRESOLVED_MOVE_DISTRIBUTION}
 
 
 def chapter_prepared_depth(values, entries, chapter_score):
     if not entries:
-        return {'expected_moves': None, 'unit': 'own_moves', 'status': 'entry_configuration_required'}
+        return {'expected_moves': None, 'unit': 'own_moves', 'status': Status.ENTRY_CONFIGURATION_REQUIRED}
     # Matches the existing single-position conditional-score semantics even
     # when its root reach is zero or unknown.
     if len(entries) == 1:
         return summarize_depth(values, {entries[0]: 1.0})
     weights = chapter_score.get('first_entry_weights', {})
     if any(weights.get(k) is None for k in entries):
-        return {'expected_moves': None, 'unit': 'own_moves', 'status': 'unresolved_first_entry_weights',
+        return {'expected_moves': None, 'unit': 'own_moves', 'status': Status.UNRESOLVED_ENTRY_WEIGHTS,
                 'conditional_bounds': [min(values[k][0] for k in entries), max(values[k][1] for k in entries)]}
     return summarize_depth(values, {k: weights[k] for k in entries})

@@ -6,7 +6,7 @@ from repertoire_score.preparation import Evaluator, chess_facts, stopping_rows
 from repertoire_score.report_insights import branch_score_spread
 from repertoire_score.sharpness import recursive_wdl, summarize
 from repertoire_score.spread import assert_outcomes, mixture, recursive_spread, stopping_counts
-from test_model import data, graph, position
+from helpers import data, graph, position
 
 
 def test_same_outcome_volatility_can_hide_very_different_reply_spreads():

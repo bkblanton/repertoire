@@ -6,19 +6,9 @@ from repertoire_score.model import prepare, empirical
 from repertoire_score.evaluate import backward, KNOWN, UNKNOWN
 from repertoire_score.depth import prepared_depth_values, summarize_depth
 from repertoire_score.preparation import Evaluator, MissingEvidence, chess_facts, analyze, position_lines
-from test_model import graph, data, position
-from test_chapter_policies import run_fixture
-
-
-def sample(tmp_path):
-    g=graph(tmp_path,'1. e4 e5 2. Nf3 Nc6 3. Bb5 *')
-    evidence={position(''):data(50,0,50),
-        position('e4'):data(50,0,50,[('e7e5',50,0,50)]),
-        position('e4 e5'):data(60,0,40),
-        position('e4 e5 Nf3'):data(38,0,62,[('b8c6',32,0,48),('d7d6',6,0,14)]),
-        position('e4 e5 Nf3 Nc6'):data(80,0,20),
-        position('e4 e5 Nf3 Nc6 Bb5'):data(20,0,80)}
-    return g, evidence
+from helpers import graph, data, position
+from helpers import run_fixture
+from helpers import sample
 
 
 def test_continuation_matches_core_scorer_and_depth(tmp_path):

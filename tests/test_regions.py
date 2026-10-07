@@ -6,7 +6,7 @@ from repertoire_score.graph import chapter_region, region_entries, resolve
 from repertoire_score.evaluate import chapter_score, forward
 from repertoire_score.model import Branch, ModelNode
 from repertoire_score.transitions import chapter_transitions, hitting_bounds
-from test_model import graph, position, data, setup
+from helpers import graph, position, data, setup
 
 
 def test_late_transposition_counts_once_and_reweights_score_and_baseline(tmp_path):

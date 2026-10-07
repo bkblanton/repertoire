@@ -13,7 +13,7 @@ from repertoire_score.report.sections import gap_section
 from repertoire_score.report.generate import generate
 from repertoire_score.report_insights import (analyze, branch_score_spread,
     gap_priorities, move_decomposition)
-from test_chapter_policies import run_fixture
+from helpers import run_fixture
 
 
 def test_gap_shares_merge_transposed_arrivals_before_squaring():

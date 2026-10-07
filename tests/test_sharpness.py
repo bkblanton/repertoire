@@ -2,7 +2,7 @@ import pytest
 
 from repertoire_score.preparation import Evaluator, chess_facts
 from repertoire_score.sharpness import recursive_wdl, scope_outcomes, sharpness, stopping_wdl
-from test_model import data, graph, position
+from helpers import data, graph, position
 
 
 @pytest.mark.parametrize('wdl, expected', [
@@ -81,7 +81,7 @@ def test_black_perspective_and_missing_outcomes(tmp_path):
 
 
 def test_partially_unresolved_wdl_is_not_renormalized(tmp_path):
-    from test_preparation import sample
+    from helpers import sample
     g, evidence = sample(tmp_path)
     evidence[position('e4 e5 Nf3 Nc6 Bb5')] = data(0, 0, 0)
     evaluator = Evaluator(g, True, evidence, chess_facts(g, True, evidence))

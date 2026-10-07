@@ -8,7 +8,7 @@ from repertoire_score.stats import correlation
 from repertoire_score.evaluate import COMPLETED, backward
 from repertoire_score.model import Branch, ModelNode
 from repertoire_score.position_correlations import analyze, depths, metrics, reaches, weighted_rank
-from test_model import position
+from helpers import position
 
 
 def test_depth_and_reach_merge_transposed_continuations_in_each_joint_draw():

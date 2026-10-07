@@ -10,6 +10,7 @@ import math
 import numpy as np
 
 from .explorer import counts
+from .status import Status
 
 
 def components(edges):
@@ -53,7 +54,7 @@ def components(edges):
 def distribution(evaluator, starts, entry_probability=1.0):
     """Aggregate unconditional first-gap mass by canonical board before squaring."""
     if not starts:
-        return dict(status='unavailable entry weights', equivalent_gap_reach=None,
+        return dict(status=Status.UNRESOLVED_ENTRY_WEIGHTS, equivalent_gap_reach=None,
                     equivalent_gap_reach_bounds=None, weighted_equivalent_gap_reach=None,
                     weighted_equivalent_gap_reach_bounds=None, gaps=[])
     if any(not math.isfinite(w) or w < 0 for w in starts.values()) or not math.isclose(sum(starts.values()), 1., abs_tol=1e-10):
@@ -161,7 +162,7 @@ def distribution(evaluator, starts, entry_probability=1.0):
     weighted_bounds = [entry_probability * r for r in bounds] if entry_probability is not None else None
     weighted = (entry_probability * equivalent if entry_probability is not None and equivalent is not None
                 else 0. if entry_probability == 0 else None)
-    return dict(status='resolved' if not unresolved_mass else 'partial: unknown first-gap reach',
+    return dict(status=Status.RESOLVED if not unresolved_mass else Status.UNRESOLVED_GAP_REACH,
                 equivalent_gap_reach=equivalent, equivalent_gap_reach_bounds=bounds,
                 known_repeat_gap_probability=collision,
                 repeat_gap_probability=collision if not unresolved_mass else None,

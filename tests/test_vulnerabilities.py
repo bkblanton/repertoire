@@ -5,10 +5,11 @@ import chess
 import pytest
 
 from repertoire_score.evaluate import forward
-from repertoire_score.explorer import Explorer, DEFAULT_FILTERS, ENDPOINT
+from repertoire_score.explorer import Explorer, DEFAULT_FILTERS
 from repertoire_score.graph import key
 from repertoire_score.vulnerabilities import analyze, candidates, rank_scope, reaches, representative_lines
-from test_model import data, graph, position, setup
+from helpers import data, graph, position, setup
+from helpers import cache_row
 
 
 def fixture(tmp_path):
@@ -108,14 +109,6 @@ def test_black_perspective_missing_and_sparse_evidence(tmp_path):
     scope = rank_scope(rows, reaches(m, o, raw, {root: 1}), {})
     assert len(scope['unresolved_rows']) == 1
     assert not scope['rankings']['own']
-
-
-def cache_row(cache, k, data):
-    query = dict(DEFAULT_FILTERS, fen=k+' 0 1', moves=chess.Board(k+' 0 1').legal_moves.count(), topGames=0, recentGames=0)
-    identity = {'endpoint': ENDPOINT, 'query': query}
-    digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-    (cache/(digest+'.json')).write_text(json.dumps(dict(identity=identity, retrieved_at='2026-09-28', data=data)))
-    return dict(cache_key=digest, retrieved_at='2026-09-28')
 
 
 def saved_fixture(tmp_path):

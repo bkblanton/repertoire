@@ -8,7 +8,7 @@ from repertoire_score.preparation import analyze as preparation
 from repertoire_score.ratings import analyze as ratings
 from repertoire_score.report_insights import analyze as report_insights
 from repertoire_score.vulnerabilities import analyze as vulnerabilities
-from test_chapter_policies import run_fixture
+from helpers import run_fixture
 
 
 @pytest.fixture

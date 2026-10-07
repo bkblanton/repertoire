@@ -11,6 +11,7 @@ from .model import score
 from .attribution import enrich
 from .insights import depth_distribution, first_entry_examples
 from .board_cache import children, fen_number, geometry, move_text, owner_outcome
+from .status import Status
 
 
 class MissingEvidence(ValueError):
@@ -239,7 +240,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     for scope in scopes:
         expected = scope.pop('expected')
         if not scope['starts']:
-            scope['status'] = 'unresolved entry weights'; scope['stops'] = []
+            scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS; scope['stops'] = []
             scope['depth_distribution'] = depth_distribution(None, {})
             continue
         local = {k:n.chapter_moves[scope['chapter']][0] for k,n in graph.nodes.items()
@@ -258,7 +259,7 @@ def analyze(path, cache=DEFAULT_CACHE):
         scope['stops'] = stopping_rows(evaluator, scope['starts'], scope['baseline'], lines)
         scope['score'] = float(value[0]) if value[1] == 0 else None
         scope['prepared_depth'] = float(value[2]) if value[1] == 0 else None
-        scope['status'] = 'resolved' if value[1] == 0 else 'unresolved evidence'
+        scope['status'] = Status.RESOLVED if value[1] == 0 else Status.UNRESOLVED_EVIDENCE
         scope['depth_distribution'] = depth_distribution(evaluator, scope['starts'])
         bounds = expected.get('prepared_depth', {}).get('conditional_bounds')
         if bounds is not None and not np.allclose(scope['depth_distribution']['expected_bounds'], bounds, atol=1e-10):

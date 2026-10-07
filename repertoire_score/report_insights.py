@@ -18,6 +18,7 @@ from .openings import name_flow
 from .preparation import Evaluator, chess_facts
 from .spread import (assert_outcomes, mixture as spread_mixture, recursive_spread,
                      stopping_counts, stopping_spread)
+from .status import Status
 
 
 def gap_priorities(metrics):
@@ -44,7 +45,7 @@ def branch_score_spread(stops, expected=None):
     mass = sum(r['reach'] for r in stops)
     known = sum(r['reach'] for r in stops if r['score'] is not None)
     if not stops or not math.isclose(mass, 1., abs_tol=1e-10) or known < 1 - 1e-10:
-        return dict(status='unresolved stopping evidence', standard_deviation=None,
+        return dict(status=Status.UNRESOLVED_STOPPING_EVIDENCE, standard_deviation=None,
                     between_position_deviation=None, within_position_deviation=None,
                     resolved_mass=known, mean_score=None)
     mean = sum(r['reach'] * r['score'] for r in stops)
@@ -67,7 +68,7 @@ def branch_score_spread(stops, expected=None):
     total = sum(r['reach'] * (r['score'] - mean) ** 2 for r in stops)
     if not math.isclose(total, between + within, abs_tol=1e-12):
         raise AssertionError('Transposed-cohort variance decomposition failed')
-    return dict(status='resolved', mean_score=mean, resolved_mass=known,
+    return dict(status=Status.RESOLVED, mean_score=mean, resolved_mass=known,
         standard_deviation=math.sqrt(max(0., total)),
         between_position_deviation=math.sqrt(max(0., between)),
         within_position_deviation=math.sqrt(max(0., within)),

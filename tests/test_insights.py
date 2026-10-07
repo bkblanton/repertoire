@@ -11,8 +11,8 @@ from repertoire_score.report.generate import generate
 from repertoire_score.report.bundle import load
 from repertoire_score.report.derive import own_priorities
 from repertoire_score.report.tables import summary_own_priorities
-from test_model import graph, data, position
-from test_preparation import sample
+from helpers import graph, data, position
+from helpers import sample
 
 
 def evaluator(g, evidence, color=True):

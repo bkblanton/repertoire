@@ -1,7 +1,7 @@
 import pytest
 
 from repertoire_score.depth import prepared_depth_values, summarize_depth, chapter_prepared_depth
-from test_model import graph, position, data, setup
+from helpers import graph, position, data, setup
 
 
 def test_depth_counts_own_moves_and_rewards_breadth_and_depth(tmp_path):
