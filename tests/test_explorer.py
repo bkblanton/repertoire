@@ -2,8 +2,8 @@ import chess
 import httpx
 import pytest
 
-from repertoire_score.explorer import DEFAULT_FILTERS, Explorer, Progress, collect, duration, fetch_missing
-from repertoire_score.graph import key
+from repertoire.explorer import DEFAULT_FILTERS, Explorer, Progress, collect, duration, fetch_missing
+from repertoire.graph import key
 
 
 def test_cache_auth_identity_and_offline_reuse(tmp_path, monkeypatch):
@@ -52,7 +52,7 @@ def test_api_failure_is_not_zero_data(tmp_path, monkeypatch):
 def test_rate_limit_wait_and_retry(tmp_path, monkeypatch):
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
     sleeps = []
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', sleeps.append)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', sleeps.append)
     responses = iter(
         [
             httpx.Response(429, headers={'Retry-After': '65'}),
@@ -78,7 +78,7 @@ def mock_client(tmp_path, handler, **options):
 def test_sustained_rate_limit_is_waited_out(tmp_path, monkeypatch):
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
     sleeps = []
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', sleeps.append)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', sleeps.append)
     # An hour of HTTP 429 is still a temporary condition, never a reason to abandon the run.
     responses = iter([httpx.Response(429)] * 60 + [httpx.Response(200, json=EMPTY)])
     client = mock_client(tmp_path, lambda _: next(responses), patience=0)
@@ -91,7 +91,7 @@ def test_sustained_rate_limit_is_waited_out(tmp_path, monkeypatch):
 def test_outages_are_retried_with_growing_waits(tmp_path, monkeypatch):
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
     sleeps = []
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', sleeps.append)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', sleeps.append)
     outcomes = iter([None] * 6 + [httpx.Response(503)] * 2 + [httpx.Response(200, json=EMPTY)])
 
     def respond(request):
@@ -109,7 +109,7 @@ def test_outages_are_retried_with_growing_waits(tmp_path, monkeypatch):
 def test_outage_longer_than_patience_fails_without_caching(tmp_path, monkeypatch):
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
     sleeps = []
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', sleeps.append)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', sleeps.append)
     client = mock_client(tmp_path, lambda _: httpx.Response(502), patience=600)
     with pytest.raises(RuntimeError, match='still unavailable after 10 minutes.*HTTP 502'):
         client.get(key(chess.Board()))
@@ -121,7 +121,7 @@ def test_outage_longer_than_patience_fails_without_caching(tmp_path, monkeypatch
 def test_client_errors_fail_immediately(tmp_path, monkeypatch):
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
     sleeps = []
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', sleeps.append)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', sleeps.append)
     client = mock_client(tmp_path, lambda _: httpx.Response(400))
     with pytest.raises(RuntimeError, match='HTTP 400'):
         client.get(key(chess.Board()))
@@ -139,7 +139,7 @@ def positions(n):
 
 def test_collect_counts_cached_and_missing_and_keeps_order(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', lambda _: None)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', lambda _: None)
     requests = []
 
     def respond(request):
@@ -164,7 +164,7 @@ def test_collect_counts_cached_and_missing_and_keeps_order(tmp_path, monkeypatch
 
 def test_progress_estimates_from_recent_rate(monkeypatch, capsys):
     clock = iter([0, 10, 20, 30, 40])
-    monkeypatch.setattr('repertoire_score.explorer.time.monotonic', lambda: next(clock))
+    monkeypatch.setattr('repertoire.explorer.time.monotonic', lambda: next(clock))
     progress = Progress(100, 'black scores')
     progress.INTERVAL = 0
     progress.advance()
@@ -178,7 +178,7 @@ def test_progress_estimates_from_recent_rate(monkeypatch, capsys):
 
 def test_backoff_messages_say_how_far_the_run_has_got(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', lambda _: None)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', lambda _: None)
     responses = iter([httpx.Response(200, json=EMPTY), httpx.Response(429), httpx.Response(200, json=EMPTY)])
     client = mock_client(tmp_path, lambda _: next(responses))
     collect(client, positions(2), 'white scores')
@@ -194,7 +194,7 @@ def test_duration(seconds, text):
 
 def test_interrupted_fetch_reports_progress_and_keeps_fetched_tables(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', lambda _: None)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', lambda _: None)
     responses = iter([httpx.Response(200, json=EMPTY), KeyboardInterrupt])
 
     def respond(_):

@@ -9,13 +9,13 @@ import chess
 import httpx
 import pytest
 
-from repertoire_score import score as cli
-from repertoire_score.evaluate import backward
-from repertoire_score.explorer import DEFAULT_FILTERS, ENDPOINT
-from repertoire_score.graph import key, parse, resolve, topology
-from repertoire_score.model import empirical, prepare
-from repertoire_score.report.format import centipawn_delta
-from repertoire_score.uncertainty import Posterior
+from repertoire import score as cli
+from repertoire.evaluate import backward
+from repertoire.explorer import DEFAULT_FILTERS, ENDPOINT
+from repertoire.graph import key, parse, resolve, topology
+from repertoire.model import empirical, prepare
+from repertoire.report.format import centipawn_delta
+from repertoire.uncertainty import Posterior
 
 
 def graph(tmp_path, text):

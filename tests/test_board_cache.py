@@ -2,7 +2,7 @@ import random
 
 import chess
 
-from repertoire_score.board_cache import (
+from repertoire.board_cache import (
     STARTING_POSITION,
     after_fen,
     canonical,

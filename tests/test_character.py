@@ -2,7 +2,7 @@ import chess
 import pytest
 from helpers import data, graph, position, run_fixture, sample
 
-from repertoire_score.character import (
+from repertoire.character import (
     analyze,
     board_fingerprint,
     entropy,
@@ -11,7 +11,7 @@ from repertoire_score.character import (
     reuse_metrics,
     scope_metrics,
 )
-from repertoire_score.preparation import Evaluator, chess_facts
+from repertoire.preparation import Evaluator, chess_facts
 
 
 def test_reuse_exact_independent_games_and_numerical_stability():
@@ -75,7 +75,7 @@ def test_transposition_counts_one_shared_decision(tmp_path, white):
     evidence = {k: data(100, 0, 0, [(m, 100 // len(n.edges), 0, 0) for m in n.edges]) for k, n in g.nodes.items()}
     policy = {g.roots[0]: {'g1f3': 0.4, 'g2g3': 0.6}}
     if not white:
-        from repertoire_score.graph import Graph, Node, key
+        from repertoire.graph import Graph, Node, key
 
         mapping = {k: key(chess.Board(n.fen).mirror()) for k, n in g.nodes.items()}
 
@@ -110,9 +110,9 @@ def test_transposition_counts_one_shared_decision(tmp_path, white):
     bishop_position = bishops[0]['position']
     shared = [r for r in positions if r['position'] == bishop_position]
     assert len(shared) == 1 and shared[0]['reach'] == pytest.approx(1)
-    from repertoire_score.evaluate import reaches
-    from repertoire_score.graph import key, resolve, topology
-    from repertoire_score.model import empirical, prepare
+    from repertoire.evaluate import reaches
+    from repertoire.graph import key, resolve, topology
+    from repertoire.model import empirical, prepare
 
     transitions = resolve(g, white, policy)
     order = topology(transitions, g.roots)
@@ -164,7 +164,7 @@ def test_endpoint_without_recorded_replies_is_unavailable_not_perfect_predictabi
 
 def test_board_features_and_weighted_skeletons():
     board = chess.Board('b5k1/8/2p1p3/3p4/2BP4/P7/P7/2KQ1B2 w - - 0 1')
-    from repertoire_score.graph import key
+    from repertoire.graph import key
 
     cats, flags = board_fingerprint(key(board), True)
     assert cats['queens'] == 'own queen only'
@@ -206,7 +206,7 @@ def test_offline_report_alternatives_entries_and_source_guard(tmp_path, monkeypa
 
 
 def test_transposed_unprepared_reply_combines_reach_and_chapter_context(tmp_path):
-    from repertoire_score.attribution import enrich
+    from repertoire.attribution import enrich
 
     g = graph(tmp_path, '1. Nf3 d5 2. g3 e6 3. Bg2 *\n\n1. g3 Nf6 2. Nf3 e6 3. Bg2 *')
     evidence = {k: data(100, 0, 0, [(m, 100 // len(n.edges), 0, 0) for m in n.edges]) for k, n in g.nodes.items()}
@@ -234,7 +234,7 @@ def test_transposed_unprepared_reply_combines_reach_and_chapter_context(tmp_path
 
     for san in re.sub(r'\d+\.(?:\.\.)?', '', replies[0]['line']).split():
         board.push_san(san)
-    from repertoire_score.graph import key
+    from repertoire.graph import key
 
     assert key(board) == target
     enriched = enrich({'scopes': [dict(id='overall', **result)]}, g)

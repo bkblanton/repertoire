@@ -26,7 +26,7 @@ COMMANDS = [
 def parser():
     result = argparse.ArgumentParser(
         prog='repertoire',
-        description='Score chess opening repertoires with Lichess Opening Explorer statistics.',
+        description='Analyze chess opening repertoires with Lichess Opening Explorer statistics.',
         epilog="Run 'repertoire <command> --help' for a command's options.",
     )
     commands = result.add_subparsers(title='commands', metavar='<command>')
@@ -43,7 +43,7 @@ def main(argv=None):
         parser().parse_args(argv or ['--help'])
         return
     name, rest = argv[0], argv[1:]
-    module = importlib.import_module(f'repertoire_score.{modules[name]}')
+    module = importlib.import_module(f'repertoire.{modules[name]}')
     # Stage parsers take their usage name from argv[0].
     previous = sys.argv
     sys.argv = [f'repertoire {name}', *rest]

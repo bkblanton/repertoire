@@ -1,8 +1,8 @@
 import chess
 
-from repertoire_score.board_cache import canonical
-from repertoire_score.opening_names import names
-from repertoire_score.openings import opening_identity
+from repertoire.board_cache import canonical
+from repertoire.opening_names import names
+from repertoire.openings import opening_identity
 
 
 def key(line):

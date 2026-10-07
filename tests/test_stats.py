@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from repertoire_score.stats import cell, connected_groups, correlation, rank
+from repertoire.stats import cell, connected_groups, correlation, rank
 
 
 def test_overlap_groups_include_indirect_links():

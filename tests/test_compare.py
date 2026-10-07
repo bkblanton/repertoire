@@ -6,10 +6,10 @@ import httpx
 import pytest
 from helpers import cache_row, data, position
 
-from repertoire_score import compare, studies
-from repertoire_score import score as cli
-from repertoire_score.alternatives import Choice, find_decisions, repertoire_reference
-from repertoire_score.graph import parse, parse_games, read_games, resolve
+from repertoire import compare, studies
+from repertoire import score as cli
+from repertoire.alternatives import Choice, find_decisions, repertoire_reference
+from repertoire.graph import parse, parse_games, read_games, resolve
 
 REPERTOIRE = '''[ChapterURL "https://lichess.org/study/mine0001/tarrasc1"]
 [ChapterName "Tarrasch"]
@@ -228,7 +228,7 @@ def test_saved_comparisons_rerun_and_appear_in_the_summary(tmp_path, monkeypatch
     compare.run_registered(registry, score=path, cache=str(tmp_path / 'cache'), offline=True)
     rerun = json.loads((path.parent / 'comparisons' / 'french.json').read_text())
     assert rerun['entry']['basis'] == 'given' and len(rerun['chapters']) == 1
-    from repertoire_score.report.generate import generate
+    from repertoire.report.generate import generate
 
     generate([path])
     summary = (tmp_path / 'reports' / 'summary.md').read_text(encoding='utf-8')

@@ -5,11 +5,11 @@ import numpy as np
 import pytest
 from helpers import position
 
-from repertoire_score.depth import prepared_depth_values
-from repertoire_score.evaluate import COMPLETED, backward, reaches
-from repertoire_score.model import Branch, ModelNode
-from repertoire_score.position_correlations import analyze, metrics, weighted_rank
-from repertoire_score.stats import correlation
+from repertoire.depth import prepared_depth_values
+from repertoire.evaluate import COMPLETED, backward, reaches
+from repertoire.model import Branch, ModelNode
+from repertoire.position_correlations import analyze, metrics, weighted_rank
+from repertoire.stats import correlation
 
 
 def test_depth_and_reach_merge_transposed_continuations_in_each_joint_draw():

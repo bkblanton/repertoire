@@ -3,12 +3,12 @@ import json
 import pytest
 from helpers import run_fixture
 
-from repertoire_score.character import analyze as character
-from repertoire_score.openings import analyze as openings
-from repertoire_score.preparation import analyze as preparation
-from repertoire_score.ratings import analyze as ratings
-from repertoire_score.report_insights import analyze as report_insights
-from repertoire_score.vulnerabilities import analyze as vulnerabilities
+from repertoire.character import analyze as character
+from repertoire.openings import analyze as openings
+from repertoire.preparation import analyze as preparation
+from repertoire.ratings import analyze as ratings
+from repertoire.report_insights import analyze as report_insights
+from repertoire.vulnerabilities import analyze as vulnerabilities
 
 
 @pytest.fixture

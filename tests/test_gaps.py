@@ -4,8 +4,8 @@ import chess
 import pytest
 from helpers import data, graph, position
 
-from repertoire_score.gaps import distribution
-from repertoire_score.preparation import Evaluator, chess_facts
+from repertoire.gaps import distribution
+from repertoire.preparation import Evaluator, chess_facts
 
 
 def evaluator(g, evidence, policy=None, color=True):

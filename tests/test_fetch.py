@@ -3,8 +3,8 @@ import httpx
 import pytest
 from helpers import data
 
-from repertoire_score import build, fetch
-from repertoire_score.graph import parse
+from repertoire import build, fetch
+from repertoire.graph import parse
 
 TEXT = (
     '[ChapterURL "https://lichess.org/study/test/a"]\n[ChapterName "King pawn"]\n\n'
@@ -19,7 +19,7 @@ BLACK = '[ChapterURL "https://lichess.org/study/test/c"]\n[ChapterName "Queen pa
 def lichess(tmp_path, monkeypatch):
     """Both PGNs and a mock Explorer that answers every legal position and records each request."""
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', lambda _: None)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', lambda _: None)
     white, black = tmp_path / 'white.pgn', tmp_path / 'black.pgn'
     white.write_text(TEXT)
     # A different Black repertoire, so its scoring tables cannot stand in for White's own-move parents.
@@ -37,7 +37,7 @@ def lichess(tmp_path, monkeypatch):
 
     client = httpx.Client
     monkeypatch.setattr(
-        'repertoire_score.explorer.httpx.Client',
+        'repertoire.explorer.httpx.Client',
         lambda **options: client(transport=httpx.MockTransport(respond), **options),
     )
     return tmp_path, white, black, requests

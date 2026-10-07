@@ -4,8 +4,8 @@ import chess
 import pytest
 from helpers import data, graph, position, run_fixture
 
-from repertoire_score.preparation import Evaluator, chess_facts
-from repertoire_score.ratings import (
+from repertoire.preparation import Evaluator, chess_facts
+from repertoire.ratings import (
     Context,
     add_reply_differences,
     analyze,
@@ -17,8 +17,8 @@ from repertoire_score.ratings import (
     response_rating,
     unavailable,
 )
-from repertoire_score.report.bundle import load
-from repertoire_score.report.generate import generate
+from repertoire.report.bundle import load
+from repertoire.report.generate import generate
 
 
 def rated(w, d, b, moves=()):
@@ -45,7 +45,7 @@ def test_reply_mean_count_weights_missing_ratings_and_residual_games():
 
 
 def test_reply_rating_difference_uses_same_player_parent_mean_and_discloses_coverage():
-    from repertoire_score.report.format import rating_difference
+    from repertoire.report.format import rating_difference
 
     table = rated(50, 0, 50, [('e7e5', 30, 0, 30, 1000), ('c7c5', 10, 0, 10, 2000), ('e7e6', 10, 0, 10, None)])
     parent = response_rating(table)
@@ -101,10 +101,10 @@ def test_move_maker_rule_for_both_colors_and_no_child_queries(tmp_path, color, p
 
 
 def test_starting_board_local_context_keeps_opponent_response_average_in_the_report(tmp_path):
-    from repertoire_score.ratings import attach
-    from repertoire_score.report.format import opponent_rating
-    from repertoire_score.report.links import Chapters
-    from repertoire_score.report.sections import character_section
+    from repertoire.ratings import attach
+    from repertoire.report.format import opponent_rating
+    from repertoire.report.links import Chapters
+    from repertoire.report.sections import character_section
 
     g = graph(tmp_path, '1. e4 c5 *')
     root, e4, leaf = [position(p) for p in ('', 'e4', 'e4 c5')]
@@ -261,9 +261,9 @@ def test_stopping_mixture_does_not_weight_every_visited_node(tmp_path):
 
 
 def test_cache_only_ledger_preserves_scores_and_has_no_overall_mean(tmp_path, monkeypatch):
-    from repertoire_score.character import analyze as character
-    from repertoire_score.preparation import analyze as preparation
-    from repertoire_score.vulnerabilities import analyze as vulnerabilities
+    from repertoire.character import analyze as character
+    from repertoire.preparation import analyze as preparation
+    from repertoire.vulnerabilities import analyze as vulnerabilities
 
     saved, cache = run_fixture(tmp_path, monkeypatch, common_entry=True, multiple_entries=True)
     path = tmp_path / 'white.json'
@@ -310,9 +310,9 @@ def test_cache_only_ledger_preserves_scores_and_has_no_overall_mean(tmp_path, mo
 
 
 def test_rated_alternative_chapters_keep_their_own_policy_and_entry_baseline(tmp_path, monkeypatch):
-    from repertoire_score.character import analyze as character
-    from repertoire_score.preparation import analyze as preparation
-    from repertoire_score.vulnerabilities import analyze as vulnerabilities
+    from repertoire.character import analyze as character
+    from repertoire.preparation import analyze as preparation
+    from repertoire.vulnerabilities import analyze as vulnerabilities
 
     saved, cache = run_fixture(tmp_path, monkeypatch, common_entry=True)
     leaves = {

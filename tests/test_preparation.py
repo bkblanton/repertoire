@@ -2,11 +2,11 @@ import chess
 import pytest
 from helpers import data, graph, position, run_fixture, sample
 
-from repertoire_score.depth import prepared_depth_values, summarize_depth
-from repertoire_score.evaluate import KNOWN, UNKNOWN, backward
-from repertoire_score.graph import resolve, topology
-from repertoire_score.model import MissingEvidence, empirical, prepare
-from repertoire_score.preparation import Evaluator, analyze, chess_facts, position_lines
+from repertoire.depth import prepared_depth_values, summarize_depth
+from repertoire.evaluate import KNOWN, UNKNOWN, backward
+from repertoire.graph import resolve, topology
+from repertoire.model import MissingEvidence, empirical, prepare
+from repertoire.preparation import Evaluator, analyze, chess_facts, position_lines
 
 
 def test_continuation_matches_core_scorer_and_depth(tmp_path):

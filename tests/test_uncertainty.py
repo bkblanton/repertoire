@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from helpers import data, graph, position, setup
 
-from repertoire_score.evaluate import COMPLETED, UNKNOWN, backward, forward
-from repertoire_score.report_insights import LocalComparisons, database_table
-from repertoire_score.uncertainty import beta_quantile, dirichlet_variance, score_interval
+from repertoire.evaluate import COMPLETED, UNKNOWN, backward, forward
+from repertoire.report_insights import LocalComparisons, database_table
+from repertoire.uncertainty import beta_quantile, dirichlet_variance, score_interval
 
 PGN = '1. Nf3 d5 2. g3 Nf6 3. Bg2 (3. Bh3) *\n\n1. g3 Nf6 2. Nf3 d5 3. Bg2 *'
 
@@ -151,7 +151,7 @@ def test_beta_quantiles_and_intervals():
 
 
 def test_paired_policy_difference_matches_simulation(fixture):
-    from repertoire_score.uncertainty import paired_variance
+    from repertoire.uncertainty import paired_variance
 
     root, n = fixture['root'], fixture['n']
     a = fixture['posterior']

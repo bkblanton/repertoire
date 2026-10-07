@@ -1,8 +1,8 @@
 import chess
 import pytest
 
-from repertoire_score.baseline import chapter_entry_baseline
-from repertoire_score.graph import key
+from repertoire.baseline import chapter_entry_baseline
+from repertoire.graph import key
 
 
 def two_positions():

@@ -1,12 +1,12 @@
 import pytest
 from helpers import data, graph, position, setup
 
-from repertoire_score.character import scope_metrics
-from repertoire_score.evaluate import KNOWN, forward
-from repertoire_score.graph import reachable, resolve
-from repertoire_score.openings import classify, name_flow
-from repertoire_score.preparation import Evaluator, chess_facts, position_lines
-from repertoire_score.routes import depth_distribution
+from repertoire.character import scope_metrics
+from repertoire.evaluate import KNOWN, forward
+from repertoire.graph import reachable, resolve
+from repertoire.openings import classify, name_flow
+from repertoire.preparation import Evaluator, chess_facts, position_lines
+from repertoire.routes import depth_distribution
 
 
 def test_cached_endpoint_replies_merge_transposed_gaps_and_scores(tmp_path):

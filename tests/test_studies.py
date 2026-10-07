@@ -3,8 +3,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from repertoire_score import build, score, studies
-from repertoire_score.graph import parse
+from repertoire import build, score, studies
+from repertoire.graph import parse
 
 CHAPTERS = '''[Event "Study: One"]
 [Date "{date}"]
@@ -100,7 +100,7 @@ def test_failed_or_malformed_export_keeps_previous_file(tmp_path, monkeypatch):
 def test_export_waits_out_rate_limits_and_gives_up_on_long_outages(tmp_path, monkeypatch):
     monkeypatch.setenv('LICHESS_TOKEN', 'test')
     sleeps = []
-    monkeypatch.setattr('repertoire_score.explorer.time.sleep', sleeps.append)
+    monkeypatch.setattr('repertoire.explorer.time.sleep', sleeps.append)
     text = CHAPTERS.format(date='2026.10.05')
     limited = [httpx.Response(429)] * 10 + [httpx.Response(200, text=text)] * 2
     paths = studies.export(dict(white='abcdEFGH', black='ijklMNOP'), tmp_path, client=client(limited, []))

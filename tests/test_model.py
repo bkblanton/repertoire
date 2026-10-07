@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from helpers import data, graph, position, setup
 
-from repertoire_score.evaluate import (
+from repertoire.evaluate import (
     COMPLETED,
     DEVIATION,
     KNOWN,
@@ -18,8 +18,8 @@ from repertoire_score.evaluate import (
     select_alternatives,
     summarize,
 )
-from repertoire_score.explorer import Explorer, validate
-from repertoire_score.graph import chapter_alternatives, conflicts, infer_entries, key, parse, resolve, topology
+from repertoire.explorer import Explorer, validate
+from repertoire.graph import chapter_alternatives, conflicts, infer_entries, key, parse, resolve, topology
 
 
 def test_forced_own_move_deviations_and_conservation(tmp_path):
@@ -107,7 +107,7 @@ def test_duplicate_chapters_and_transposing_pgn(tmp_path):
 
 
 def test_transposition_incoming_mass_and_first_entry(tmp_path):
-    from repertoire_score.depth import chapter_prepared_depth, prepared_depth_values, summarize_depth
+    from repertoire.depth import chapter_prepared_depth, prepared_depth_values, summarize_depth
 
     g = graph(tmp_path, '1. Nf3 d5 2. g3 Nf6 3. Bg2 *\n\n1. g3 Nf6 2. Nf3 d5 3. Bg2 *')
     root = g.roots[0]
@@ -228,8 +228,8 @@ def test_unlisted_opponent_move_reenters_known_theory(tmp_path):
 
 
 def test_cli_fixture_end_to_end(tmp_path, monkeypatch):
-    from repertoire_score import score as cli
-    from repertoire_score.report.format import headline_delta
+    from repertoire import score as cli
+    from repertoire.report.format import headline_delta
 
     white_row = f'| White | 80.00% | 70.00% | {headline_delta(0.7, 0.8)} |'
     black_row = f'| Black | 20.00% | 30.00% | {headline_delta(0.3, 0.2)} |'

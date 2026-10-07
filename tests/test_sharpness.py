@@ -1,8 +1,8 @@
 import pytest
 from helpers import data, graph, position
 
-from repertoire_score.preparation import Evaluator, chess_facts
-from repertoire_score.sharpness import recursive_wdl, scope_outcomes, sharpness, stopping_wdl
+from repertoire.preparation import Evaluator, chess_facts
+from repertoire.sharpness import recursive_wdl, scope_outcomes, sharpness, stopping_wdl
 
 
 @pytest.mark.parametrize(
@@ -110,7 +110,7 @@ def test_terminal_results_need_no_observations(fixed, expected):
 
 
 def test_certain_results_tolerate_only_probability_accumulation_rounding():
-    from repertoire_score.sharpness import summarize
+    from repertoire.sharpness import summarize
 
     assert summarize([1.0 + 1e-12, 0.0, 0.0, 0.0])['sharpness'] == 0.0
     with pytest.raises(AssertionError, match='conservation'):

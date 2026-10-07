@@ -1,4 +1,4 @@
-# Repertoire score
+# Repertoire
 
 Analyze White and Black Lichess study PGNs to see how often your preparation is reached, how it scores, and where the most common gaps remain. The program follows your chosen moves, weights the opponent's replies using Lichess opening statistics, and combines exact-position transpositions across chapters.
 

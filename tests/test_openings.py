@@ -6,7 +6,7 @@ import httpx
 import pytest
 from helpers import data, graph, position, run_fixture
 
-from repertoire_score.openings import (
+from repertoire.openings import (
     analyze,
     chapter_sources,
     classify,
@@ -18,12 +18,12 @@ from repertoire_score.openings import (
     named_regions,
     opening_identity,
 )
-from repertoire_score.preparation import Evaluator, Evaluators, chess_facts
-from repertoire_score.report.links import Chapters
-from repertoire_score.report.markdown import table
-from repertoire_score.report.pages import opening_details_page
-from repertoire_score.report.sections import openings_section
-from repertoire_score.sharpness import recursive_wdl
+from repertoire.preparation import Evaluator, Evaluators, chess_facts
+from repertoire.report.links import Chapters
+from repertoire.report.markdown import table
+from repertoire.report.pages import opening_details_page
+from repertoire.report.sections import openings_section
+from repertoire.sharpness import recursive_wdl
 
 
 def named(names, k, name, eco='A00'):
@@ -176,7 +176,7 @@ def test_first_entry_absorption_preserves_late_bypass_and_never_counts_twice(tmp
         board = chess.Board(row['example']['root_fen'])
         for move in row['example']['path_uci']:
             board.push_uci(move)
-        from repertoire_score.graph import key
+        from repertoire.graph import key
 
         assert key(board) == row['position']
         assert row['example']['conditional_probability'] <= row['conditional_weight'] + 1e-10
@@ -239,7 +239,7 @@ def test_cache_only_analysis_preserves_scores_sources_and_validates_staleness(tm
         for p in [path, Path(saved['manifest']['input_path']), *cache.glob('*.json')]
     }
     calls = []
-    from repertoire_score.explorer import Explorer
+    from repertoire.explorer import Explorer
 
     original = Explorer.get
 
@@ -410,7 +410,7 @@ def test_opening_source_move_uses_parent_flow_and_named_child_resets(tmp_path):
 
 
 def test_source_cells_add_opening_column_without_duplicates():
-    from repertoire_score.report.markdown import SourceCell
+    from repertoire.report.markdown import SourceCell
 
     source = SourceCell('[W1](#white-chapter-1)', 'Vienna (90.00%)')
     rendered = table(['Line', 'Chapter source', 'Reach'], [['e4', source, '10.00%']])

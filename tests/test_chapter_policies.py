@@ -5,9 +5,9 @@ import chess
 import pytest
 from helpers import cache_row, data, graph, position, run_fixture
 
-from repertoire_score import score as cli
-from repertoire_score.graph import chapter_policy_overrides, resolve
-from repertoire_score.vulnerabilities import analyze as vulnerabilities
+from repertoire import score as cli
+from repertoire.graph import chapter_policy_overrides, resolve
+from repertoire.vulnerabilities import analyze as vulnerabilities
 
 
 def test_chapter_local_mainline_order_is_independent_of_global_edge_order(tmp_path):

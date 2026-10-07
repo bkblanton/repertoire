@@ -3,17 +3,17 @@ import sys
 
 import pytest
 
-from repertoire_score import cli
+from repertoire import cli
 
 
 def test_every_command_dispatches_to_a_stage_main():
     for name, module, _ in cli.COMMANDS:
-        assert callable(importlib.import_module(f'repertoire_score.{module}').main), name
+        assert callable(importlib.import_module(f'repertoire.{module}').main), name
 
 
 def test_dispatch_passes_arguments_and_restores_argv(monkeypatch):
     seen = {}
-    monkeypatch.setattr('repertoire_score.render.main', lambda: seen.update(argv=list(sys.argv)))
+    monkeypatch.setattr('repertoire.render.main', lambda: seen.update(argv=list(sys.argv)))
     before = list(sys.argv)
     cli.main(['report', 'white.json', '--top', '3'])
     assert seen['argv'] == ['repertoire report', 'white.json', '--top', '3']
@@ -41,7 +41,7 @@ def test_interrupt_exits_cleanly_with_a_resume_hint(monkeypatch, capsys):
     def interrupted():
         raise KeyboardInterrupt
 
-    monkeypatch.setattr('repertoire_score.fetch.main', interrupted)
+    monkeypatch.setattr('repertoire.fetch.main', interrupted)
     before = list(sys.argv)
     with pytest.raises(SystemExit) as error:
         cli.main(['fetch'])

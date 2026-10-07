@@ -3,10 +3,10 @@ import math
 import pytest
 from helpers import data, graph, position
 
-from repertoire_score.preparation import Evaluator, chess_facts, stopping_rows
-from repertoire_score.report_insights import branch_score_spread
-from repertoire_score.sharpness import recursive_wdl, summarize
-from repertoire_score.spread import assert_outcomes, mixture, recursive_spread, stopping_counts
+from repertoire.preparation import Evaluator, chess_facts, stopping_rows
+from repertoire.report_insights import branch_score_spread
+from repertoire.sharpness import recursive_wdl, summarize
+from repertoire.spread import assert_outcomes, mixture, recursive_spread, stopping_counts
 
 
 def test_same_outcome_volatility_can_hide_very_different_reply_spreads():

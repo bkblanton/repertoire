@@ -4,7 +4,7 @@ import json
 import numpy as np
 import pytest
 
-from repertoire_score.rating_correlations import chapter_association, estimate, load_color, within_parent
+from repertoire.rating_correlations import chapter_association, estimate, load_color, within_parent
 
 
 def replies():

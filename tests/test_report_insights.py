@@ -8,11 +8,11 @@ import httpx
 import pytest
 from helpers import run_fixture
 
-from repertoire_score import character, openings, preparation, vulnerabilities
-from repertoire_score.report.generate import generate
-from repertoire_score.report.links import Chapters
-from repertoire_score.report.sections import gap_section
-from repertoire_score.report_insights import analyze, branch_score_spread, gap_priorities, move_decomposition
+from repertoire import character, openings, preparation, vulnerabilities
+from repertoire.report.generate import generate
+from repertoire.report.links import Chapters
+from repertoire.report.sections import gap_section
+from repertoire.report_insights import analyze, branch_score_spread, gap_priorities, move_decomposition
 
 
 def test_gap_shares_merge_transposed_arrivals_before_squaring():

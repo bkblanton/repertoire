@@ -6,10 +6,10 @@ import chess
 import pytest
 from helpers import check_score_tables, run_fixture
 
-from repertoire_score.character import analyze as character
-from repertoire_score.report.bundle import load
-from repertoire_score.report.derive import combined_overall, exit_points, non_sparse_rows, position_contributions
-from repertoire_score.report.format import (
+from repertoire.character import analyze as character
+from repertoire.report.bundle import load
+from repertoire.report.derive import combined_overall, exit_points, non_sparse_rows, position_contributions
+from repertoire.report.format import (
     centipawn_delta,
     centipawn_equivalent,
     cp,
@@ -21,11 +21,11 @@ from repertoire_score.report.format import (
     per_thousand,
     spread_display,
 )
-from repertoire_score.report.generate import generate, page_names
-from repertoire_score.report.links import Chapters
-from repertoire_score.report.markdown import compressed_columns, report_navigation, table
-from repertoire_score.report.pages import summary_report
-from repertoire_score.report.sections import (
+from repertoire.report.generate import generate, page_names
+from repertoire.report.links import Chapters
+from repertoire.report.markdown import compressed_columns, report_navigation, table
+from repertoire.report.pages import summary_report
+from repertoire.report.sections import (
     common_positions_for_scope,
     common_positions_section,
     exits_section,
@@ -115,7 +115,7 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
 
 
 def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
-    from repertoire_score.report.format import gap_percentage
+    from repertoire.report.format import gap_percentage
 
     path, report = complete
     bundle = generate([path])[0]
@@ -141,7 +141,7 @@ def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
 
 
 def test_gap_display_keeps_unknown_reach_bounded():
-    from repertoire_score.report.format import gap_percentage
+    from repertoire.report.format import gap_percentage
 
     assert gap_percentage(None) == 'unavailable'
     assert gap_percentage(dict(equivalent_gap_reach=0.0)) == '0.00%'
@@ -228,7 +228,7 @@ def test_saved_snapshot_and_missing_analyses_are_explicit(tmp_path, monkeypatch)
 
 
 def test_stale_correlations_rejected_and_matching_estimates_shown(complete):
-    from repertoire_score.position_correlations import analyze
+    from repertoire.position_correlations import analyze
 
     path, _ = complete
     correlations = path.parent / 'prepared-depth-gain-correlation.json'
@@ -257,7 +257,7 @@ def test_stale_correlations_rejected_and_matching_estimates_shown(complete):
 
 
 def test_rating_correlations_render_beside_depth_and_reject_stale_inputs(complete):
-    from repertoire_score import rating_correlations
+    from repertoire import rating_correlations
 
     path, _ = complete
     result = rating_correlations.analyze([path])
@@ -335,7 +335,7 @@ def test_destinations_and_relative_links(complete):
 def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch):
     import sys
 
-    from repertoire_score import (
+    from repertoire import (
         character,
         openings,
         position_correlations,
@@ -793,8 +793,8 @@ def test_incompatible_color_scopes_are_not_combined():
 
 
 def test_combined_sharpness_uses_owner_relative_wdl_mixture():
-    from repertoire_score.sharpness import summarize
-    from repertoire_score.spread import stopping_counts
+    from repertoire.sharpness import summarize
+    from repertoire.spread import stopping_counts
 
     white = score_bundle('white', 1.0, 0.5, 1, 1, 1000)
     black = score_bundle('black', 0.0, 0.5, 1, 1, 1)
@@ -814,7 +814,7 @@ def test_combined_sharpness_uses_owner_relative_wdl_mixture():
 def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypatch):
     from types import SimpleNamespace
 
-    from repertoire_score import score as cli
+    from repertoire import score as cli
 
     path, white = complete
     args = SimpleNamespace(

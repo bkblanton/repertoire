@@ -1,6 +1,6 @@
 from helpers import run_fixture
 
-from repertoire_score import schema
+from repertoire import schema
 
 
 def missing(value, kind):

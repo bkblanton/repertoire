@@ -7,4 +7,4 @@ CC0 1.0. The Lichess Opening Explorer takes its `opening` field from the same da
 name positions without requesting their Explorer tables.
 
 To update, copy the five files from a newer commit and change the commit in this file and in
-`repertoire_score/opening_names.py`.
+`repertoire/opening_names.py`.

@@ -5,10 +5,10 @@ import chess
 import pytest
 from helpers import cache_row, data, graph, position, setup
 
-from repertoire_score.evaluate import forward, reaches
-from repertoire_score.explorer import DEFAULT_FILTERS, Explorer
-from repertoire_score.graph import key
-from repertoire_score.vulnerabilities import analyze, candidates, rank_scope, representative_lines
+from repertoire.evaluate import forward, reaches
+from repertoire.explorer import DEFAULT_FILTERS, Explorer
+from repertoire.graph import key
+from repertoire.vulnerabilities import analyze, candidates, rank_scope, representative_lines
 
 
 def fixture(tmp_path):
@@ -223,7 +223,7 @@ def test_unknown_continuation_never_falls_back_to_historical_own_move_score(tmp_
 
 
 def test_own_ranking_uses_direct_deficit_while_opponent_ranking_uses_weighted_drag():
-    from repertoire_score.vulnerabilities import rankings
+    from repertoire.vulnerabilities import rankings
 
     rows = [
         dict(id='rare', kind='own', local_drop_pp=20.0, weighted_drag_pp=0.02),

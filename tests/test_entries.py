@@ -2,12 +2,12 @@ import chess
 import pytest
 from helpers import data, graph, position, setup
 
-from repertoire_score.baseline import chapter_entry_baseline
-from repertoire_score.evaluate import chapter_score, forward
-from repertoire_score.graph import chapter_positions, infer_entries, resolve
-from repertoire_score.model import Branch, ModelNode
-from repertoire_score.score import chapter_entries, inspect_repertoire
-from repertoire_score.transitions import chapter_transitions, hitting_bounds
+from repertoire.baseline import chapter_entry_baseline
+from repertoire.evaluate import chapter_score, forward
+from repertoire.graph import chapter_positions, infer_entries, resolve
+from repertoire.model import Branch, ModelNode
+from repertoire.score import chapter_entries, inspect_repertoire
+from repertoire.transitions import chapter_transitions, hitting_bounds
 
 VIENNA = """[ChapterURL "https://lichess.org/study/test/quiet"]
 

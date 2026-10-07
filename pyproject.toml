@@ -1,7 +1,7 @@
 [project]
-name = "repertoire-score"
+name = "repertoire"
 version = "0.1.0"
-description = "Estimate repertoire scores with transpositions and Lichess population evidence"
+description = "Analyze and compare chess opening repertoires with transpositions and Lichess population evidence"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "GPL-3.0-or-later"
@@ -29,7 +29,7 @@ dev = [
 ]
 
 [project.scripts]
-repertoire = "repertoire_score.cli:main"
+repertoire = "repertoire.cli:main"
 
 [build-system]
 requires = ["hatchling"]

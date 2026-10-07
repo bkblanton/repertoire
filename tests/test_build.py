@@ -6,12 +6,12 @@ import httpx
 import pytest
 from helpers import cache_row, data, position
 
-from repertoire_score import build, render
-from repertoire_score.board_cache import geometry, owner_outcome
-from repertoire_score.character import board_fingerprint
-from repertoire_score.explorer import Explorer
-from repertoire_score.graph import Graph, Node, key, parse, resolve
-from repertoire_score.preparation import chess_facts
+from repertoire import build, render
+from repertoire.board_cache import geometry, owner_outcome
+from repertoire.character import board_fingerprint
+from repertoire.explorer import Explorer
+from repertoire.graph import Graph, Node, key, parse, resolve
+from repertoire.preparation import chess_facts
 
 
 def test_shared_geometry_preserves_legal_moves_terminals_and_graph_membership():
