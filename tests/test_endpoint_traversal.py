@@ -84,8 +84,8 @@ def test_cached_endpoint_transposition_resumes_preparation_and_chapter_entry(tmp
     assert result['validation']['unanswered_reach_matches_first_gaps']
 
     # An endpoint's cached opening label must follow its implicit reply edge.
-    e[endpoint]['opening'] = dict(name='Endpoint opening', eco='A00')
-    _, exact, labels, _ = classify(g, e, ev.facts, color)
+    names = {endpoint: dict(name='Endpoint opening', eco='A00')}
+    _, exact, labels, _ = classify(g, names, ev.facts, color)
     assert 'Endpoint opening' in labels[target]
     named_mass = 0.4 if color else 0.5
     assert name_flow(ev, roots, exact)[target]['Endpoint opening'] == pytest.approx(named_mass)

@@ -1,4 +1,4 @@
-"""Cached opening names, transposition inheritance, and first-entry cohorts."""
+"""Dataset opening names, transposition inheritance, and first-entry cohorts."""
 
 import math
 from collections import defaultdict, deque
@@ -10,6 +10,8 @@ from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import counts
 from .gaps import distribution as gap_distribution
 from .model import score
+from .opening_names import SOURCE as OPENING_NAME_SOURCE
+from .opening_names import names as opening_names
 from .preparation import Evaluators, chess_facts
 from .ratings import (
     comparison_fields,
@@ -36,12 +38,14 @@ def opening_identity(value):
         or not value['name'].strip()
         or not isinstance(value.get('eco'), str)
     ):
-        raise ValueError('Invalid cached opening name')
+        raise ValueError('Invalid opening name')
     return value['name']
 
 
-def classify(graph, evidence, facts, color):
+def classify(graph, names, facts, color):
     """Potential labels for annotation, independent of modeled probability.
+
+    `names` maps canonical positions to their exact {name, eco}; unlisted positions are unnamed.
 
     A structural union must never be used as a probability region: another
     route into an unnamed board has not thereby played every inherited opening.
@@ -50,7 +54,7 @@ def classify(graph, evidence, facts, color):
     exact, catalog = {}, {}
     edges = {k: set(n.edges.values()) for k, n in graph.nodes.items()}
     for k in graph.nodes:
-        value = evidence.get(k, {}).get('opening')
+        value = names.get(k)
         identity = opening_identity(value)
         if identity:
             exact[k] = identity
@@ -74,7 +78,7 @@ def classify(graph, evidence, facts, color):
             if added:
                 labels[target].update(added)
                 pending.append(target)
-    # Only cached names with a literal family/variation prefix are parents.
+    # Only listed names with a literal family/variation prefix are parents.
     # An unrelated earlier name is a transition, not a hierarchy relationship.
     for opening in catalog.values():
         opening['eco_codes'] = sorted(opening['eco_codes'])
@@ -444,7 +448,8 @@ def analyze(path, cache=DEFAULT_CACHE):
         if not math.isclose(actual, expected, abs_tol=1e-10):
             raise AssertionError('Opening analysis did not reproduce the saved score')
     wdl, reach = recursive_wdl(evaluator), evaluator.reaches(roots)
-    catalog, exact, potential, _ = classify(graph, evidence, facts, color)
+    names = opening_names()
+    catalog, exact, potential, _ = classify(graph, names, facts, color)
     regions = named_regions(exact, catalog)
     flows = name_flow(evaluator, roots, exact)
     positions = {}
@@ -458,7 +463,7 @@ def analyze(path, cache=DEFAULT_CACHE):
                 membership[category] += weight
         positions[k] = dict(
             exact_name=exact.get(k),
-            cached_opening=evidence.get(k, {}).get('opening'),
+            listed_opening=names.get(k) if k in graph.nodes else None,
             potential_ids=sorted(potential.get(k, ())),
             current_ids=[exact[k]] if k in exact else sorted(active),
             membership_ids=sorted(membership),
@@ -517,14 +522,15 @@ def analyze(path, cache=DEFAULT_CACHE):
         manifest=analysis.companion_manifest(
             source_pgn_unchanged=True,
             policy_basis='overall selected repertoire policy',
-            naming_rule='Exact cached names replace the current name on every arriving route. '
+            opening_names=OPENING_NAME_SOURCE,
+            naming_rule='Exact listed names replace the current name on every arriving route. '
             'Unnamed boards preserve each incoming name and its probability share '
             'under the selected policy. Structural potential labels never add '
             'probability. Unprepared replies inherit parent name flows without '
             'child queries.',
-            parent_rule='Only existing cached names that match at colon or comma boundaries '
+            parent_rule='Only listed names in the repertoire that match at colon or comma boundaries '
             'are broader parents. Earlier unrelated labels are not parents.',
-            reach_rule='First arrival at a cached exact name or a known more specific named '
+            reach_rule='First arrival at a listed exact name or a known more specific named '
             'descendant. Inheritance preserves existing route probability and '
             'never introduces another opening. Each modeled game counts once per '
             'opening; rows overlap. Per-board origin contributions retain the mass '

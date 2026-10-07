@@ -94,8 +94,9 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     everything = '\n'.join([full, summary, *chapters])
     assert 'Study description' not in everything and '\u2014' not in everything
     for rendered in (full, summary, *chapters):
-        assert 'Most common opening source' in rendered and 'Unclassified' in rendered
-        assert 'Unclassified (100.00%)' not in rendered and 'Unclassified (100.0%)' not in rendered
+        assert 'Most common opening source' in rendered and 'French Defense' in rendered
+        # A sole source shows no arrival share.
+        assert not re.search(r'(Unclassified|\(#white-opening-\d+\)) \(100\.0+%\)', rendered)
         for header in rendered.splitlines():
             if header.startswith('| ') and any(
                 label in header for label in ('Chapter source', 'Chapter context', 'Entry-position sources')

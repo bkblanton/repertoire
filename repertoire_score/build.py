@@ -85,6 +85,8 @@ def code_inputs(presentation=False):
     rendering = [package / 'render.py', *sorted((package / 'report').glob('*.py'))]
     # Study export code and the command dispatcher never affect analyses or rendering.
     files = [p for p in sorted(package.glob('*.py')) if p.name not in ('studies.py', 'cli.py', 'render.py')]
+    # Bundled opening names label the opening analyses.
+    files += sorted((package / 'data').rglob('*.tsv'))
     if presentation:
         files += rendering
     # Changes to pinned dependencies invalidate numerical analyses as well.

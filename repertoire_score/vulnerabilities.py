@@ -205,7 +205,7 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
     if missing and not fetch_missing:
         raise ValueError(f'{len(missing)} own-parent tables missing; use --fetch-missing to cache parents only')
     if missing:
-        online = Explorer(cache, manifest['filters'], delay=2.2)
+        online = Explorer(cache, manifest['filters'])
         try:
             for i, k in enumerate(missing, 1):
                 evidence[k] = online.get(k)

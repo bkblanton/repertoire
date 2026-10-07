@@ -937,7 +937,7 @@ def openings_section(bundle, refs):
     text += [
         f"{len(rows)} reached categories; "
         f"{coverage['named_repertoire_positions']} repertoire boards have exact "
-        "cached names. "
+        "opening names. "
         f"A known name is reached in {percentage(coverage['ever_classified_probability'])} of modeled games.",
         '',
     ]

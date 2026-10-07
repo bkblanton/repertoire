@@ -26,9 +26,9 @@ from repertoire_score.report.sections import openings_section
 from repertoire_score.sharpness import recursive_wdl
 
 
-def named(evidence, k, name, eco='A00'):
-    evidence[k]['opening'] = dict(name=name, eco=eco)
-    return opening_identity(evidence[k]['opening'])
+def named(names, k, name, eco='A00'):
+    names[k] = dict(name=name, eco=eco)
+    return opening_identity(names[k])
 
 
 def transposing(tmp_path):
@@ -43,12 +43,13 @@ def transposing(tmp_path):
 
 
 def test_unnamed_transposition_unions_all_routes_and_exact_names_reset(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    family = named(e, g.roots[0], 'Family')
-    a = named(e, position('Nf3 d5'), 'Family: One')
-    b = named(e, position('g3 Nf6'), 'Other')
-    deeper = named(e, position('Nf3 d5 g3 Nf6 Bg2'), 'Family: One, Deeper')
-    catalog, exact, labels, memberships = classify(g, e, ev.facts, True)
+    family = named(names, g.roots[0], 'Family')
+    a = named(names, position('Nf3 d5'), 'Family: One')
+    b = named(names, position('g3 Nf6'), 'Other')
+    deeper = named(names, position('Nf3 d5 g3 Nf6 Bg2'), 'Family: One, Deeper')
+    catalog, exact, labels, memberships = classify(g, names, ev.facts, True)
     shared = position('Nf3 d5 g3 Nf6')
     assert shared == position('g3 Nf6 Nf3 d5')
     assert labels[shared] == {a, b}
@@ -59,15 +60,16 @@ def test_unnamed_transposition_unions_all_routes_and_exact_names_reset(tmp_path)
     assert set(exact) == {g.roots[0], position('Nf3 d5'), position('g3 Nf6'), position('Nf3 d5 g3 Nf6 Bg2')}
     # Position labels still merge unused alternative routes, without changing policy.
     ev = Evaluator(g, True, e, ev.facts, {g.roots[0]: 'g1f3'})
-    assert classify(g, e, ev.facts, True)[2][shared] == {a, b}
+    assert classify(g, names, ev.facts, True)[2][shared] == {a, b}
 
 
 def test_identical_names_with_multiple_eco_codes_form_one_category(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    a = named(e, position('Nf3 d5'), 'Same opening', 'A00')
-    b = named(e, position('g3 Nf6'), 'Same opening', 'A01')
+    a = named(names, position('Nf3 d5'), 'Same opening', 'A00')
+    b = named(names, position('g3 Nf6'), 'Same opening', 'A01')
     assert a == b
-    catalog, _, labels, memberships = classify(g, e, ev.facts, True)
+    catalog, _, labels, memberships = classify(g, names, ev.facts, True)
     assert len(catalog) == 1
     assert catalog[a]['eco_codes'] == ['A00', 'A01']
     assert labels[position('Nf3 d5 g3 Nf6')] == {a}
@@ -77,12 +79,13 @@ def test_identical_names_with_multiple_eco_codes_form_one_category(tmp_path):
 
 
 def test_rare_opening_keeps_only_its_incoming_share_at_unnamed_transposition(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    rare = named(e, position('Nf3 d5'), 'Rare')
-    common = named(e, position('g3 Nf6'), 'Common')
+    rare = named(names, position('Nf3 d5'), 'Rare')
+    common = named(names, position('g3 Nf6'), 'Common')
     ev = Evaluator(g, True, e, ev.facts, {g.roots[0]: {'g1f3': 0.01, 'g2g3': 0.99}})
     roots = {g.roots[0]: 1.0}
-    catalog, exact, _, potential_memberships = classify(g, e, ev.facts, True)
+    catalog, exact, _, potential_memberships = classify(g, names, ev.facts, True)
     shared = position('Nf3 d5 g3 Nf6')
     flows = name_flow(ev, roots, exact)
     assert flows[shared] == pytest.approx({rare: 0.01, common: 0.99})
@@ -98,20 +101,22 @@ def test_rare_opening_keeps_only_its_incoming_share_at_unnamed_transposition(tmp
 
 
 def test_unclassified_routes_stay_unclassified_at_shared_unnamed_board(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    rare = named(e, position('Nf3 d5'), 'Rare')
-    _, exact, _, _ = classify(g, e, ev.facts, True)
+    rare = named(names, position('Nf3 d5'), 'Rare')
+    _, exact, _, _ = classify(g, names, ev.facts, True)
     flows = name_flow(ev, {g.roots[0]: 1.0}, exact)
     assert flows[position('Nf3 d5 g3 Nf6')] == pytest.approx({rare: 0.4, None: 0.6})
 
 
 def test_named_reset_changes_current_name_but_preserves_prior_origin_mass(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    rare = named(e, position('Nf3 d5'), 'Rare')
-    named(e, position('g3 Nf6'), 'Other')
+    rare = named(names, position('Nf3 d5'), 'Rare')
+    named(names, position('g3 Nf6'), 'Other')
     leaf = position('Nf3 d5 g3 Nf6 Bg2')
-    common = named(e, leaf, 'Common')
-    catalog, exact, _, _ = classify(g, e, ev.facts, True)
+    common = named(names, leaf, 'Common')
+    catalog, exact, _, _ = classify(g, names, ev.facts, True)
     roots = {g.roots[0]: 1.0}
     flows = name_flow(ev, roots, exact)
     assert flows[leaf] == pytest.approx({common: 1.0})
@@ -121,11 +126,12 @@ def test_named_reset_changes_current_name_but_preserves_prior_origin_mass(tmp_pa
 
 
 def test_named_specific_variation_can_introduce_family_through_bypass(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    family = named(e, position('Nf3 d5'), 'Family')
-    named(e, position('g3 Nf6'), 'Other')
-    deeper = named(e, position('Nf3 d5 g3 Nf6'), 'Family: Deeper')
-    catalog, exact, _, _ = classify(g, e, ev.facts, True)
+    family = named(names, position('Nf3 d5'), 'Family')
+    named(names, position('g3 Nf6'), 'Other')
+    deeper = named(names, position('Nf3 d5 g3 Nf6'), 'Family: Deeper')
+    catalog, exact, _, _ = classify(g, names, ev.facts, True)
     roots = {g.roots[0]: 1.0}
     regions = named_regions(exact, catalog)
     entries, total, _ = first_entries(ev, roots, regions[family])
@@ -137,11 +143,12 @@ def test_named_specific_variation_can_introduce_family_through_bypass(tmp_path):
 
 
 def test_unused_alternative_supplies_no_name_probability(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    selected = named(e, position('Nf3 d5'), 'Selected')
-    unused = named(e, position('g3 Nf6'), 'Unused')
+    selected = named(names, position('Nf3 d5'), 'Selected')
+    unused = named(names, position('g3 Nf6'), 'Unused')
     ev = Evaluator(g, True, e, ev.facts, {g.roots[0]: 'g1f3'})
-    catalog, exact, _, _ = classify(g, e, ev.facts, True)
+    catalog, exact, _, _ = classify(g, names, ev.facts, True)
     roots = {g.roots[0]: 1.0}
     assert name_flow(ev, roots, exact)[position('Nf3 d5 g3 Nf6')] == {selected: 1.0}
     assert first_entries(ev, roots, named_regions(exact, catalog)[unused])[1] == 0.0
@@ -181,14 +188,15 @@ def test_first_entry_absorption_preserves_late_bypass_and_never_counts_twice(tmp
 
 
 def test_unprepared_reply_uses_parent_evidence_and_inherited_name(tmp_path):
+    names = {}
     g = graph(tmp_path, '1. e4 e5 2. Nf3 *')
     e4, leaf, gap = position('e4'), position('e4 e5 Nf3'), position('e4 c5')
     e = {e4: data(26, 0, 24, [('e7e5', 20, 0, 20), ('c7c5', 6, 0, 4)]), leaf: data(50, 0, 50)}
     e[e4]['moves'][0]['averageRating'] = 1000
     e[e4]['moves'][1]['averageRating'] = 2000
-    identity = named(e, e4, "King's Pawn")
+    identity = named(names, e4, "King's Pawn")
     ev = Evaluator(g, True, e, chess_facts(g, True, e))
-    assert classify(g, e, ev.facts, True)[2][gap] == {identity}
+    assert classify(g, names, ev.facts, True)[2][gap] == {identity}
     entries, total, missed = first_entries(ev, {g.roots[0]: 1.0}, {gap})
     assert total == pytest.approx(0.2) and missed == pytest.approx(0.8)
     result = cohort(ev, entries, total, recursive_wdl(ev))
@@ -244,7 +252,10 @@ def test_cache_only_analysis_preserves_scores_sources_and_validates_staleness(tm
     result = analyze(path, cache)
     assert result['manifest']['network_requests'] == 0
     assert result['validation']['saved_score_reproduced']
-    assert result['openings'] == [] and result['coverage']['ever_classified_probability'] == 0.0
+    # Names come from the bundled dataset, so the fixture's nameless tables still classify every game.
+    assert {'French Defense', 'French Defense: Advance Variation'} <= {r['name'] for r in result['openings']}
+    assert 'French Defense: Tarrasch Variation' in {r['name'] for r in result['catalog']}
+    assert result['coverage']['ever_classified_probability'] == pytest.approx(1.0)
     g = graph(tmp_path, Path(saved['manifest']['input_path']).read_text())
     assert set(calls) == set(g.nodes)
     for p, digest in originals.items():
@@ -255,11 +266,12 @@ def test_cache_only_analysis_preserves_scores_sources_and_validates_staleness(tm
 
 
 def test_opening_tables_show_spread_baselines_and_entry_details(tmp_path):
+    names = {}
     from helpers import check_score_tables
 
     g, e, ev = transposing(tmp_path)
-    identity = named(e, position('Nf3 d5'), 'Family: One')
-    catalog, exact, labels, memberships = classify(g, e, ev.facts, True)
+    identity = named(names, position('Nf3 d5'), 'Family: One')
+    catalog, exact, labels, memberships = classify(g, names, ev.facts, True)
     region = {k for k, ids in memberships.items() if identity in ids}
     entries, total, _ = first_entries(ev, {g.roots[0]: 1.0}, region)
     row = dict(**catalog[identity], reach=total, chapter_ids=['1'], **cohort(ev, entries, total, recursive_wdl(ev)))
@@ -289,19 +301,20 @@ def test_opening_tables_show_spread_baselines_and_entry_details(tmp_path):
 
 
 def test_unrelated_classification_is_not_a_parent_and_null_has_no_label(tmp_path):
+    names = {}
     g = graph(tmp_path, '1. e4 c5 2. d4 cxd4 3. Nf3 *')
     e = {k: data(50, 0, 50) for k in g.nodes}
-    old = named(e, position('e4 c5 d4'), 'Smith-Morra')
-    new = named(e, position('e4 c5 d4 cxd4'), 'Open Sicilian')
-    result = classify(g, e, chess_facts(g, True, e), True)
+    old = named(names, position('e4 c5 d4'), 'Smith-Morra')
+    new = named(names, position('e4 c5 d4 cxd4'), 'Open Sicilian')
+    result = classify(g, names, chess_facts(g, True, e), True)
     assert result[2][g.roots[0]] == set()
     assert result[2][position('e4 c5 d4 cxd4 Nf3')] == {new}
     assert old not in result[0][new]['parent_ids']
 
 
 @pytest.mark.parametrize('value', [dict(name='', eco='A00'), dict(name='Opening'), 'Opening'])
-def test_malformed_cached_names_are_rejected(value):
-    with pytest.raises(ValueError, match='Invalid cached opening'):
+def test_malformed_opening_names_are_rejected(value):
+    with pytest.raises(ValueError, match='Invalid opening name'):
         opening_identity(value)
 
 
@@ -321,11 +334,12 @@ def test_most_common_source_uses_current_partition_and_deterministic_ties(weight
 
 
 def test_chapter_sources_keep_alternative_policy_and_first_entry_context(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    a = named(e, position('Nf3 d5'), 'First route')
-    b = named(e, position('g3 Nf6'), 'Alternative route')
+    a = named(names, position('Nf3 d5'), 'First route')
+    b = named(names, position('g3 Nf6'), 'Alternative route')
     shared = position('Nf3 d5 g3 Nf6')
-    _, exact, _, _ = classify(g, e, ev.facts, True)
+    _, exact, _, _ = classify(g, names, ev.facts, True)
     roots = {g.roots[0]: 1.0}
     saved = dict(
         color='white',
@@ -353,10 +367,11 @@ def test_chapter_sources_keep_alternative_policy_and_first_entry_context(tmp_pat
 
 
 def test_first_entry_name_flow_absorbs_before_later_transposition(tmp_path):
+    names = {}
     g, e, ev = transposing(tmp_path)
-    a = named(e, position('Nf3 d5'), 'Early')
-    b = named(e, position('g3 Nf6'), 'Bypass')
-    _, exact, _, _ = classify(g, e, ev.facts, True)
+    a = named(names, position('Nf3 d5'), 'Early')
+    b = named(names, position('g3 Nf6'), 'Bypass')
+    _, exact, _, _ = classify(g, names, ev.facts, True)
     early, shared = position('Nf3 d5'), position('Nf3 d5 g3 Nf6')
     flow = name_flow(ev, {g.roots[0]: 1.0}, exact, stop_at={early, shared})
     assert flow[early] == {a: 0.4}
