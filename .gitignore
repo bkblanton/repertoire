@@ -212,5 +212,10 @@ __marimo__/
 .cache/
 lichess_token.txt
 
-# Generated analysis data stays local; readable Markdown reports remain tracked.
-/reports/data/
+# Your own repertoire stays local: study list, exports, policy overrides,
+# saved comparisons and every generated report.
+/studies.json
+/studies/
+/configs/
+/comparisons.json
+/reports/

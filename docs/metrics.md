@@ -22,7 +22,7 @@ How to read the generated reports, how the repertoire score is calculated, and w
 
 ## Reading the reports
 
-Start with [summary.md](../reports/summary.md). After the headline scores, each color leads with what to work on:
+Start with the summary, `reports/summary.md`. After the headline scores, each color leads with what to work on:
 
 - **Where preparation ends** groups every unprepared reply by the last prepared position before it, so one study task is one row. *Games leaving prep here* is the share of all games with that color whose preparation ends at that position; *share of games at this position* separates a chapter that simply stops (100%) from rare sidelines at a busy position. Unlike other rankings, these rows do not overlap.
 - **Own moves to review** ranks selected moves by move reach times drag against the parent database score.
@@ -31,7 +31,7 @@ Collapsed sections follow: the most common positions as a nested tree, chapter c
 
 Where your chapters record different first moves at the same position, the full report and summary list each competing alternative with its score; the repertoire plays the highest-scoring one (see [Move selection](usage.md#move-selection)). Saved comparisons of candidate studies are listed at the end of the summary, each with its own page in `reports/comparisons/` (see [Comparing alternative preparation](usage.md#comparing-alternative-preparation)).
 
-[report.md](../reports/report.md) is the index for detailed analysis: per-color chapter tables, exit points, positions, openings, vulnerabilities, strengths, gap priorities, depth distributions, correlations, and a glossary (`Definitions and evidence`) with one anchor per metric. Tables state their main caveat in a sentence and link to the glossary entry instead of repeating it. Each chapter has its own page in `reports/chapters/` (W1, W2, ... and B1, B2, ...) with its exit points, positions, vulnerabilities, strengths, gaps, depth, entry positions and routes, plus links to the previous and next chapter and to the Lichess study chapter. Per-opening entry evidence is in `reports/openings/white.md` and `reports/openings/black.md`.
+The full report, `reports/report.md`, is the index for detailed analysis: per-color chapter tables, exit points, positions, openings, vulnerabilities, strengths, gap priorities, depth distributions, correlations, and a glossary (`Definitions and evidence`) with one anchor per metric. Tables state their main caveat in a sentence and link to the glossary entry instead of repeating it. Each chapter has its own page in `reports/chapters/` (W1, W2, ... and B1, B2, ...) with its exit points, positions, vulnerabilities, strengths, gaps, depth, entry positions and routes, plus links to the previous and next chapter and to the Lichess study chapter. Per-opening entry evidence is in `reports/openings/white.md` and `reports/openings/black.md`.
 
 | Column | How to read it |
 | --- | --- |

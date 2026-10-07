@@ -7,7 +7,7 @@ from . import studies
 from .context import DEFAULT_CACHE
 from .explorer import DEFAULT_FILTERS, Explorer, add_token_option, apply_token_file, fetch_missing, survey
 from .graph import parse
-from .score import inspect_repertoire, load_config, parent_positions, plan_repertoire, required_positions
+from .score import config_path, inspect_repertoire, load_config, parent_positions, plan_repertoire, required_positions
 
 
 def required_tables(pgn, color, config):
@@ -52,11 +52,11 @@ def main():
     parser.add_argument('white_pgn', nargs='?', help='White PGN; omit both to use the exported studies')
     parser.add_argument('black_pgn', nargs='?')
     parser.add_argument('--studies', default=studies.DIRECTORY, help='Folder of exported study PGNs')
-    parser.add_argument('--white-config', default='configs/white.json')
-    parser.add_argument('--black-config', default='configs/black.json')
+    parser.add_argument('--white-config', help='Policy overrides (default: configs/white.json if it exists)')
+    parser.add_argument('--black-config', help='Policy overrides (default: configs/black.json if it exists)')
     parser.add_argument('--cache', default=DEFAULT_CACHE)
     parser.add_argument('--dry-run', action='store_true', help='Count the tables to fetch and estimate the time')
-    parser.add_argument('--comparisons', default='comparisons.json', help='Saved comparisons whose tables to fetch')
+    parser.add_argument('--comparisons', default=compare.REGISTRY, help='Saved comparisons whose tables to fetch')
     add_token_option(parser)
     args = parser.parse_args()
     apply_token_file(parser, args)
@@ -66,7 +66,7 @@ def main():
         pgns = studies.default_paths(args.studies)
     else:
         pgns = dict(white=Path(args.white_pgn), black=Path(args.black_pgn))
-    configs = dict(white=args.white_config, black=args.black_config)
+    configs = dict(white=config_path('white', args.white_config), black=config_path('black', args.black_config))
     try:
         # Saved comparisons share the pass, as in a build.
         extra = compare.registry_tables(compare.load_registry(args.comparisons), pgns, configs)

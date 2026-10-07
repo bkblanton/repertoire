@@ -30,6 +30,8 @@ def study_id(value):
 
 
 def load_sources(path=SOURCES):
+    if not Path(path).is_file():
+        raise ValueError(f'Create {path} with your White and Black study URLs, or pass the PGN paths; see the README')
     sources = json.loads(Path(path).read_text(encoding='utf-8'))
     missing = [color for color in ('white', 'black') if not sources.get(color)]
     if missing:

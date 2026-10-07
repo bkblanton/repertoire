@@ -1,7 +1,9 @@
+from pathlib import Path
+
 import httpx
 import pytest
 
-from repertoire_score import build, studies
+from repertoire_score import build, score, studies
 from repertoire_score.graph import parse
 
 CHAPTERS = '''[Event "Study: One"]
@@ -44,6 +46,21 @@ def test_study_id_accepts_ids_and_study_or_chapter_urls(value):
 def test_study_id_rejects_other_urls():
     with pytest.raises(ValueError):
         studies.study_id('https://lichess.org/broadcast/abcd1234')
+
+
+def test_missing_study_list_explains_how_to_create_it(tmp_path):
+    with pytest.raises(ValueError, match='Create .* with your White and Black study URLs'):
+        studies.load_sources(tmp_path / 'studies.json')
+
+
+def test_default_configs_are_optional(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert score.config_path('white') is None
+    (tmp_path / 'configs').mkdir()
+    (tmp_path / 'configs' / 'white.json').write_text('{}', encoding='utf-8')
+    assert score.config_path('white') == str(Path('configs/white.json'))
+    assert score.config_path('black') is None
+    assert score.config_path('black', 'other.json') == 'other.json'
 
 
 def test_export_exports_whole_studies_and_ignores_export_date_changes(tmp_path, monkeypatch):

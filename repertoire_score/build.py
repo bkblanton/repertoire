@@ -155,8 +155,8 @@ def build(
     white_pgn,
     black_pgn,
     *,
-    white_config='configs/white.json',
-    black_config='configs/black.json',
+    white_config=None,
+    black_config=None,
     directory='reports/data',
     cache=DEFAULT_CACHE,
     offline=False,
@@ -322,8 +322,8 @@ def main():
     parser.add_argument('--sources', default=studies.SOURCES, help='JSON file with white and black study URLs')
     parser.add_argument('--studies', default=studies.DIRECTORY, help='Folder for exported study PGNs')
     parser.add_argument('--no-export', action='store_true', help='Use the previously exported study PGNs')
-    parser.add_argument('--white-config', default='configs/white.json')
-    parser.add_argument('--black-config', default='configs/black.json')
+    parser.add_argument('--white-config', help='Policy overrides (default: configs/white.json if it exists)')
+    parser.add_argument('--black-config', help='Policy overrides (default: configs/black.json if it exists)')
     parser.add_argument('--directory', default='reports/data')
     parser.add_argument('--cache', default=DEFAULT_CACHE)
     parser.add_argument('--offline', action='store_true', help='Use only cached Explorer tables and the last export')
@@ -341,6 +341,8 @@ def main():
     sources, folder, no_export = options.pop('sources'), options.pop('studies'), options.pop('no_export')
     dry_run = options.pop('dry_run')
     options.pop('token_file')
+    for color in ('white', 'black'):
+        options[f'{color}_config'] = scoring.config_path(color, options[f'{color}_config'])
     try:
         if args.white_pgn is None:
             # Offline builds never contact Lichess, so they reuse the last export.

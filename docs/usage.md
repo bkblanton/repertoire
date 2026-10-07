@@ -61,12 +61,12 @@ Everything runs through one command, `repertoire <command>`. `uv run repertoire 
 
 ## Generate both reports
 
-The studies to analyze are listed in [studies.json](../studies.json):
+The studies to analyze are listed in `studies.json` in the repository root:
 
 ```json
 {
-  "white": "https://lichess.org/study/abcd1234",
-  "black": "https://lichess.org/study/mnop3456"
+  "white": "https://lichess.org/study/<white-study-id>",
+  "black": "https://lichess.org/study/<black-study-id>"
 }
 ```
 
@@ -78,7 +78,7 @@ uv run repertoire build --token-file path/to/lichess_token.txt
 
 Create a personal token at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token). It needs the `study:read` scope to export private studies; the same token authenticates Explorer requests. Instead of `--token-file`, you can set the `LICHESS_TOKEN` environment variable. The program never writes the token to reports, exports or cache files.
 
-The export step writes `studies/white.pgn` and `studies/black.pgn` with all chapters, variations and comments. Each download is validated by parsing it before the previous export is replaced, and a file is left untouched when only its `Date` headers changed, so an unchanged study reuses every saved stage. The exports are tracked in Git, so `git diff studies/` shows what changed in your preparation since the last commit.
+The export step writes `studies/white.pgn` and `studies/black.pgn` with all chapters, variations and comments. Each download is validated by parsing it before the previous export is replaced, and a file is left untouched when only its `Date` headers changed, so an unchanged study reuses every saved stage.
 
 The build then fetches every Explorer table both repertoires need, in one pass with a count and time estimate up front. Every later stage runs offline: it scores both colors, generates the supporting analyses, and writes `reports/report.md`, `reports/summary.md`, and the chapter and opening pages under `reports/chapters/` and `reports/openings/`. Existing Explorer responses are reused; new or extended lines require only the missing tables. A first run can take hours; see [Long runs](#long-runs).
 
@@ -86,7 +86,7 @@ The build then fetches every Explorer table both repertoires need, in one pass w
 
 ## Long runs
 
-Every position in a repertoire needs its own Opening Explorer table, and the build fetches them all before it analyzes anything. Requests are made one at a time, about one a second, and Lichess answers sustained use with HTTP 429, which pauses the run for a minute at a time. A first run on a large repertoire therefore takes hours; the example repertoires need about 2,000 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
+Every position in a repertoire needs its own Opening Explorer table, and the build fetches them all before it analyzes anything. Requests are made one at a time, about one a second, and Lichess answers sustained use with HTTP 429, which pauses the run for a minute at a time. A first run on a large repertoire therefore takes hours; some 60 chapters across both colors need about 2,000 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
 
 Check the size of a run before starting it. `--dry-run` needs no token for `fetch`, while `build --dry-run` exports the studies first so the count reflects the latest version:
 
@@ -209,19 +209,18 @@ Standalone scoring and analysis commands refresh the reports automatically. Duri
 
 | Location | Purpose |
 | --- | --- |
-| [studies.json](../studies.json) | The White and Black Lichess study URLs exported by the default build. |
-| `studies/` | The latest study exports, `white.pgn` and `black.pgn`, tracked in Git. |
-| [configs/white.json](../configs/white.json), [configs/black.json](../configs/black.json) | Maintained policy overrides and any entry overrides, keyed by Lichess chapter ID. Preserve explicit choices when importing newer PGNs. |
+| `studies.json` | The White and Black Lichess study URLs exported by the default build. |
+| `studies/` | The latest study exports, `white.pgn` and `black.pgn`. |
+| `configs/white.json`, `configs/black.json` | Optional policy overrides and any entry overrides, keyed by Lichess chapter ID. Preserve explicit choices when importing newer PGNs. |
 | `.cache/explorer/` | Persistent raw Explorer responses, keyed by endpoint, canonical board and query filters. Each file wraps `identity`, `retrieved_at`, and `data`; score manifests identify the relevant cache keys. |
 | `reports/data/` | Score snapshots, companion JSON, correlation results, `.build-state.json` checkpoints and `.report-index.json` output registration. |
-| [reports/report.md](../reports/report.md), [reports/summary.md](../reports/summary.md) | The current generated full report and summary. |
+| `reports/report.md`, `reports/summary.md` | The current generated full report and summary. |
 | `reports/chapters/`, `reports/openings/` | Generated chapter pages (`W1.md`, `B1.md`, ...) and per-color opening evidence pages, linked from the report and summary. |
-| [comparisons.json](../comparisons.json) | Saved comparisons that `repertoire build` and `repertoire compare` rerun: name, color, sources and optional entry. |
-| `studies/candidates/` | Exports of candidate studies and copies of candidate PGNs from outside the repository, tracked so comparisons can be regenerated. |
+| `comparisons.json` | Saved comparisons that `repertoire build` and `repertoire compare` rerun: name, color, sources and optional entry. |
+| `studies/candidates/` | Exports of candidate studies and copies of candidate PGNs from outside the repository, kept so comparisons can be regenerated. |
 | `reports/comparisons/` | Comparison pages and adopt PGNs from `repertoire compare`, and the opponent-rating comparison. Comparison data is in `reports/data/comparisons/`. |
-| `reports/positions/` | Static examples of focused position reports from earlier snapshots. |
 
-Explorer cache and generated analysis JSON are ignored by Git because they can grow very large. Readable Markdown reports remain tracked, so a fresh checkout may include reports without the local evidence needed to regenerate them. Preserve local data when changing Git tracking; clearing the cache is not a routine repair.
+Everything in this table is ignored by Git: the files that describe your repertoire stay on your computer, and the Explorer cache and analysis JSON can grow very large. A fresh checkout has none of them; create `studies.json` and run the build. Keep your own backup of `studies.json`, `configs/` and `comparisons.json` if you want their history. Clearing the cache is not a routine repair.
 
 Saved score JSON contains the complete event ledger, scores, sensitivity results, sample counts, policy diagnostics and a manifest. Check `manifest.input_path`, `input_sha256`, `configuration`, `filters` and `evidence` before reusing a snapshot. Cache files record `identity`, `retrieved_at` and `data`; manifests identify the relevant keys and timestamps.
 
@@ -231,7 +230,7 @@ Treat credentials as secrets: keep token files out of Git and never print their 
 
 ## Configuration
 
-The maintained color settings are [configs/white.json](../configs/white.json) and [configs/black.json](../configs/black.json). They define move overrides, any entry overrides and Explorer filters.
+Optional color settings go in `configs/white.json` and `configs/black.json`, which `build` and `fetch` use when they exist; `--white-config` and `--black-config` select other files. They define move overrides, any entry overrides and Explorer filters. Both are optional; without them, the defaults apply.
 
 ### Explorer filters
 
@@ -386,7 +385,7 @@ Every analysis command adds this attribution automatically.
 
 ```sh
 uv run repertoire compare path/to/vienna-gambit.pgn --color white
-uv run repertoire compare https://lichess.org/study/qrst7890 --token-file path/to/lichess_token.txt
+uv run repertoire compare https://lichess.org/study/<candidate-study-id> --token-file path/to/lichess_token.txt
 ```
 
 Inputs are any number of PGN files and Lichess study or chapter URLs, in priority order. A study URL exports the whole study and a chapter URL only that chapter. Exports are checked by parsing, saved to `studies/candidates/<name>.pgn` and left untouched when only their dates changed; `--no-export` reuses the saved copy. Study exports carry each chapter's orientation, so `--color` is only needed when it is missing, as in a PGN downloaded from the Lichess website.
@@ -410,16 +409,16 @@ Missing Explorer tables are fetched with the usual count, estimate and progress 
 
 ### Saved comparisons
 
-Add `--save` to keep a comparison in [comparisons.json](../comparisons.json):
+Add `--save` to keep a comparison in `comparisons.json`:
 
 ```sh
-uv run repertoire compare https://lichess.org/study/qrst7890 --color white --save --token-file path/to/lichess_token.txt
+uv run repertoire compare https://lichess.org/study/<candidate-study-id> --color white --save --token-file path/to/lichess_token.txt
 ```
 
 ```json
 {
   "comparisons": [
-    {"name": "vienna-gambit", "color": "white", "sources": ["https://lichess.org/study/qrst7890"]}
+    {"name": "vienna-gambit", "color": "white", "sources": ["https://lichess.org/study/<candidate-study-id>"]}
   ]
 }
 ```

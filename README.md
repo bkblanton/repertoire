@@ -2,11 +2,7 @@
 
 Analyze White and Black Lichess study PGNs to see how often your preparation is reached, how it scores, and where the most common gaps remain. The program follows your chosen moves, weights the opponent's replies using Lichess opening statistics, and combines exact-position transpositions across chapters.
 
-It produces a [summary](reports/summary.md) for everyday review, a [full report](reports/report.md) for detailed analysis, and one page per chapter. The score describes database outcomes under a fixed repertoire policy; it is not an engine evaluation or a prediction of your personal rating gain.
-
-## Example
-
-This repository includes the author's own repertoires as a worked example: the study exports in [studies/](studies), their configuration in [configs/](configs), and the generated [reports/](reports). Start with the [example summary](reports/summary.md).
+It produces a summary for everyday review, a full report for detailed analysis, and one page per chapter, as Markdown under `reports/`. The score describes database outcomes under a fixed repertoire policy; it is not an engine evaluation or a prediction of your personal rating gain.
 
 ## Requirements
 
@@ -21,16 +17,18 @@ Install the dependencies:
 uv sync --locked
 ```
 
-Point [studies.json](studies.json) at your White and Black studies. A study URL, a chapter URL or a bare study ID all work:
+Create `studies.json` in the repository root, pointing at your White and Black studies. A study URL, a chapter URL or a bare study ID all work:
 
 ```json
 {
-  "white": "https://lichess.org/study/abcd1234",
-  "black": "https://lichess.org/study/mnop3456"
+  "white": "https://lichess.org/study/<white-study-id>",
+  "black": "https://lichess.org/study/<black-study-id>"
 }
 ```
 
-The files in [configs/](configs) are keyed by the example studies' chapter IDs, so replace each with `{}` before analyzing your own studies. You can add move choices and chapter subjects later; see [Configuration](docs/usage.md#configuration).
+No other setup is needed. You can add move choices and chapter subjects later in `configs/white.json` and `configs/black.json`; see [Configuration](docs/usage.md#configuration).
+
+Your repertoire stays on your computer: `studies.json`, the study exports in `studies/`, `configs/`, saved comparisons in `comparisons.json` and the generated `reports/` are all ignored by Git.
 
 Export both studies, score them and write every report:
 
@@ -40,7 +38,7 @@ uv run repertoire build --token-file path/to/lichess_token.txt
 
 The token can also come from the `LICHESS_TOKEN` environment variable. It is never written to reports, exports or the cache.
 
-**The first run can take hours.** The build needs one Opening Explorer table per position in your repertoire (about 2,000 for the example), requested one at a time, and Lichess rate-limits sustained use with one-minute pauses. To see the count and a minimum time before committing to a run, add `--dry-run`. During the fetch, progress and an estimate of the time left are printed every few seconds. Rate limits and short outages are waited out automatically, so the run can be left unattended; keep the computer from sleeping. Press Ctrl+C at any time: every fetched table is kept in `.cache/explorer/`, and running the same command again continues where it stopped. Later runs fetch only positions they have not seen, then take a couple of minutes to build. See [Long runs](docs/usage.md#long-runs).
+**The first run can take hours.** The build needs one Opening Explorer table per position in your repertoire (about 2,000 for some 60 chapters across both colors), requested one at a time, and Lichess rate-limits sustained use with one-minute pauses. To see the count and a minimum time before committing to a run, add `--dry-run`. During the fetch, progress and an estimate of the time left are printed every few seconds. Rate limits and short outages are waited out automatically, so the run can be left unattended; keep the computer from sleeping. Press Ctrl+C at any time: every fetched table is kept in `.cache/explorer/`, and running the same command again continues where it stopped. Later runs fetch only positions they have not seen, then take a couple of minutes to build. See [Long runs](docs/usage.md#long-runs).
 
 Other common runs:
 
@@ -58,7 +56,7 @@ uv run repertoire build --offline
 uv run repertoire build path/to/white.pgn path/to/black.pgn --token-file path/to/lichess_token.txt
 
 # Compare a candidate study with your repertoire, alternative by alternative.
-uv run repertoire compare https://lichess.org/study/qrst7890 --token-file path/to/lichess_token.txt
+uv run repertoire compare https://lichess.org/study/<candidate-study-id> --token-file path/to/lichess_token.txt
 
 # List chapter IDs, move conflicts and entry candidates for a PGN.
 uv run repertoire score inspect path/to/white.pgn --color white --output reports/data/inspection

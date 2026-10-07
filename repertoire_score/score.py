@@ -95,8 +95,19 @@ class Plan:
         return self.profiles[0]
 
 
+CONFIG = "configs/{}.json"
+
+
 def load_config(path):
     return json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
+
+
+def config_path(color, path=None):
+    """An explicit configuration, else configs/<color>.json when it exists; None means no overrides."""
+    if path:
+        return path
+    default = Path(CONFIG.format(color))
+    return str(default) if default.is_file() else None
 
 
 def inspect_repertoire(graph, color):
