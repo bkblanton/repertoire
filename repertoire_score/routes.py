@@ -123,16 +123,16 @@ def depth_distribution(evaluator, starts):
     )
 
 
-def first_entry_examples(evaluator, roots, region, expected_probability=None, expected_weights=None):
+def first_entry_examples(evaluator, roots, entries, expected_probability=None, expected_weights=None):
     """Sum ALL first arrivals; retain the most likely genuine route to each board.
 
     Example-route mass is only a subset of its entry-position mass. Paths stop
     on first chapter arrival, so a bypass example cannot pass an earlier entry.
     """
-    region = set(region)
-    mass = evaluator.reaches(roots, stop_at=region)
-    witnesses = evaluator.routes(roots, stop_at=region)
-    arrivals = {k: mass[k] for k in reversed(evaluator.values) if k in region and mass[k]}
+    entries = set(entries)
+    mass = evaluator.reaches(roots, stop_at=entries)
+    witnesses = evaluator.routes(roots, stop_at=entries)
+    arrivals = {k: mass[k] for k in reversed(evaluator.values) if k in entries and mass[k]}
     total = sum(arrivals.values())
     if expected_probability is not None and not math.isclose(total, expected_probability, abs_tol=1e-10):
         raise AssertionError('First-entry examples differ from saved chapter reach')
@@ -148,7 +148,7 @@ def first_entry_examples(evaluator, roots, region, expected_probability=None, ex
         position, number = root, fen_number(evaluator.graph.nodes[root].fen)
         sans, text = [], []
         for uci in path:
-            if position in region:
+            if position in entries:
                 raise AssertionError('Example route passes through an earlier chapter entry')
             sans.append(san(position, uci))
             text.append(move_text(position, number, uci))

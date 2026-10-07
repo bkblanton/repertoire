@@ -8,7 +8,7 @@ Work from the repository root and preserve unrelated local changes. Use uv for P
 
 | Responsibility | Files |
 | --- | --- |
-| PGN parsing, canonical boards, selected moves, chapter regions and first entries | [graph.py](../repertoire_score/graph.py), [board_cache.py](../repertoire_score/board_cache.py) |
+| PGN parsing, canonical boards, selected moves and automatic chapter entries | [graph.py](../repertoire_score/graph.py), [board_cache.py](../repertoire_score/board_cache.py) |
 | Authenticated evidence, validation and persistent cache | [explorer.py](../repertoire_score/explorer.py) |
 | The `repertoire` command, scoring orchestration, evidence model and calculated uncertainty | [cli.py](../repertoire_score/cli.py), [score.py](../repertoire_score/score.py), [model.py](../repertoire_score/model.py), [uncertainty.py](../repertoire_score/uncertainty.py) |
 | Backward values, forward probability, entry baselines, depth and chapter transitions | [evaluate.py](../repertoire_score/evaluate.py), [baseline.py](../repertoire_score/baseline.py), [depth.py](../repertoire_score/depth.py), [transitions.py](../repertoire_score/transitions.py) |
@@ -42,7 +42,7 @@ Ratings depend on preparation, character and vulnerabilities. Report insights de
 - Comparisons build each hypothetical repertoire from PGN games (`graph.parse_games`): adopted candidate lines first, then your chapters, with decision points fixed and every other competing position decided by score, exactly as in the build. The current scenario must reproduce the saved score.
 - Our selected moves do not inherit their database popularity. Opponent frequencies retain deviations and valid residual mass. Expand cached replies even after the last recorded PGN move; immediate transpositions into known preparation continue. Unknown continuations stop rather than searching for later re-entry.
 - Unprepared replies use the cached parent move row's score, counts and rating. Prepared scores use recursive continuation values. Comparison reports screen replies from those parent rows without requesting candidate child positions.
-- Chapter reach is first entry anywhere in its region, across all routes. Score, entry baseline, depth and chapter metrics use the same normalized first-entry mixture and policy. Overlapping positions, chapters, opening categories and gain comparisons are not additive.
+- Chapter reach is first arrival at one of its entry positions, across all routes; later shared positions do not count. Score, entry baseline, depth and chapter metrics use the same normalized first-entry mixture and policy. Overlapping positions, chapters, opening categories and gain comparisons are not additive.
 - Missing or zero evidence remains unresolved; API failure is not successful zero-data evidence. Sparse filtering applies to strengths and vulnerabilities, not to probability conservation or the repertoire score. Reuse shared samples at canonical transpositions.
 - Scores and CP favor the repertoire owner for both colors. Main tables use empirical **Repertoire score**; outcome volatility retains the `sharpness` JSON field while score tables use recursive branch spread. CP appears only beside headline deltas. Opponent ratings describe chapters or lines, never a repertoire-wide average or a score adjustment.
 - The summary leads each color with five exit points and five own moves to review, plus opening names alongside lines. The position tree, chapter comparisons, costly replies, strongest moves and preparation metrics are expandable. Separate opening rankings, repeat-gap-share tables and position-contribution tables remain in the full report; chapter detail lives on chapter pages.
@@ -73,7 +73,7 @@ For a focused change, choose the relevant checks:
 | Change | Useful test command |
 | --- | --- |
 | Presentation and summary | `uv run --no-sync pytest tests/test_consolidated.py tests/test_report_insights.py -q` |
-| Traversal, reach, chapters, depth or uncertainty | `uv run --no-sync pytest tests/test_model.py tests/test_uncertainty.py tests/test_endpoint_traversal.py tests/test_regions.py tests/test_chapter_policies.py tests/test_depth.py tests/test_gaps.py -q` |
+| Traversal, reach, chapters, depth or uncertainty | `uv run --no-sync pytest tests/test_model.py tests/test_uncertainty.py tests/test_endpoint_traversal.py tests/test_entries.py tests/test_chapter_policies.py tests/test_depth.py tests/test_gaps.py -q` |
 | Explorer or incremental reuse | `uv run --no-sync pytest tests/test_explorer.py tests/test_build.py -q` |
 | Broad numerical or dependency changes | `uv run --no-sync pytest -q` |
 

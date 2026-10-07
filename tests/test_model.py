@@ -204,10 +204,10 @@ def test_entry_ambiguity_and_explicit_exclusions(tmp_path):
         '*\n\n[ChapterURL "https://lichess.org/study/test/b"]\n\n1. e4 e6 *'
     )
     g = graph(tmp_path, text)
-    entry = infer_entries(g)['a']
-    assert entry['status'] == 'inferred_multiple_frontiers'
-    assert entry['positions'] == entry['candidates']
-    assert len(entry['candidates']) == 2
+    entry = infer_entries(g, True)['a']
+    assert entry['status'] == 'automatic'
+    assert entry['positions'] == sorted([position('e4 e5'), position('e4 c5')])
+    assert sorted(entry['paths']) == [['e4', 'c5'], ['e4', 'e5']]
     assert len(parse(tmp_path / 'fixture.pgn', exclusions=['a']).chapters) == 1
     removed = parse(tmp_path / 'fixture.pgn', exclusions=[f'a:{position("e4")}:c7c5'])
     assert position('e4 c5') not in removed.nodes
@@ -294,15 +294,13 @@ def test_cli_fixture_end_to_end(tmp_path, monkeypatch):
     assert (tmp_path / 'summary.md').exists()
     saved_white = (tmp_path / 'report.json').read_bytes()
     config = tmp_path / 'config.json'
-    config.write_text(
-        json.dumps({'chapter_regions': {'1': {'anchors': [{'path': ['e4']}], 'description': 'Subject begins at e4'}}})
-    )
+    config.write_text(json.dumps({'entries': {'1': [{'path': ['e4']}]}}))
     args.config = str(config)
     args.color = 'black'
     args.output = str(tmp_path / 'black')
     cli.analyze(args)
     black = json.loads((tmp_path / 'black.json').read_text())
-    assert set(black['chapters'][0]['region']['positions']) == {position('e4'), position('e4 e5')}
+    assert set(black['chapters'][0]['prepared_positions']) == {position('e4'), position('e4 e5')}
     assert black['chapters'][0]['entries'][0]['position'] == position('e4')
     assert black['chapters'][0]['entries'][0]['conditional_first_entry_weight'] == 1
     assert black['overall']['prepared_depth']['expected_moves'] == 1

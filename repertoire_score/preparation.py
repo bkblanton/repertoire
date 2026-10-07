@@ -293,11 +293,10 @@ def analyze(path, cache=DEFAULT_CACHE):
             raise AssertionError('Depth distribution did not reproduce the saved depth bounds')
         if scope['chapter']:
             chapter = chapters[scope['chapter']]
-            region = (chapter.get('region') or {}).get('positions') or [e['position'] for e in chapter['entries']]
             scope['entry_routes'] = first_entry_examples(
                 evaluator,
                 manifest['root_weights'],
-                region,
+                [e['position'] for e in chapter['entries']],
                 chapter['score'].get('entry_probability'),
                 chapter['score'].get('first_entry_weights') or None,
             )

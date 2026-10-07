@@ -370,8 +370,8 @@ def analyze(path, cache=DEFAULT_CACHE):
         for scope in group:
             if scope['id'] != 'overall':
                 chapter = chapters[scope['id']]
-                region = (chapter.get('region') or {}).get('positions') or [e['position'] for e in chapter['entries']]
-                flows = name_flow(evaluator, manifest['root_weights'], exact, stop_at=region)
+                entries = [e['position'] for e in chapter['entries']]
+                flows = name_flow(evaluator, manifest['root_weights'], exact, stop_at=entries)
                 entry_sources = {}
                 for entry in chapter['entries']:
                     weights = flows.get(entry['position'], {})

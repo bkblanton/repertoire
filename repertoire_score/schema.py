@@ -86,7 +86,7 @@ class Chapter(TypedDict):
     entry_status: str
     policy_overrides: dict[Position, str]
     policy_basis: str
-    region: dict | None
+    prepared_positions: list[Position]  # the entries and their chapter-owned descendants
     entries: list[dict]
     score: ChapterScore
     entry_baseline: EntryBaseline

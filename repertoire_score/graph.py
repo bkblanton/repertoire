@@ -223,76 +223,55 @@ def topology(transitions, roots):
     return order
 
 
-def chapter_frontier(graph, cid, root):
-    """The first positions along the chapter's own moves that belong to no other chapter."""
-    frontier, visited, pending = set(), set(), [root]
+def automatic_entries(graph, color, cid, root):
+    """The first positions on the chapter's lines that no other chapter continues from.
+
+    At own turns, follow the chapter's first recorded move, as its comparison policy does. A chapter that only
+    reaches a position, ending its line there, does not share it; this is how a chapter hands a line to another.
+    A line ending on a position no other chapter reaches makes that position an entry.
+    """
+    entries, visited, pending = set(), set(), [root]
     while pending:
         k = pending.pop()
         if k in visited:
             continue
         visited.add(k)
         n = graph.nodes[k]
-        if n.chapters == {cid}:
-            frontier.add(k)
-            continue
-        pending.extend(target for move, target in n.edges.items() if cid in n.provenance[move])
-    return frontier
+        moves = n.chapter_moves.get(cid)
+        if any(recorded for other, recorded in n.chapter_moves.items() if other != cid):
+            if moves and turn(k) == color:
+                pending.append(n.edges[moves[0]])
+            elif moves:
+                pending.extend(n.edges[m] for m in moves)
+        elif moves or n.chapters == {cid}:
+            entries.add(k)
+    return sorted(entries)
 
 
-def infer_entries(graph):
-    """Find all first chapter-unique positions across every variation."""
+def infer_entries(graph, color):
+    """Each chapter's automatic entry positions, with representative paths."""
     entries = {}
     for c in graph.chapters:
-        cid = c["id"]
-        frontier = chapter_frontier(graph, cid, c["root"])
-        entries[cid] = {
-            "positions": sorted(frontier),
-            "candidates": sorted(frontier),
-            "status": "inferred_unique_frontier"
-            if len(frontier) == 1
-            else "inferred_multiple_frontiers"
-            if frontier
-            else "automatic_fallback_needed",
+        positions = automatic_entries(graph, color, c["id"], c["root"])
+        entries[c["id"]] = {
+            "positions": positions,
+            "paths": [graph.nodes[k].path for k in positions],
+            "status": "automatic" if positions else "no_position_only_this_chapter_continues_from",
         }
     return entries
 
 
-def chapter_region(graph, chapter_id, anchors):
-    """Chapter-owned descendants of explicit subject anchors, including shared nodes.
+def chapter_positions(graph, chapter_id, entries):
+    """The entries and every descendant through moves this chapter records, including shared positions.
 
-    Do not follow other chapters' continuations when defining membership. The
-    evaluator still follows the complete repertoire after entering the region.
+    Describes what the chapter prepares. Reach and scores use the entries alone.
     """
-    if not anchors:
-        raise ValueError(f"Chapter region requires anchors: {chapter_id}")
-    for k in anchors:
-        if k not in graph.nodes or chapter_id not in graph.nodes[k].chapters:
-            raise ValueError(f"Region anchor does not belong to chapter {chapter_id}: {k}")
-    region, pending = set(), list(anchors)
+    positions, pending = set(), list(entries)
     while pending:
         k = pending.pop()
-        if k in region:
+        if k in positions:
             continue
-        region.add(k)
+        positions.add(k)
         node = graph.nodes[k]
         pending.extend(target for move, target in node.edges.items() if chapter_id in node.provenance[move])
-    return region
-
-
-def region_entries(transitions, roots, region):
-    """All possible first arrivals, including later bypasses of earlier entries.
-
-    Walk from roots, stopping each path on entry. Merely pruning entries that
-    descend from another entry would incorrectly discard late transpositions.
-    """
-    frontier, visited, pending = set(), set(), list(roots)
-    while pending:
-        k = pending.pop()
-        if k in visited:
-            continue
-        visited.add(k)
-        if k in region:
-            frontier.add(k)
-        else:
-            pending.extend(target for target, _ in transitions[k].values())
-    return sorted(frontier)
+    return positions

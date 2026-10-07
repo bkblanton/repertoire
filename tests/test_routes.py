@@ -2,7 +2,6 @@ import chess
 import pytest
 from helpers import data, graph, position, sample
 
-from repertoire_score.graph import chapter_region
 from repertoire_score.preparation import Evaluator, chess_facts
 from repertoire_score.report.bundle import load
 from repertoire_score.report.derive import own_priorities
@@ -99,22 +98,23 @@ def quiet_fixture(tmp_path, paulsen=False):
     evidence[position('e4 e5 Nc3 Nf6 g3')] = data(50, 0, 50, [('b8c6', 30, 0, 30), ('f8c5', 20, 0, 20)])
     if paulsen:
         evidence[position('e4 e5 Nc3 Nc6 g3 Bc5 Bg2')] = data(50, 0, 50, [('g8f6', 50, 0, 50)])
-    region = chapter_region(g, '1', [position('e4 e5 Nc3 Nf6 g3 Nc6')])
-    return g, evidence, region
+    # Configured entries: the subject board and a later board reached by bypassing it.
+    entries = [position('e4 e5 Nc3 Nf6 g3 Nc6'), position('e4 e5 Nc3 Nf6 g3 Nc6 Bg2 Bc5')]
+    return g, evidence, entries
 
 
 def test_entry_examples_follow_real_bypasses_and_reproduce_entry_weights(tmp_path):
-    g, evidence, region = quiet_fixture(tmp_path)
+    g, evidence, entries = quiet_fixture(tmp_path)
     anchor = position('e4 e5 Nc3 Nf6 g3 Nc6')
     later = position('e4 e5 Nc3 Nf6 g3 Nc6 Bg2 Bc5')
-    result = first_entry_examples(evaluator(g, evidence), {g.roots[0]: 1.0}, region, 1.0, {anchor: 0.6, later: 0.4})
+    result = first_entry_examples(evaluator(g, evidence), {g.roots[0]: 1.0}, entries, 1.0, {anchor: 0.6, later: 0.4})
     entry = next(r for r in result['positions'] if r['position'] == later)
     assert entry['example']['path_san'] == ['e4', 'e5', 'Nc3', 'Nf6', 'g3', 'Bc5', 'Bg2', 'Nc6']
     assert entry['example']['conditional_probability'] == pytest.approx(0.4)
     assert entry['conditional_first_entry_weight'] == pytest.approx(0.4)
     board = chess.Board(entry['example']['root_fen'])
     for move in entry['example']['path_uci']:
-        assert position_from_board(board) not in region
+        assert position_from_board(board) not in entries
         board.push_uci(move)
     assert position_from_board(board) == later
 
@@ -124,11 +124,11 @@ def position_from_board(board):
 
 
 def test_entry_examples_merge_unrecorded_immediate_transpositions(tmp_path):
-    g, evidence, region = quiet_fixture(tmp_path, paulsen=True)
+    g, evidence, entries = quiet_fixture(tmp_path, paulsen=True)
     anchor = position('e4 e5 Nc3 Nf6 g3 Nc6')
     later = position('e4 e5 Nc3 Nf6 g3 Nc6 Bg2 Bc5')
     assert 'g8f6' not in g.nodes[position('e4 e5 Nc3 Nc6 g3 Bc5 Bg2')].edges
-    result = first_entry_examples(evaluator(g, evidence), {g.roots[0]: 1.0}, region, 1.0, {anchor: 0.3, later: 0.7})
+    result = first_entry_examples(evaluator(g, evidence), {g.roots[0]: 1.0}, entries, 1.0, {anchor: 0.3, later: 0.7})
     row = next(r for r in result['positions'] if r['position'] == later)
     assert row['conditional_first_entry_weight'] == pytest.approx(0.7)
     assert row['example']['conditional_probability'] == pytest.approx(0.5)

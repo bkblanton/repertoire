@@ -155,7 +155,7 @@ def load_color(path):
             rating_coverage=context['known_coverage'],
         )
         chapter_rows.append(values)
-        position_sets.append(set(chapter['region']['positions']))
+        position_sets.append(set(chapter['prepared_positions']))
     for number, group in enumerate(connected_groups(position_sets), 1):
         for i in group:
             chapter_rows[i]['cluster'] = f"{score['color']}-{number}"
@@ -262,7 +262,7 @@ def markdown(result):
         'opponent mean, paired with the chapter score. Delta is score minus '
         'entry baseline. Equal chapter weighting is the primary comparison; '
         'reach weighting shows sensitivity to commonly reached chapters. '
-        'Chapters sharing region boards are resampled together, including '
+        'Chapters preparing shared boards are resampled together, including '
         'indirect transpositions. There is no whole-repertoire average rating.',
         '',
         '| Repertoire | Comparison | Chapters / transposition groups | Correlation | Rank correlation |',
@@ -280,8 +280,8 @@ def markdown(result):
     lines += [
         '',
         'Across-chapter results also reflect which openings and positions the '
-        'repertoire selects. Few transposition groups, overlap outside chapter '
-        'regions, and shared historical games limit their interpretation.',
+        'repertoire selects. Few transposition groups, overlap outside prepared '
+        'chapter boards, and shared historical games limit their interpretation.',
         '',
         '## Chapter inputs',
         '',

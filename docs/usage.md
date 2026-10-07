@@ -17,7 +17,7 @@ Run commands from the repository root. The program reads Lichess studies but nev
 - [Configuration](#configuration)
   - [Explorer filters](#explorer-filters)
   - [Move selection](#move-selection)
-  - [Chapter subjects and transpositions](#chapter-subjects-and-transpositions)
+  - [Chapter entries and transpositions](#chapter-entries-and-transpositions)
   - [Other options](#other-options)
 - [Analysis commands](#analysis-commands)
   - [Preparation and entry routes](#preparation-and-entry-routes)
@@ -133,7 +133,7 @@ Both or neither path must be given. Supported inputs:
 
 - **Multi-chapter study exports**, such as a study downloaded from the Lichess UI. Each PGN game is a chapter; `ChapterURL` headers supply the chapter IDs used by the configuration files.
 - **A plain PGN** with one or more games and no study headers. Chapters are numbered `1`, `2`, ... in file order, and the variations are the repertoire.
-- **A PGN with an entry point**: a game with `SetUp`/`FEN` headers starts from that position. If the position is reachable from other chapters, it joins the merged repertoire there. A disconnected custom-FEN chapter is scored conditionally on reaching its root, unless `root_weights` assigns the roots weights (see [Other options](#other-options)). `entries` or `chapter_regions` in a configuration file can also place a chapter's entry at a later position.
+- **A PGN with an entry point**: a game with `SetUp`/`FEN` headers starts from that position. If the position is reachable from other chapters, it joins the merged repertoire there. A disconnected custom-FEN chapter is scored conditionally on reaching its root, unless `root_weights` assigns the roots weights (see [Other options](#other-options)). `entries` in a configuration file can also place a chapter's entry at a later position.
 
 The configuration files are keyed by the chapter IDs of the configured studies. With a different PGN, pass a matching configuration via `--white-config`/`--black-config`, or start without overrides; `repertoire score inspect` lists the chapter IDs and entry candidates. Analyzing a different PGN replaces the saved results in `reports/data/` and the generated reports, so pass `--directory` to keep separate results.
 
@@ -149,7 +149,7 @@ Offline mode needs no token and makes no requests, so it builds from the last st
 
 ## Inspect or score one repertoire
 
-Inspection shows chapter IDs, move conflicts and entry candidates without querying Lichess:
+Inspection shows chapter IDs, move conflicts and each chapter's automatic entries without querying Lichess:
 
 ```sh
 uv run repertoire score inspect studies/white.pgn --color white --config configs/white.json --output reports/data/inspection
@@ -211,7 +211,7 @@ Standalone scoring and analysis commands refresh the reports automatically. Duri
 | --- | --- |
 | [studies.json](../studies.json) | The White and Black Lichess study URLs exported by the default build. |
 | `studies/` | The latest study exports, `white.pgn` and `black.pgn`, tracked in Git. |
-| [configs/white.json](../configs/white.json), [configs/black.json](../configs/black.json) | Maintained policy overrides and chapter subject anchors, keyed by Lichess chapter ID. Preserve explicit choices when importing newer PGNs. |
+| [configs/white.json](../configs/white.json), [configs/black.json](../configs/black.json) | Maintained policy overrides and any entry overrides, keyed by Lichess chapter ID. Preserve explicit choices when importing newer PGNs. |
 | `.cache/explorer/` | Persistent raw Explorer responses, keyed by endpoint, canonical board and query filters. Each file wraps `identity`, `retrieved_at`, and `data`; score manifests identify the relevant cache keys. |
 | `reports/data/` | Score snapshots, companion JSON, correlation results, `.build-state.json` checkpoints and `.report-index.json` output registration. |
 | [reports/report.md](../reports/report.md), [reports/summary.md](../reports/summary.md) | The current generated full report and summary. |
@@ -231,7 +231,7 @@ Treat credentials as secrets: keep token files out of Git and never print their 
 
 ## Configuration
 
-The maintained color settings are [configs/white.json](../configs/white.json) and [configs/black.json](../configs/black.json). They define move overrides, chapter subjects and Explorer filters.
+The maintained color settings are [configs/white.json](../configs/white.json) and [configs/black.json](../configs/black.json). They define move overrides, any entry overrides and Explorer filters.
 
 ### Explorer filters
 
@@ -242,11 +242,8 @@ Configuration is a JSON object:
 ```json
 {
   "policy": {"canonical four-field FEN": "e2e4"},
-  "chapter_regions": {
-    "chapter-id": {
-      "anchors": [{"path": ["e4", "e5", "Nc3", "Nf6", "g3", "Nc6"]}],
-      "description": "Quiet System after both black knights develop"
-    }
+  "entries": {
+    "chapter-id": [{"path": ["e4", "e5", "Nc3", "Nf6", "g3", "Nc6"]}]
   },
   "filters": {"ratings": "0,1000,1200,1400,1600,1800,2000,2200,2500", "speeds": "blitz,rapid,classical", "since": "1952-01", "until": "3000-12"},
   "exclude": []
@@ -262,17 +259,17 @@ Policy keys are canonical positions: piece placement, turn, castling and legal e
 
 An explicit policy override always wins and is never compared. The winners are saved in the score JSON (`manifest.selected_alternatives`, with every option's score under `alternatives`), and every later stage replays them. Picking the best of several sampled scores favors moves that scored well by chance, so treat a small winning margin with care. Conflicting alternatives are never averaged or assigned simultaneous probability one. All PGN variations remain available as repertoire content; annotations are not instructions and do not remove lines.
 
-Every chapter remains in the chapter report, including alternatives excluded from the overall policy. For each chapter comparison, its first recorded own moves take precedence and the overall policy applies elsewhere. This retains compatible preparation split across multiple chapters. Score, baseline, expected prepared depth, entry probability, transitions from that chapter, and vulnerabilities all use that same comparison policy. Alternative rows are labeled; a separate overall-policy region reach shows how often the selected overall repertoire enters that region. Shared region reach does not imply that the alternative own move was selected. Reordering chapters changes the overall choice only where no competing chapters decide by score. Saved JSON records the exact policy overrides.
+Every chapter remains in the chapter report, including alternatives excluded from the overall policy. For each chapter comparison, its first recorded own moves take precedence and the overall policy applies elsewhere. This retains compatible preparation split across multiple chapters. Score, baseline, expected prepared depth, entry probability, transitions from that chapter, and vulnerabilities all use that same comparison policy. Alternative rows are labeled; a separate overall-policy reach shows how often the selected overall repertoire reaches the chapter's entries. Reaching a shared entry does not imply that the alternative own move was selected. Reordering chapters changes the overall choice only where no competing chapters decide by score. Saved JSON records the exact policy overrides.
 
-### Chapter subjects and transpositions
+### Chapter entries and transpositions
 
-The supplied configurations use **chapter regions**. Each chapter has explicit subject anchors, accepting canonical FEN strings or path objects containing SAN/UCI moves and an optional `root_fen`. Its region contains those anchors and all descendants through moves recorded in that chapter, including positions shared with other chapters. Repeated introductory moves before the anchors are excluded. Comments are not executed or automatically interpreted as membership rules. The exact subject anchors and region membership are recorded in the report.
+A chapter is reached at its **entries**. By default they are found automatically: walking the chapter's lines from its root, an entry is the first position that no other chapter continues from. At your own turns the walk follows the chapter's first recorded move, as its comparison policy does. A chapter that ends a line at a position another chapter continues from hands that line over: the position is not shared, and it becomes the other chapter's entry. A line ending on a position no other chapter reaches makes that position an entry. If other chapters continue from every position of a chapter (an exact duplicate, for example), its first own-turn mainline position is used.
 
-Entry probability means **chapter reach probability**: first arrival anywhere in the region before the model stops, counting each modeled game once per chapter. A path may bypass an early anchor and enter at a shared descendant through a later transposition. The program finds possible first arrivals by walking the resolved repertoire from its roots and stopping on region entry, then propagates first-arrival probability mass. It does not simply sum unrestricted position frequencies or discard a late entry because it descends from an earlier one. After entry, scoring follows the complete merged repertoire, including other chapters' continuations. Those continuations do not automatically become members of the source chapter's region.
+In a full repertoire this places each chapter where its preparation diverges from the others. A chapter covering one branch of another chapter's opening, such as a 3...Nc6 chapter inside a 3.g3 chapter, gets that branch; the broader chapter keeps the branches it prepares itself. Replies nobody prepares at a position several chapters continue from belong to none of them; they still count in the overall score. `repertoire score inspect` prints every chapter's automatic entries, and the score JSON records each chapter's entries and how they were chosen (`entry_status`).
 
-The maintained White configuration includes Vienna subject anchors at `1.e4 e5 2.Nc3 Nf6 3.g3 Nc6`, `1.e4 e5 2.Nc3 Nf6 3.g3`, and `1.e4 e5 2.Nc3 Nc6 3.g3`. Several other shared opening subjects have explicit earlier anchors; chapter-owned shared descendants are included in their regions. These are definitions of where preparation becomes relevant, not exclusive opening classifications. Match the configuration's chapter IDs against the current PGN rather than relying on older chapter names. Adjust `chapter_regions` to change a subject boundary. Updated PGN descendants are included automatically on rerun; missing anchors fail validation.
+Entry probability means **chapter reach probability**: the chance of reaching one of the chapter's entry positions, by any move order, before the model stops, counting each modeled game once. A transposition onto an entry board counts. A transposition onto a later position the chapter shares with others does not: that game belongs to whichever chapter's entry it passed. For example, a chapter that reaches the Vienna through 1...Nf6 2.Nc3 e5 is reached only at 1...Nf6, and Vienna games do not count toward it. After entry, scoring follows the complete merged repertoire, including other chapters' continuations. Chapters still overlap where one chapter's line passes through another's entry, so reach and scores are not additive.
 
-Instead of a region, `entries` can map a chapter ID to exact entry positions or paths; the chapter is then entered only at those boards. A chapter cannot have both `entries` and `chapter_regions`. Without either, all first chapter-unique positions become anchors, with chapter-owned descendants defining the region. If none can be entered under that chapter's policy, the first opponent reply on its mainline (or its PGN root) is used. Explicit subject anchors are preferable for comparing alternatives from a common position, such as `1.e4 e6` for both Advance and Tarrasch French chapters; automatic entries can describe different conditional subtrees.
+`entries` overrides the automatic entries for a chapter: it maps the chapter ID to exact positions, as canonical FEN strings or path objects containing SAN/UCI moves and an optional `root_fen`. Use it for exceptions, such as a study whose chapter covers only one subtree of an opening (a lone chapter's automatic entry is its root), or to give alternatives the same entry, such as `1.e4 e6` for both Advance and Tarrasch French chapters. Match the configuration's chapter IDs against the current PGN rather than relying on older chapter names; unknown IDs and positions outside the repertoire fail validation.
 
 Full reports also include directed **chapter transition probabilities**: conditional on first entering a source chapter, how often does the model reach the destination at or after that point? Shared or simultaneous entry counts. The JSON retains all ordered chapter pairs, including zeros and undefined results. This is different from an unordered intersection, because the destination may have been visited only before the source. Overlapping chapter frequencies and transition rows are not additive. The model does not follow deviations through unknown positions to possible later re-entry.
 
@@ -294,7 +291,7 @@ uv run repertoire preparation reports/data/white.json reports/data/black.json
 
 This command is cache-only. It writes `.preparation.json` beside each score result and refreshes the consolidated report and summary. It also runs automatically in `repertoire build`. Missing candidate evidence is reported, never fetched silently or treated as a zero score.
 
-The same analysis saves actual **first-entry route examples** under each chapter's comparison policy. It stops every root-to-entry path when it first reaches any chapter-region position, merges all arriving probability at the exact board, and keeps the most likely single route as an example. Entry-position weights include every first-arrival route; the separately displayed example weight covers just that route. Both are conditional on reaching any position in the chapter. Examples are validated as legal and cannot pass an earlier chapter position. These explanations preserve the existing transposition-inclusive chapter scores and reach; ordinary position-table lines remain representative board labels.
+The same analysis saves actual **first-entry route examples** under each chapter's comparison policy. It stops every root-to-entry path when it first reaches any of the chapter's entries, merges all arriving probability at the exact board, and keeps the most likely single route as an example. Entry-position weights include every first-arrival route; the separately displayed example weight covers just that route. Both are conditional on reaching the chapter. Examples are validated as legal and cannot pass an earlier chapter entry. These explanations preserve the existing transposition-inclusive chapter scores and reach; ordinary position-table lines remain representative board labels.
 
 ### Repertoire character
 
@@ -367,7 +364,7 @@ To analyze the association between opponent rating and score using saved evidenc
 uv run repertoire rating-correlations reports/data/white.json reports/data/black.json
 ```
 
-This writes `reports/comparisons/opponent-rating-score.md` and ignored supporting JSON in `reports/data/`. It compares replies within canonical parent boards, using reach weights, recursive prepared scores and cached unprepared reply scores. It also compares chapter scores and baseline deltas with chapter stopping-evidence opponent ratings, grouping overlapping chapter regions. Both are point estimates without intervals. Sparse replies are excluded, and a 1,000-game sensitivity check is included. These are descriptive cohort associations, not causal rating effects or predictions at a target rating. No Lichess requests are made.
+This writes `reports/comparisons/opponent-rating-score.md` and ignored supporting JSON in `reports/data/`. It compares replies within canonical parent boards, using reach weights, recursive prepared scores and cached unprepared reply scores. It also compares chapter scores and baseline deltas with chapter stopping-evidence opponent ratings, grouping chapters that prepare shared boards. Both are point estimates without intervals. Sparse replies are excluded, and a 1,000-game sensitivity check is included. These are descriptive cohort associations, not causal rating effects or predictions at a target rating. No Lichess requests are made.
 
 ### Report insights and attribution
 
@@ -441,6 +438,6 @@ uv run repertoire compare https://lichess.org/study/qrst7890 --color white --sav
 | `still unavailable after 30 minutes of retries` | The connection or Lichess was down for half an hour, or the computer slept. Check the connection, then rerun the same command; fetched tables are kept. |
 | A run was stopped with Ctrl+C or a closed terminal | Rerun the same command. Fetched tables and finished build stages are kept, and the fetch reports how many tables remain. |
 | Study export fails with HTTP 401, 403 or 404 | Check the URL in `studies.json` and that the token has `study:read`; private studies are visible only to their owner and members. The previous export is kept. |
-| Unknown chapter ID or missing configured anchor | Compare the new PGN's inspection with the maintained config; removed or recreated chapters may have different IDs. Update intended subject definitions explicitly. |
-| Chapter defining position has less than 100% reach after entry | Inspect first-entry boards and routes: some games may enter through later transpositions and bypass that position. |
+| Unknown chapter ID or configured entry not in the repertoire | Compare the new PGN's inspection with the maintained config; removed or recreated chapters may have different IDs. Update or remove the `entries` override. |
+| `chapter_regions is no longer supported` | Delete `chapter_regions` from the configuration. Entries are automatic; add `entries` only for chapters whose automatic entries are wrong. |
 | Cache is complete but a batch is slow | Inspect `reports/data/.build-state.json` stage timings and reused/built counts. Changes limited to `render.py` or the `report` package should rebuild only the render stage. |

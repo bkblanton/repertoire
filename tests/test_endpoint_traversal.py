@@ -3,7 +3,7 @@ from helpers import data, graph, position, setup
 
 from repertoire_score.character import scope_metrics
 from repertoire_score.evaluate import KNOWN, forward
-from repertoire_score.graph import region_entries, resolve
+from repertoire_score.graph import reachable, resolve
 from repertoire_score.openings import classify, name_flow
 from repertoire_score.preparation import Evaluator, chess_facts, position_lines
 from repertoire_score.routes import depth_distribution
@@ -68,7 +68,7 @@ def test_cached_endpoint_transposition_resumes_preparation_and_chapter_entry(tmp
     assert not g.nodes[endpoint].edges
     t = resolve(g, color, policy)
     assert t[endpoint][reply] == (target, None)
-    assert region_entries(t, g.roots, {target}) == [target]
+    assert target in reachable(t, g.roots)
     m, order, raw, _, values, _ = setup(g, color, e, policy)
     ev = Evaluator(g, color, e, chess_facts(g, color, e), policy)
     roots = {g.roots[0]: 1.0}

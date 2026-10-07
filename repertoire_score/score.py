@@ -32,13 +32,12 @@ from .explorer import DEFAULT_FILTERS, Explorer, add_token_option, apply_token_f
 from .graph import (
     alternative_transitions,
     chapter_policy_overrides,
-    chapter_region,
+    chapter_positions,
     conflicts,
     infer_entries,
     key,
     parse,
     reachable,
-    region_entries,
     resolve,
     topology,
 )
@@ -74,14 +73,14 @@ def entry_positions(value, graph):
 
 @dataclass
 class Plan:
-    """What to score: policy profiles, root weights and each chapter's entry positions."""
+    """What to score: policy profiles, root weights, each chapter's entry positions and the positions it prepares."""
 
     profiles: list
     root_weights: dict
     absolute_reach: bool
     entries: dict
     entry_status: dict
-    regions: dict
+    prepared: dict
     # Every chapter alternative selectable: what evidence planning must cover before alternatives are scored.
     candidates: dict
     reachable: list
@@ -105,7 +104,7 @@ def inspect_repertoire(graph, color):
         "chapters": graph.chapters,
         "nodes": len(graph.nodes),
         "conflicts": conflicts(graph, color),
-        "entries": infer_entries(graph),
+        "entries": infer_entries(graph, color),
     }
 
 
@@ -149,57 +148,38 @@ def root_weighting(graph, config):
     return root_weights, absolute_reach
 
 
-def chapter_entries(graph, color, config, profiles, root_weights, inspection):
-    """Each chapter's first-entry positions, how they were chosen, and its region."""
-    chapter_profiles = {cid: profile for profile in profiles for cid in profile['chapters']}
-    entries, entry_status, regions = {}, {}, {}
-    known_chapters = {c['id'] for c in graph.chapters}
-    if set(config.get('chapter_regions', {})) - known_chapters:
-        raise ValueError('Chapter region configuration contains unknown chapter IDs')
-    starts = list(dict.fromkeys([*root_weights, *graph.roots]))
+def chapter_entries(graph, color, config, inspection):
+    """Each chapter's entry positions, how they were chosen, and the positions it prepares from them.
+
+    Entries are automatic unless `entries` configures them. A chapter is reached only at its entries, by
+    any move order; later positions it shares with other chapters do not count as reaching it.
+    """
+    if 'chapter_regions' in config:
+        raise ValueError(
+            'chapter_regions is no longer supported: entries are found automatically; '
+            'use entries only for chapters whose automatic entries are wrong'
+        )
+    configured = config.get('entries', {})
+    if set(configured) - {c['id'] for c in graph.chapters}:
+        raise ValueError('Entry configuration contains unknown chapter IDs')
+    entries, entry_status, prepared = {}, {}, {}
     for c in graph.chapters:
         cid = c['id']
-        chapter_transitions_map = chapter_profiles[cid]['transitions']
-        if cid in config.get('chapter_regions', {}):
-            if cid in config.get('entries', {}):
-                raise ValueError(f'Configure either chapter_regions or entries, not both: {cid}')
-            definition = config['chapter_regions'][cid]
-            anchors = entry_positions(definition['anchors'], graph)
-            members = chapter_region(graph, cid, anchors)
-            entries[cid] = region_entries(chapter_transitions_map, starts, members)
-            regions[cid] = {
-                'anchors': anchors,
-                'positions': sorted(members),
-                'description': definition.get(
-                    'description', 'Chapter-owned continuations from the configured subject anchors'
-                ),
-            }
-            entry_status[cid] = (
-                'First arrival anywhere in the chapter region, including shared positions and later transpositions'
-            )
-        elif cid in config.get('entries', {}):
-            entries[cid] = entry_positions(config['entries'][cid], graph)
+        if cid in configured:
+            entries[cid] = entry_positions(configured[cid], graph)
             entry_status[cid] = config.get('entry_description', 'explicit configuration')
+        elif automatic := inspection['entries'][cid]['positions']:
+            entries[cid] = automatic
+            entry_status[cid] = 'Automatic: the first positions on its lines that no other chapter continues from'
         else:
-            # The first own-turn mainline position, or the chapter root.
-            fallback = [next((k for k in c['mainline'][1:] if k in graph.nodes and turn(k) == color), c['root'])]
-            anchors = inspection['entries'][cid]['candidates'] or fallback
-            members = chapter_region(graph, cid, anchors)
-            entries[cid] = region_entries(chapter_transitions_map, starts, members)
-            if not entries[cid]:
-                # Unique positions may all belong to discarded own variations.
-                anchors = fallback
-                members = chapter_region(graph, cid, anchors)
-                entries[cid] = region_entries(chapter_transitions_map, starts, members)
-            regions[cid] = {
-                'anchors': anchors,
-                'positions': sorted(members),
-                'description': 'All first chapter-unique positions and chapter-owned descendants; if '
-                'none can be entered under the chapter policy, the first opponent '
-                'reply or PGN root is used',
-            }
-            entry_status[cid] = 'Automatic chapter region, evaluated under the chapter comparison policy'
-    return entries, entry_status, regions
+            # Every position is also prepared by another chapter: the first own-turn mainline position, or the root.
+            entries[cid] = [next((k for k in c['mainline'][1:] if k in graph.nodes and turn(k) == color), c['root'])]
+            entry_status[cid] = (
+                'Automatic fallback: other chapters continue from all of its positions, so its first own-turn '
+                'mainline position is used'
+            )
+        prepared[cid] = sorted(chapter_positions(graph, cid, entries[cid]))
+    return entries, entry_status, prepared
 
 
 def plan_repertoire(graph, color, config, inspection, selected=None):
@@ -207,7 +187,7 @@ def plan_repertoire(graph, color, config, inspection, selected=None):
     policy = config.get('policy', {})
     profiles = policy_profiles(graph, color, dict(policy, **(selected or {})))
     root_weights, absolute_reach = root_weighting(graph, config)
-    entries, entry_status, regions = chapter_entries(graph, color, config, profiles, root_weights, inspection)
+    entries, entry_status, prepared = chapter_entries(graph, color, config, inspection)
     analysis_roots = list(root_weights) + [p for positions in entries.values() for p in positions]
     for profile in profiles:
         profile['order'] = topology(profile['transitions'], analysis_roots)
@@ -218,7 +198,7 @@ def plan_repertoire(graph, color, config, inspection, selected=None):
         absolute_reach,
         entries,
         entry_status,
-        regions,
+        prepared,
         candidates,
         reachable(candidates, [*analysis_roots, *graph.roots]),
     )
@@ -301,8 +281,7 @@ def chapter_result(graph, color, plan, profile, c, posterior, evidence, provenan
     positions = plan.entries[c['id']]
     summary = conditional(plan, profile, c, posterior)
     summary['prepared_depth'] = chapter_prepared_depth(profile['depth'], positions, summary)
-    destination = set(plan.regions[c['id']]['positions']) if c['id'] in plan.regions else set(positions)
-    actual_hits = hitting_bounds(overall['model'], overall['order'], overall['raw'], destination)
+    actual_hits = hitting_bounds(overall['model'], overall['order'], overall['raw'], set(positions))
     low, high = (sum(w * actual_hits[k][i] for k, w in plan.root_weights.items()) for i in (0, 1))
     summary['overall_policy_entry_probability'] = low if low == high and plan.absolute_reach else None
     summary['overall_policy_entry_probability_bounds'] = [low, high] if plan.absolute_reach else None
@@ -314,7 +293,7 @@ def chapter_result(graph, color, plan, profile, c, posterior, evidence, provenan
         'entry_status': plan.entry_status[c['id']],
         'policy_overrides': profile['overrides'],
         'policy_basis': 'chapter first choices, then overall policy' if profile['overrides'] else 'overall policy',
-        'region': plan.regions.get(c['id']),
+        'prepared_positions': plan.prepared[c['id']],
         'entries': [
             {
                 'position': p,
@@ -370,13 +349,9 @@ def score_repertoire(graph, color, plan, evidence, provenance, prior, sparse_thr
                     graph, color, plan, profile, c, posterior, evidence, provenance
                 )
     chapters = [chapter_results[c['id']] for c in graph.chapters]
-    destination_sets = {
-        cid: region['positions'] if (region := plan.regions.get(cid)) else positions
-        for cid, positions in plan.entries.items()
-    }
     transition_rows = []
     for profile in plan.profiles:
-        rows = chapter_transitions(profile['model'], profile['order'], profile['raw'], chapters, destination_sets)
+        rows = chapter_transitions(profile['model'], profile['order'], profile['raw'], chapters, plan.entries)
         transition_rows.extend(
             dict(row, policy_basis='source chapter comparison policy')
             for row in rows
@@ -436,6 +411,10 @@ def analyze(args):
             f"{len(graph.chapters)} chapters; {len(graph.nodes)} positions; "
             f"{len(inspection['conflicts'])} own-move conflicts"
         )
+        for c in graph.chapters:
+            found = inspection['entries'][c['id']]
+            paths = '; '.join(' '.join(path) or 'start' for path in sorted(found['paths'])) or 'none (fallback applies)'
+            print(f"{c['id']} {c['name']}: {paths}")
         return
     plan = plan_repertoire(graph, color, config, inspection)
     explorer = Explorer(args.cache, dict(DEFAULT_FILTERS, **config.get("filters", {})), args.offline, args.refresh)
@@ -499,7 +478,7 @@ def analyze(args):
             "unanswered own-turn board, unprepared reply, terminal outcome, or "
             "unresolved evidence.",
             "chapter_policy_semantics": "chapter first choices from roots, overall policy elsewhere; chapter "
-            "comparison reach is separate from overall-policy region reach",
+            "comparison reach is separate from overall-policy entry reach",
             "policy_profile_count": len(plan.profiles),
             "overall_basis": "supplied root weights"
             if "root_weights" in config

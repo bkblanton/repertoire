@@ -106,7 +106,7 @@ def test_alternative_multiple_entries_use_its_own_policy_weights(tmp_path, monke
 
 
 def test_automatic_entry_falls_back_when_only_discarded_variations_are_unique(tmp_path, monkeypatch):
-    # The second chapter's only unique position is its discarded d4 alternative.
+    # No position is continued from by one chapter alone; the d4 alternative is off the chapter's policy.
     graph(tmp_path, '1. e4 e5 *\n\n1. e4 (1. d4) e5 *')
     cache = tmp_path / 'cache'
     cache.mkdir()

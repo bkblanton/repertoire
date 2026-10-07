@@ -86,7 +86,7 @@ def fixture(tmp_path):
                     dict(
                         id='c',
                         name='Test',
-                        region={'positions': ['a']},
+                        prepared_positions=['a'],
                         score=dict(raw_empirical_score=0.6, entry_probability=0.2),
                         entry_baseline=dict(difference_pp=5, raw_score=0.55),
                     )
