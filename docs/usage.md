@@ -7,6 +7,7 @@ Run commands from the repository root. The program reads Lichess studies but nev
 - [Setup](#setup)
 - [Commands](#commands)
 - [Generate both reports](#generate-both-reports)
+- [Long runs](#long-runs)
 - [Analyze other PGN files](#analyze-other-pgn-files)
 - [Work offline](#work-offline)
 - [Inspect or score one repertoire](#inspect-or-score-one-repertoire)
@@ -78,9 +79,45 @@ Create a personal token at [lichess.org/account/oauth/token](https://lichess.org
 
 The export step writes `studies/white.pgn` and `studies/black.pgn` with all chapters, variations and comments. Each download is validated by parsing it before the previous export is replaced, and a file is left untouched when only its `Date` headers changed, so an unchanged study reuses every saved stage. The exports are tracked in Git, so `git diff studies/` shows what changed in your preparation since the last commit.
 
-The build then fetches every Explorer table both repertoires need, in one pass with a count and time estimate up front. Every later stage runs offline: it scores both colors, generates the supporting analyses, and writes `reports/report.md`, `reports/summary.md`, and the chapter and opening pages under `reports/chapters/` and `reports/openings/`. Existing Explorer responses are reused; new or extended lines require only the missing tables. Network failures abort the build and retain completed work for a later retry.
+The build then fetches every Explorer table both repertoires need, in one pass with a count and time estimate up front. Every later stage runs offline: it scores both colors, generates the supporting analyses, and writes `reports/report.md`, `reports/summary.md`, and the chapter and opening pages under `reports/chapters/` and `reports/openings/`. Existing Explorer responses are reused; new or extended lines require only the missing tables. A first run can take hours; see [Long runs](#long-runs).
 
 `uv run repertoire export` exports the studies without building, and `uv run repertoire fetch` fetches the Explorer tables for the last export (or for two PGN paths) without building; `fetch --dry-run` and `build --dry-run` print the count and estimate and stop. `repertoire build --no-export` builds from the last export without contacting the study API. `--sources` and `--studies` select a different study list and export folder.
+
+## Long runs
+
+Every position in a repertoire needs its own Opening Explorer table, and the build fetches them all before it analyzes anything. Requests are made one at a time, about one a second, and Lichess answers sustained use with HTTP 429, which pauses the run for a minute at a time. A first run on a large repertoire therefore takes hours; the example repertoires need about 2,000 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
+
+Check the size of a run before starting it. `--dry-run` needs no token for `fetch`, while `build --dry-run` exports the studies first so the count reflects the latest version:
+
+```sh
+uv run repertoire build --dry-run --token-file path/to/lichess_token.txt
+```
+
+```text
+white and black: 1980 Explorer tables: 412 cached, 1568 to fetch (at least 26m)
+```
+
+"At least" is the time at one request a second with no rate limiting; expect real runs to be slower. While fetching, a progress line is printed about every 15 seconds. Its estimate comes from the recent rate, including rate-limit pauses, so it settles after the first few minutes:
+
+```text
+white and black: 87/1568 fetched, ~1h 50m left
+Explorer: rate-limited (HTTP 429); waiting 60s (87/1568 fetched)
+```
+
+The run looks after itself:
+
+- **Rate limits** are waited out for as long as they last.
+- **Server errors and dropped connections** are retried with waits growing to a minute. A table that still fails after 30 minutes stops the run with an error.
+- **Ctrl+C**, a closed terminal or a stopped run loses nothing already fetched. Each table is saved as soon as it arrives, and each build stage is checkpointed when it finishes. Run the same command again to continue; it reports how many tables remain.
+
+Keep the computer awake for an unattended run, because sleep drops the connection. On Windows, set the sleep timeout to Never in power settings for the duration. On macOS, prefix the command with `caffeinate -i`, and on Linux with `systemd-inhibit`.
+
+To separate the slow part from the rest, fetch first and build later without network access:
+
+```sh
+uv run repertoire fetch --token-file path/to/lichess_token.txt
+uv run repertoire build --offline
+```
 
 ## Analyze other PGN files
 
@@ -352,6 +389,10 @@ The pages in `reports/comparisons/french-schlechter.md`, `reports/comparisons/vi
 | `Offline cache miss` or missing parent comparison evidence | Cache path, filters and required board; an authenticated run can collect missing required tables. Keep missing data unresolved instead of inventing results. |
 | Companion belongs to a different snapshot, supporting hashes changed, or a file was written by a different program version | Rebuild with `repertoire build`; it reruns only the affected analyses and their dependents. |
 | Scoring or a build stage fails | Read the CLI diagnostic and any `.error.json`. Completed checkpoints and cache remain available; rerun after resolving the error. Existing Markdown can still describe the previous snapshot. |
+| A fetch repeatedly prints `rate-limited (HTTP 429); waiting 60s` | Normal for long runs: progress resumes after each pause and the estimate includes them. Avoid running other Opening Explorer clients with the same token or network at the same time. See [Long runs](#long-runs). |
+| The running estimate is far above the dry run's "at least" figure | Expected: the dry run assumes no rate limiting, and the running estimate uses the observed rate. |
+| `still unavailable after 30 minutes of retries` | The connection or Lichess was down for half an hour, or the computer slept. Check the connection, then rerun the same command; fetched tables are kept. |
+| A run was stopped with Ctrl+C or a closed terminal | Rerun the same command. Fetched tables and finished build stages are kept, and the fetch reports how many tables remain. |
 | Study export fails with HTTP 401, 403 or 404 | Check the URL in `studies.json` and that the token has `study:read`; private studies are visible only to their owner and members. The previous export is kept. |
 | Unknown chapter ID or missing configured anchor | Compare the new PGN's inspection with the maintained config; removed or recreated chapters may have different IDs. Update intended subject definitions explicitly. |
 | Chapter defining position has less than 100% reach after entry | Inspect first-entry boards and routes: some games may enter through later transpositions and bypass that position. |

@@ -38,11 +38,19 @@ Export both studies, score them and write every report:
 uv run repertoire build --token-file path/to/lichess_token.txt
 ```
 
-The token can also come from the `LICHESS_TOKEN` environment variable. It is never written to reports, exports or the cache. Opening Explorer responses are cached in `.cache/explorer/`, so later runs request only positions they have not seen. Requests are made one at a time and back off when Lichess rate-limits.
+The token can also come from the `LICHESS_TOKEN` environment variable. It is never written to reports, exports or the cache.
+
+**The first run can take hours.** The build needs one Opening Explorer table per position in your repertoire (about 2,000 for the example), requested one at a time, and Lichess rate-limits sustained use with one-minute pauses. To see the count and a minimum time before committing to a run, add `--dry-run`. During the fetch, progress and an estimate of the time left are printed every few seconds. Rate limits and short outages are waited out automatically, so the run can be left unattended; keep the computer from sleeping. Press Ctrl+C at any time: every fetched table is kept in `.cache/explorer/`, and running the same command again continues where it stopped. Later runs fetch only positions they have not seen, then take a couple of minutes to build. See [Long runs](docs/usage.md#long-runs).
 
 Other common runs:
 
 ```sh
+# Count the tables to fetch and estimate the time, without fetching.
+uv run repertoire build --dry-run --token-file path/to/lichess_token.txt
+
+# Fetch the tables only (for example overnight), then build later without network access.
+uv run repertoire fetch --token-file path/to/lichess_token.txt
+
 # Rebuild from the last export and cached evidence, without network access.
 uv run repertoire build --offline
 
