@@ -5,9 +5,10 @@ import numpy as np
 import pytest
 
 from repertoire_score.stats import correlation
-from repertoire_score.evaluate import COMPLETED, backward
+from repertoire_score.depth import prepared_depth_values
+from repertoire_score.evaluate import COMPLETED, backward, reaches
 from repertoire_score.model import Branch, ModelNode
-from repertoire_score.position_correlations import analyze, depths, metrics, reaches, weighted_rank
+from repertoire_score.position_correlations import analyze, metrics, weighted_rank
 from helpers import position
 
 
@@ -24,8 +25,8 @@ def test_depth_and_reach_merge_transposed_continuations_in_each_joint_draw():
     outcome = np.array([.7, .9])
     sampled = {'root': [(.5, None), (.5, None)], 'left': [(p, None), (1-p, .5)],
                'right': [(q, None), (1-q, .5)], 'shared': [(1., None)], 'end': [(1., outcome)]}
-    depth = depths(model, order, sampled, 2)
-    reach = reaches(model, order, sampled, {'root': 1.}, 2)
+    depth = {k: low for k, (low, _) in prepared_depth_values(model, order, sampled).items()}
+    reach = reaches(model, order, sampled, {'root': 1.})
     assert np.allclose(depth['root'], [1.4, 1.6])
     assert np.allclose(depth['left'], p)  # future depth excludes the root's selected move
     assert np.allclose(depth['shared'], 1)

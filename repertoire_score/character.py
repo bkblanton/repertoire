@@ -7,7 +7,7 @@ import chess
 import numpy as np
 
 from .status import Status
-from .board_cache import STARTING_POSITION, children, fen_number, move_text, next_number, san, turn
+from .board_cache import STARTING_POSITION, children, fen_number, route_line, san, turn
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import counts
 from .model import score
@@ -144,7 +144,8 @@ def position_profile(stops, color):
         for name, value in cats.items():
             categories[name][value] += row['reach']
             previous = examples.get((name,value))
-            if previous is None or row['reach'] > previous['reach']:
+            # The most likely example; exact ties go to the first line, so the choice is independent of traversal order.
+            if previous is None or (-row['reach'], row['line'], row['position']) < (-previous['reach'], previous['line'], previous['position']):
                 examples[name,value] = row
         for name, flag in flags.items():
             features[name] += row['reach']*flag
@@ -162,27 +163,17 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
     """Canonical reached boards, including the first unprepared opponent reply."""
     if wdl_values is None:
         wdl_values = recursive_wdl(evaluator)
-    # Each route keeps its own full-move number: transposed routes can differ in length.
-    paths, numbers, best = {}, {}, {}
-    for k, weight in starts.items():
-        if weight <= 0: continue
-        paths[k] = '' if lines[k] == '(PGN root)' else lines[k]
-        numbers[k] = fen_number(evaluator.graph.nodes[k].fen)
-        best[k] = weight
+    routes = evaluator.routes(starts, replies=True)
 
-    def after_move(k, move):
-        label = move_text(k, numbers[k], move)
-        return (paths[k] + ' ' + label).strip(), children(k)[move], next_number(k, numbers[k])
+    def line(k):
+        # Each route keeps its own full-move number: transposed routes can differ in length.
+        _, root, moves = routes[k]
+        text, position = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
+        if position != k:
+            raise AssertionError('Repertoire route does not reach its board')
+        prefix = '' if lines[root] == '(PGN root)' else lines[root]
+        return (prefix + ' ' + text).strip() or '(PGN root)'
 
-    for k in reversed(evaluator.values):
-        if k not in paths: continue
-        for move, probability, target in evaluator.edges[k]:
-            route_mass = best[k] * probability
-            if probability <= 0 or route_mass <= best.get(target, -1): continue
-            path, after, number = after_move(k, move)
-            if after != target:
-                raise AssertionError('Repertoire edge does not match its move')
-            paths[target], numbers[target], best[target] = path, number, route_mass
     rows = {}
     for k, mass in reach.items():
         if mass <= 0: continue
@@ -197,7 +188,7 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
         data = evaluator.evidence.get(k)
         sample = counts(data) if data is not None else None
         value = evaluator.values[k]
-        rows[k] = dict(position=k, line=paths[k] or '(PGN root)', reach=mass,
+        rows[k] = dict(position=k, line=line(k), reach=mass,
                        to_move='white' if evaluator.facts[k]['turn'] else 'black', kind=kind,
                        is_starting_position=k == STARTING_POSITION,
                        repertoire_score=float(value[0]) if value[1] == 0 else None,
@@ -208,14 +199,14 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
                        counts_white_draw_black=sample)
     # The cached parent table supplies both the reply and its probability. No
     # evidence for the reached child board, or for its next moves, is requested.
-    deviation_best, deviation_wdl = {}, {}
+    deviation_wdl = {}
     for k, mass in reach.items():
         if mass <= 0: continue
         for move, probability, kind, sample, fixed in evaluator.stops[k]:
             if kind != 'deviation' or probability <= 0: continue
-            path, target, _ = after_move(k, move)
+            target = children(k)[move]
             assert target not in evaluator.graph.nodes
-            row = rows.setdefault(target, dict(position=target, line=path, reach=0.,
+            row = rows.setdefault(target, dict(position=target, line=line(target), reach=0.,
                 to_move='white' if turn(target) else 'black',
                 kind='terminal' if fixed is not None else 'unprepared_reply',
                 is_starting_position=target == STARTING_POSITION, unprepared_origins=[],
@@ -234,10 +225,6 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
             row['unprepared_origins'].append(dict(parent_position=k, move=move, reach=branch_reach,
                 database_score=database_score, games=sum(sample), counts_white_draw_black=sample,
                 outcomes=summarize_outcomes(local_wdl)))
-            route_mass = best[k] * probability
-            if route_mass > deviation_best.get(target, -1):
-                row['line'] = path
-                deviation_best[target] = route_mass
     for row in rows.values():
         if row.get('unprepared_origins'):
             row['database_score'] /= row['reach']

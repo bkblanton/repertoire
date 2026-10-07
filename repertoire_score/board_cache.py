@@ -87,6 +87,15 @@ def next_number(position, number):
     return number if turn(position) else number + 1
 
 
+def route_line(position, number, moves):
+    """Numbered move text along `moves` from `position` at full-move `number`, and the position it reaches."""
+    text = []
+    for move in moves:
+        text.append(move_text(position, number, move))
+        position, number = children(position)[move], next_number(position, number)
+    return ' '.join(text), position
+
+
 def after_fen(fen, uci):
     """The full FEN after a move, matching python-chess's fen(en_passant='legal') without building a board."""
     fields = fen.split()

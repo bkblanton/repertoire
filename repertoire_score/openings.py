@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from .board_cache import STARTING_POSITION, children, fen_number, move_text, next_number
+from .board_cache import STARTING_POSITION, fen_number, route_line
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import counts
 from .gaps import distribution as gap_distribution
@@ -186,9 +186,8 @@ def entered_reach(evaluator, entries):
 
 def first_entries(evaluator, roots, region):
     """Absorb on first membership, including cached unprepared reply boards."""
-    evaluator.evaluate(roots)
-    incoming = defaultdict(float, roots)
-    best = {k: (w, k, ()) for k, w in roots.items() if w}
+    incoming = evaluator.reaches(roots, stop_at=region)
+    best = evaluator.routes(roots, stop_at=region, replies=True)
     entries, missed = [], 0.
     for k in reversed(evaluator.values):
         mass = incoming[k]
@@ -198,18 +197,11 @@ def first_entries(evaluator, roots, region):
             entries.append(dict(position=k, mass=mass, parent=None, move=None, sample=None,
                                 fixed=None, witness=best[k]))
             continue
-        probability, root, path = best[k]
-        for move, p, target in evaluator.edges[k]:
-            incoming[target] += mass * p
-            candidate = probability * p, root, (*path, move)
-            if target not in best or candidate[0] > best[target][0]:
-                best[target] = candidate
         for move, p, kind, sample, fixed in evaluator.stops[k]:
             target = evaluator.facts[k]['after'][move][0] if kind == 'deviation' else None
             if target in region:
                 entries.append(dict(position=target, mass=mass * p, parent=k, move=move,
-                                    sample=sample, fixed=fixed,
-                                    witness=(probability * p, root, (*path, move))))
+                                    sample=sample, fixed=fixed, witness=best[target]))
             else:
                 missed += mass * p
     total = sum(r['mass'] for r in entries)
@@ -238,14 +230,9 @@ def first_entries(evaluator, roots, region):
 
 def example(evaluator, witness):
     probability, root, moves = witness
-    position, number = root, fen_number(evaluator.graph.nodes[root].fen)
-    text = []
-    for move in moves:
-        text.append(move_text(position, number, move))
-        position, number = children(position)[move], next_number(position, number)
+    text, position = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
     return dict(root_fen=evaluator.graph.nodes[root].fen, path_uci=list(moves),
-                line=' '.join(text) or '(PGN root)', root_probability=probability,
-                position=position)
+                line=text or '(PGN root)', root_probability=probability, position=position)
 
 
 def cohort(evaluator, entries, total, wdl):
@@ -299,8 +286,6 @@ def cohort(evaluator, entries, total, wdl):
         row['origins'].append(dict(parent=entry['parent'], move=entry['move'], conditional_weight=weight,
                                   counts_white_draw_black=sample, fixed_outcome=fixed))
         row['rating_parts'].append((weight, entry['opponent_rating']))
-        if route['root_probability'] > row['example']['root_probability']:
-            row['example'] = route
     summary = summarize(outcomes)
     repertoire = summary['resolved_score'] if summary['unresolved_probability'] == 0 else None
     baseline = baseline_known if baseline_unknown == 0 else None

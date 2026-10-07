@@ -1,6 +1,7 @@
 """DAG evaluation, first-entry weighting and probability conservation checks."""
 import numpy as np
 
+from .board_cache import children
 from .schema import ScoreSummary
 from .status import Status
 
@@ -75,6 +76,63 @@ def forward(model, order, sampled, roots, width=1, stop_at=(), entering=None):
     if not np.allclose(total, 1, atol=1e-9):
         raise AssertionError("Forward stopping mass does not sum to one")
     return stops, entries
+
+
+def reaches(model, order, sampled, roots, stop_at=()):
+    """Incoming probability at each position over every route from the roots; transpositions add up.
+
+    Flow is not expanded past `stop_at`, so each of those positions holds its first-entry probability.
+    """
+    stop_at = set(stop_at)
+    mass = dict.fromkeys(order, 0.)
+    for k, weight in roots.items():
+        if weight:
+            mass[k] += weight
+    left = 0.
+    for k in reversed(order):
+        if k in stop_at:
+            left += mass[k]
+            continue
+        for b, (p, _) in zip(model[k].branches, sampled[k]):
+            if b.target is None:
+                left += mass[k] * p
+            else:
+                mass[b.target] += mass[k] * p
+    if not np.allclose(left, sum(roots.values()), atol=1e-9):
+        raise AssertionError("Forward reach does not conserve probability")
+    return mass
+
+
+def better_route(a, b):
+    """Whether route `a` beats `b`: more likely, with exact ties going to the earlier root and then earlier moves."""
+    return a[0] > b[0] or (a[0] == b[0] and a[1:] < b[1:])
+
+
+def best_routes(model, order, sampled, roots, stop_at=(), replies=False):
+    """The most likely single route to each position, as (probability, root, moves).
+
+    Probabilities always use all routes (see `reaches`); this route only labels a position. Routes are not
+    extended past `stop_at`. With `replies`, the boards after unprepared opponent replies get routes too.
+    """
+    stop_at = set(stop_at)
+    best = {k: (w, k, ()) for k, w in roots.items() if w > 0}
+    for k in reversed(order):
+        if k not in best or k in stop_at:
+            continue
+        probability, root, moves = best[k]
+        for b, (p, _) in zip(model[k].branches, sampled[k]):
+            if p <= 0:
+                continue
+            if b.target is not None:
+                target = b.target
+            elif replies and b.kind == "deviation":
+                target = children(k)[b.move]
+            else:
+                continue
+            candidate = probability * p, root, (*moves, b.move)
+            if target not in best or better_route(candidate, best[target]):
+                best[target] = candidate
+    return best
 
 
 def summarize(raw, posterior) -> ScoreSummary:

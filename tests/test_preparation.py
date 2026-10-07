@@ -5,7 +5,8 @@ from repertoire_score.graph import resolve, topology
 from repertoire_score.model import prepare, empirical
 from repertoire_score.evaluate import backward, KNOWN, UNKNOWN
 from repertoire_score.depth import prepared_depth_values, summarize_depth
-from repertoire_score.preparation import Evaluator, MissingEvidence, chess_facts, analyze, position_lines
+from repertoire_score.model import MissingEvidence
+from repertoire_score.preparation import Evaluator, chess_facts, analyze, position_lines
 from helpers import graph, data, position
 from helpers import run_fixture
 from helpers import sample

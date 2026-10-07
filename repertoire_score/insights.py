@@ -105,29 +105,11 @@ def first_entry_examples(evaluator, roots, region, expected_probability=None, ex
     Example-route mass is only a subset of its entry-position mass. Paths stop
     on first chapter arrival, so a bypass example cannot pass an earlier entry.
     """
-    evaluator.evaluate(roots)
     region = set(region)
-    mass = dict.fromkeys(evaluator.values, 0.)
-    best, arrivals, witnesses = {}, {}, {}
-    for k, weight in roots.items():
-        if weight:
-            mass[k] += weight
-            best[k] = (weight, k, ())
-    stopped = 0.
-    for k in reversed(evaluator.values):
-        if not mass[k]: continue
-        if k in region:
-            arrivals[k], witnesses[k] = mass[k], best[k]
-            continue
-        stopped += mass[k] * sum(stop.probability for stop in evaluator.stops[k])
-        probability, root, path = best[k]
-        for move, p, target in evaluator.edges[k]:
-            mass[target] += mass[k] * p
-            candidate = (probability * p, root, (*path, move))
-            if target not in best or candidate[0] > best[target][0]: best[target] = candidate
+    mass = evaluator.reaches(roots, stop_at=region)
+    witnesses = evaluator.routes(roots, stop_at=region)
+    arrivals = {k: mass[k] for k in reversed(evaluator.values) if k in region and mass[k]}
     total = sum(arrivals.values())
-    if not math.isclose(total + stopped, sum(roots.values()), abs_tol=1e-10):
-        raise AssertionError('First-entry route probabilities do not conserve mass')
     if expected_probability is not None and not math.isclose(total, expected_probability, abs_tol=1e-10):
         raise AssertionError('First-entry examples differ from saved chapter reach')
     if not total:

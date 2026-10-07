@@ -8,8 +8,9 @@ import numpy as np
 
 from . import SCHEMA_VERSION
 from .stats import correlation, rank
-from .evaluate import KNOWN, UNKNOWN, backward
+from .evaluate import KNOWN, UNKNOWN, backward, reaches
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256
+from .depth import prepared_depth_values
 from .graph import resolve, topology
 from .model import empirical, prepare, score
 
@@ -37,35 +38,6 @@ def metrics(depth, gain, weights):
     return {k: float(v) if np.isfinite(v) else None for k, v in result.items()}
 
 
-def depths(model, order, sampled, width=1):
-    """Remaining own moves; a shared continuation has one value per draw."""
-    values = {}
-    for position in order:
-        value = np.full(width, float(model[position].mode == 'own'))
-        for branch, (probability, _) in zip(model[position].branches, sampled[position]):
-            if branch.target is not None:
-                value += probability * values[branch.target]
-        values[position] = value
-    return values
-
-
-def reaches(model, order, sampled, roots, width=1):
-    values = {position: np.zeros(width) for position in order}
-    for position, weight in roots.items():
-        values[position] += weight
-    stopped = np.zeros(width)
-    for position in reversed(order):
-        for branch, (probability, _) in zip(model[position].branches, sampled[position]):
-            flow = values[position] * probability
-            if branch.target is None:
-                stopped += flow
-            else:
-                values[branch.target] += flow
-    if not np.allclose(stopped, sum(roots.values()), atol=1e-9):
-        raise AssertionError('Correlation traversal does not conserve reach')
-    return values
-
-
 def analyze_color(path, cache):
     analysis = AnalysisContext(path, ('vulnerabilities',))
     saved, manifest, moves = analysis.saved, analysis.manifest, analysis.companions['vulnerabilities']
@@ -81,7 +53,7 @@ def analyze_color(path, cache):
     model = prepare(graph, transitions, order, color, evidence)
     raw = empirical(model, color)
     values = backward(model, order, raw, manifest['sparse_threshold'])
-    depth = depths(model, order, raw)
+    depth = prepared_depth_values(model, order, raw)
     reach = reaches(model, order, raw, roots)
     root_score = sum(weight * values[position] for position, weight in roots.items())
     if not np.allclose(root_score[[KNOWN, UNKNOWN], 0],
@@ -112,7 +84,7 @@ def analyze_color(path, cache):
         if model[position].mode != 'own' or branch is None or branch.target != target:
             raise ValueError('Saved own decision differs from the selected overall policy')
         probability = branch.weight
-        weight = float(reach[position][0] * probability)
+        weight = float(reach[position] * probability)
         after = float(values[target][KNOWN, 0])
         if values[target][UNKNOWN, 0] != 0 or not np.isclose(after, row['move_score'], atol=1e-10):
             raise ValueError('Saved continuation score differs from the cached model')

@@ -4,10 +4,10 @@ import json
 import chess
 import pytest
 
-from repertoire_score.evaluate import forward
+from repertoire_score.evaluate import forward, reaches
 from repertoire_score.explorer import Explorer, DEFAULT_FILTERS
 from repertoire_score.graph import key
-from repertoire_score.vulnerabilities import analyze, candidates, rank_scope, reaches, representative_lines
+from repertoire_score.vulnerabilities import analyze, candidates, rank_scope, representative_lines
 from helpers import data, graph, position, setup
 from helpers import cache_row
 

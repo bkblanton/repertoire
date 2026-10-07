@@ -49,7 +49,7 @@ def test_unnamed_transposition_unions_all_routes_and_exact_names_reset(tmp_path)
     assert b not in catalog[deeper]['parent_ids']
     assert set(exact) == {g.roots[0], position('Nf3 d5'), position('g3 Nf6'), position('Nf3 d5 g3 Nf6 Bg2')}
     # Position labels still merge unused alternative routes, without changing policy.
-    ev.policy = {g.roots[0]: 'g1f3'}
+    ev = Evaluator(g, True, e, ev.facts, {g.roots[0]: 'g1f3'})
     assert classify(g, e, ev.facts, True)[2][shared] == {a, b}
 
 
@@ -71,7 +71,7 @@ def test_rare_opening_keeps_only_its_incoming_share_at_unnamed_transposition(tmp
     g, e, ev = transposing(tmp_path)
     rare = named(e, position('Nf3 d5'), 'Rare')
     common = named(e, position('g3 Nf6'), 'Common')
-    ev.policy = {g.roots[0]: {'g1f3': .01, 'g2g3': .99}}
+    ev = Evaluator(g, True, e, ev.facts, {g.roots[0]: {'g1f3': .01, 'g2g3': .99}})
     roots = {g.roots[0]: 1.}
     catalog, exact, _, potential_memberships = classify(g, e, ev.facts, True)
     shared = position('Nf3 d5 g3 Nf6')
@@ -129,7 +129,7 @@ def test_unused_alternative_supplies_no_name_probability(tmp_path):
     g, e, ev = transposing(tmp_path)
     selected = named(e, position('Nf3 d5'), 'Selected')
     unused = named(e, position('g3 Nf6'), 'Unused')
-    ev.policy = {g.roots[0]: 'g1f3'}
+    ev = Evaluator(g, True, e, ev.facts, {g.roots[0]: 'g1f3'})
     catalog, exact, _, _ = classify(g, e, ev.facts, True)
     roots = {g.roots[0]: 1.}
     assert name_flow(ev, roots, exact)[position('Nf3 d5 g3 Nf6')] == {selected: 1.}

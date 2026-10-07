@@ -3,8 +3,8 @@ import json
 
 import numpy as np
 
-from .evaluate import KNOWN, UNKNOWN, backward, can_enter, forward
-from .board_cache import fen_number, move_text, san
+from .evaluate import KNOWN, UNKNOWN, backward, best_routes, can_enter, forward, reaches
+from .board_cache import children, fen_number, move_text, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import Explorer, add_token_option, apply_token_file, counts
 from .graph import resolve, topology
@@ -13,39 +13,15 @@ from .attribution import enrich
 from .status import Status
 
 
-def reaches(model, order, sampled, roots):
-    """Incoming probability at each canonical position, aggregating transpositions."""
-    mass = dict.fromkeys(order, 0.0)
-    for k, weight in roots.items():
-        mass[k] += weight
-    stopped = 0.0
-    for k in reversed(order):
-        for b, (p, _) in zip(model[k].branches, sampled[k]):
-            flow = mass[k] * p
-            if b.target is None:
-                stopped += flow
-            else:
-                mass[b.target] += flow
-    if not np.isclose(stopped, sum(roots.values()), atol=1e-10):
-        raise AssertionError('Vulnerability probability conservation failed')
-    return mass
-
-
 def representative_lines(graph, model, order, sampled, roots, prefixes=None):
     """One legal policy route for labels; probabilities always use all routes."""
-    paths, best = {}, dict.fromkeys(order, -1.0)
-    for k, weight in roots.items():
-        if weight <= 0:
-            continue
-        best[k] = weight
-        paths[k] = (prefixes or {}).get(k, '')
-    for k in reversed(order):
-        if k not in paths:
-            continue
-        for b, (p, _) in zip(model[k].branches, sampled[k]):
-            if b.target is not None and p > 0 and best[k]*p > best[b.target]:
-                best[b.target] = best[k]*p
-                paths[b.target] = (paths[k]+' '+move_text(k, fen_number(graph.nodes[k].fen), b.move)).strip()
+    paths = {}
+    for k, (_, root, moves) in best_routes(model, order, sampled, roots).items():
+        text, position = [(prefixes or {}).get(root, '')], root
+        for move in moves:
+            text.append(move_text(position, fen_number(graph.nodes[position].fen), move))
+            position = children(position)[move]
+        paths[k] = ' '.join(text).strip()
     return paths
 
 

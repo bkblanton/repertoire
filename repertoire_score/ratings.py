@@ -159,23 +159,19 @@ class Context:
 
 def first_entries(evaluator, roots, entries):
     """Stop flow at its first entry and retain the last opponent move mixture."""
-    evaluator.evaluate(roots)
-    flow = dict.fromkeys(evaluator.values, 0.)
+    flow = evaluator.reaches(roots, stop_at=entries)
     incoming = defaultdict(list)
     for k, p in roots.items():
-        flow[k] += p
         if k in entries:
             incoming[k].append((p, unavailable('entry is a PGN root'), None, None))
     for k in reversed(evaluator.values):
         if k in entries or flow[k] <= 0: continue
         for move, p, target in evaluator.edges[k]:
-            mass = flow[k] * p
-            flow[target] += mass
             if target in entries:
                 r = (reply_rating(evaluator.evidence.get(k), move)
                      if evaluator.facts[k]['turn'] != evaluator.color
                      else response_rating(evaluator.evidence.get(target)))
-                incoming[target].append((mass, r, k, move))
+                incoming[target].append((flow[k] * p, r, k, move))
     entry_mass = sum(flow.get(k, 0) for k in entries)
     weights = {k: flow.get(k, 0) / entry_mass for k in entries if flow.get(k, 0) > 0} if entry_mass else {}
     initial = {}

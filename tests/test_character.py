@@ -96,7 +96,7 @@ def test_transposition_counts_one_shared_decision(tmp_path,white):
     assert len(shared) == 1 and shared[0]['reach'] == pytest.approx(1)
     from repertoire_score.graph import resolve, topology, key
     from repertoire_score.model import prepare, empirical
-    from repertoire_score.vulnerabilities import reaches
+    from repertoire_score.evaluate import reaches
     transitions = resolve(g, white, policy)
     order = topology(transitions, g.roots)
     model = prepare(g, transitions, order, white, evidence)
