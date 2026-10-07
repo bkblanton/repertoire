@@ -4,7 +4,7 @@ import json
 import numpy as np
 
 from .evaluate import KNOWN, UNKNOWN, backward, best_routes, can_enter, forward, reaches
-from .board_cache import children, fen_number, move_text, san
+from .board_cache import fen_number, move_text, route_line, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import Explorer, add_token_option, apply_token_file, counts
 from .graph import resolve, topology
@@ -14,14 +14,16 @@ from .status import Status
 
 
 def representative_lines(graph, model, order, sampled, roots, prefixes=None):
-    """One legal policy route for labels; probabilities always use all routes."""
+    """One legal policy route for labels, as (move text, full-move number at the position); probabilities always
+    use all routes. Numbers count along the route itself, since transposed routes can differ in length.
+    `prefixes` continues earlier lines to the roots."""
     paths = {}
     for k, (_, root, moves) in best_routes(model, order, sampled, roots).items():
-        text, position = [(prefixes or {}).get(root, '')], root
-        for move in moves:
-            text.append(move_text(position, fen_number(graph.nodes[position].fen), move))
-            position = children(position)[move]
-        paths[k] = ' '.join(text).strip()
+        prefix, number = (prefixes or {}).get(root, ('', fen_number(graph.nodes[root].fen)))
+        text, position, number = route_line(root, number, moves)
+        if position != k:
+            raise AssertionError('Representative route does not reach its position')
+        paths[k] = (prefix + ' ' + text).strip(), number
     return paths
 
 
@@ -106,8 +108,9 @@ def rank_scope(local, reach, lines, entry_probability=1.0):
         k = candidate['position']
         if reach[k] <= 0:
             continue
-        row = dict(candidate, parent_reach=reach[k],
-                   line=(lines.get(k, '')+' '+candidate['move_label']).strip())
+        text, number = lines.get(k, ('', None))
+        label = candidate['move_label'] if number is None else move_text(k, number, candidate['move'])
+        row = dict(candidate, parent_reach=reach[k], move_label=label, line=(text+' '+label).strip())
         row['branch_reach'] = reach[k]*row['branch_probability']
         row['weighted_drag_pp'] = None if row['local_drop_pp'] is None else row['branch_reach']*row['local_drop_pp']
         row['study_drag_pp_after_entry'] = (None if entry_probability is None or row['weighted_drag_pp'] is None

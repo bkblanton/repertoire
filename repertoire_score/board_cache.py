@@ -88,12 +88,12 @@ def next_number(position, number):
 
 
 def route_line(position, number, moves):
-    """Numbered move text along `moves` from `position` at full-move `number`, and the position it reaches."""
+    """Numbered move text along `moves` from `position` at full-move `number`, and the position and number it reaches."""
     text = []
     for move in moves:
         text.append(move_text(position, number, move))
         position, number = children(position)[move], next_number(position, number)
-    return ' '.join(text), position
+    return ' '.join(text), position, number
 
 
 def after_fen(fen, uci):

@@ -230,7 +230,7 @@ def first_entries(evaluator, roots, region):
 
 def example(evaluator, witness):
     probability, root, moves = witness
-    text, position = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
+    text, position, _ = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
     return dict(root_fen=evaluator.graph.nodes[root].fen, path_uci=list(moves),
                 line=text or '(PGN root)', root_probability=probability, position=position)
 

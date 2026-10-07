@@ -213,3 +213,26 @@ def test_own_ranking_uses_direct_deficit_while_opponent_ranking_uses_weighted_dr
     result, _ = rankings(rows)
     assert [r['id'] for r in result['own']] == ['rare', 'common']
     assert [r['id'] for r in result['opponent']] == ['reply-common', 'reply-rare']
+
+
+def test_lines_number_moves_along_their_own_route(tmp_path):
+    # The board after 1.e4 e5 recurs after 1.e3 e6 2.e4 e5, two moves later than its first recorded route.
+    g = graph(tmp_path, '1. e4 e5 2. Nf3 Nc6 *\n\n1. e3 e6 2. e4 e5 3. Nf3 Nc6 *')
+    root, short, nf3 = g.roots[0], position('e4 e5'), position('e4 e5 Nf3')
+    assert position('e3 e6 e4 e5') == short and g.nodes[short].fen.split()[5] == '2'
+    evidence = {root: data(50, 0, 50, [('e2e4', 5, 0, 5), ('e2e3', 45, 0, 45)]),
+                position('e3 e6'): data(50, 0, 50, [('e3e4', 50, 0, 50)]),
+                short: data(50, 0, 50, [('g1f3', 50, 0, 50)]),
+                position('e4 e5 Nf3 Nc6'): data(50, 0, 50),
+                position('e4'): data(50, 0, 50, [('e7e5', 50, 0, 50)]),
+                position('e3'): data(50, 0, 50, [('e7e6', 50, 0, 50)]),
+                position('e3 e6 e4'): data(50, 0, 50, [('e6e5', 50, 0, 50)]),
+                nf3: data(50, 0, 50, [('b8c6', 50, 0, 50)])}
+    m, o, raw, _, v, _ = setup(g, False, evidence)
+    lines = representative_lines(g, m, o, raw, {root: 1})
+    assert lines[nf3] == ('1.e3 1...e6 2.e4 2...e5 3.Nf3', 3)
+    rows = {r['move_san']: r for r in rank_scope(candidates(g, m, raw, v, evidence, False, 30),
+                                                 reaches(m, o, raw, {root: 1}), lines)['all_signed_rows']}
+    assert rows['Nf3']['line'] == '1.e3 1...e6 2.e4 2...e5 3.Nf3'
+    assert rows['Nc6']['move_label'] == '3...Nc6'
+    assert rows['Nc6']['line'] == '1.e3 1...e6 2.e4 2...e5 3.Nf3 3...Nc6'

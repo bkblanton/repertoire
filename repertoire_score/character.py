@@ -168,7 +168,7 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
     def line(k):
         # Each route keeps its own full-move number: transposed routes can differ in length.
         _, root, moves = routes[k]
-        text, position = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
+        text, position, _ = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
         if position != k:
             raise AssertionError('Repertoire route does not reach its board')
         prefix = '' if lines[root] == '(PGN root)' else lines[root]
