@@ -35,3 +35,16 @@ def test_stage_help_uses_the_subcommand_name(capsys):
     with pytest.raises(SystemExit):
         cli.main(['score', '--help'])
     assert capsys.readouterr().out.startswith('usage: repertoire score')
+
+
+def test_interrupt_exits_cleanly_with_a_resume_hint(monkeypatch, capsys):
+    def interrupted():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr('repertoire_score.fetch.main', interrupted)
+    before = list(sys.argv)
+    with pytest.raises(SystemExit) as error:
+        cli.main(['fetch'])
+    assert error.value.code == 130
+    assert 'rerun the same command to continue' in capsys.readouterr().err
+    assert sys.argv == before

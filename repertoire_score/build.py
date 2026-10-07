@@ -305,7 +305,10 @@ def main():
             return
         build(**options)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
-        parser.exit(1, f'Batch failed: {exc}\nCompleted checkpoints and Explorer cache are preserved.\n')
+        parser.exit(
+            1,
+            f'Build failed: {exc}\nFetched tables and completed stages are kept; rerun the same command to continue.\n',
+        )
 
 
 if __name__ == '__main__':

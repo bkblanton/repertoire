@@ -2,7 +2,7 @@ import chess
 import httpx
 import pytest
 
-from repertoire_score.explorer import DEFAULT_FILTERS, Explorer, Progress, collect, duration
+from repertoire_score.explorer import DEFAULT_FILTERS, Explorer, Progress, collect, duration, fetch_missing
 from repertoire_score.graph import key
 
 
@@ -190,3 +190,32 @@ def test_backoff_messages_say_how_far_the_run_has_got(tmp_path, monkeypatch, cap
 @pytest.mark.parametrize(('seconds', 'text'), [(0, '0s'), (45, '45s'), (90, '2m'), (3599, '1h 00m'), (11100, '3h 05m')])
 def test_duration(seconds, text):
     assert duration(seconds) == text
+
+
+def test_interrupted_fetch_reports_progress_and_keeps_fetched_tables(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
+    monkeypatch.setattr('repertoire_score.explorer.time.sleep', lambda _: None)
+    responses = iter([httpx.Response(200, json=EMPTY), KeyboardInterrupt])
+
+    def respond(_):
+        response = next(responses)
+        if response is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        return response
+
+    client = mock_client(tmp_path, respond)
+    with pytest.raises(KeyboardInterrupt):
+        fetch_missing(client, positions(3), 'white and black')
+    assert 'white and black: stopped at 1/3 fetched; tables fetched so far stay cached' in capsys.readouterr().out
+    assert len(list(tmp_path.glob('*.json'))) == 1
+    assert client.note == ''
+    client.close()
+
+
+def test_online_explorer_removes_partial_writes(tmp_path, monkeypatch):
+    monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
+    (tmp_path / 'partial.tmp').write_text('{"trunc')
+    Explorer(tmp_path, offline=True).close()
+    assert (tmp_path / 'partial.tmp').exists()
+    Explorer(tmp_path).close()
+    assert not list(tmp_path.glob('*.tmp'))

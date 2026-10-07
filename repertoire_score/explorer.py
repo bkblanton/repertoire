@@ -103,6 +103,19 @@ class Progress:
             return None
         return (self.total - self.done) * elapsed / (len(self.finished) - 1)
 
+    def fetch(self, explorer, position):
+        """One network fetch. If it is interrupted or fails, say how far the run got before stopping."""
+        explorer.note = self.status()
+        try:
+            data = explorer.get(position)
+        except BaseException:
+            print(f'{self.label}: stopped at {self.status()}; tables fetched so far stay cached', flush=True)
+            raise
+        finally:
+            explorer.note = ''
+        self.advance()
+        return data
+
     def advance(self):
         self.done += 1
         now = time.monotonic()
@@ -142,10 +155,7 @@ def fetch_missing(explorer, positions, label):
     missing = survey(explorer, list(dict.fromkeys(positions)), label)
     progress = Progress(len(missing), label)
     for k in missing:
-        explorer.note = progress.status()
-        explorer.get(k)
-        progress.advance()
-    explorer.note = ''
+        progress.fetch(explorer, k)
 
 
 def collect(explorer, positions, label):
@@ -155,13 +165,8 @@ def collect(explorer, positions, label):
     progress, pending = Progress(len(missing), label), set(missing)
     evidence = {}
     for k in positions:
-        if k in pending and not explorer.offline:
-            explorer.note = progress.status()
-            evidence[k] = explorer.get(k)
-            progress.advance()
-        else:
-            evidence[k] = explorer.get(k)
-    explorer.note = ''
+        fetching = k in pending and not explorer.offline
+        evidence[k] = progress.fetch(explorer, k) if fetching else explorer.get(k)
     return evidence
 
 
@@ -226,6 +231,10 @@ class Explorer:
         token = os.environ.get("LICHESS_TOKEN", "").strip()
         if not offline and not token:
             raise ValueError("Set LICHESS_TOKEN in the environment")
+        if not offline:
+            # A run stopped mid-write leaves a temporary file; the table itself was never cached.
+            for leftover in self.cache.glob("*.tmp"):
+                leftover.unlink(missing_ok=True)
         self.client = httpx.Client(headers={"Authorization": f"Bearer {token}"} if token else {}, timeout=45)
         self.provenance = {}
         self.last_request = 0

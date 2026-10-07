@@ -48,6 +48,10 @@ def main(argv=None):
     sys.argv = [f'repertoire {name}', *rest]
     try:
         module.main()
+    except KeyboardInterrupt:
+        # Every stage saves its work atomically, so stopping is safe and a rerun continues.
+        print('\nStopped. Work saved so far is kept; rerun the same command to continue.', file=sys.stderr)
+        raise SystemExit(130) from None
     finally:
         sys.argv = previous
 
