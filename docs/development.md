@@ -12,7 +12,7 @@ Work from the repository root and preserve unrelated local changes. Use uv for P
 | Authenticated evidence, validation and persistent cache | [explorer.py](../repertoire_score/explorer.py) |
 | The `repertoire` command, scoring orchestration, evidence model and calculated uncertainty | [cli.py](../repertoire_score/cli.py), [score.py](../repertoire_score/score.py), [model.py](../repertoire_score/model.py), [uncertainty.py](../repertoire_score/uncertainty.py) |
 | Backward values, forward probability, entry baselines, depth and chapter transitions | [evaluate.py](../repertoire_score/evaluate.py), [baseline.py](../repertoire_score/baseline.py), [depth.py](../repertoire_score/depth.py), [transitions.py](../repertoire_score/transitions.py) |
-| Cache-only empirical traversal, stopping ledger, depth distribution and entry-route examples | [preparation.py](../repertoire_score/preparation.py), [insights.py](../repertoire_score/insights.py) |
+| Cache-only empirical traversal, stopping ledger, depth distribution and entry-route examples | [preparation.py](../repertoire_score/preparation.py), [routes.py](../repertoire_score/routes.py) |
 | Position reach, first gaps, reuse, reply variety, WDL and recursive branch spread | [character.py](../repertoire_score/character.py), [gaps.py](../repertoire_score/gaps.py), [sharpness.py](../repertoire_score/sharpness.py), [spread.py](../repertoire_score/spread.py) |
 | Gain/drag comparisons, ratings, opening flows and source attribution | [vulnerabilities.py](../repertoire_score/vulnerabilities.py), [ratings.py](../repertoire_score/ratings.py), [openings.py](../repertoire_score/openings.py), [attribution.py](../repertoire_score/attribution.py) |
 | Saved gain intervals and spread/entry presentation data | [report_insights.py](../repertoire_score/report_insights.py) |
@@ -45,11 +45,11 @@ Ratings depend on preparation, character and vulnerabilities. Report insights de
 - The summary leads each color with five exit points and five own moves to review, plus opening names alongside lines. The position tree, chapter comparisons, costly replies, strongest moves and preparation metrics are expandable. Separate opening rankings, repeat-gap-share tables and position-contribution tables remain in the full report; chapter detail lives on chapter pages.
 - Pages link to each other with in-page anchors and `@page` placeholders that `generate` resolves to relative paths, so a section can move between pages without broken links. Caveats belong in the glossary (`def-*` anchors); tables link to them rather than repeating paragraphs.
 
-The evaluator has no network dependency. `insights.py` implements traversal-derived metrics; `report_insights.py` prepares saved gain intervals and spread/entry presentation data. Keep these responsibilities distinct.
+The evaluator has no network dependency. `routes.py` implements traversal-derived metrics (depth distributions and first-entry route examples); `report_insights.py`, the `insights` stage, prepares saved gain intervals and spread/entry presentation data. Keep these responsibilities distinct.
 
 ## Testing
 
-Sanity checks enforce conservation at every evaluated node and reproduce the root value from weighted stopping contributions. Tests cover forced moves, beneficial and harmful deviations relative to an explicit leaf baseline, duplicate chapters, shared leaves, transpositions, own-move conflicts, sparse and missing evidence, residual buckets, inconsistent responses, first-entry weighting, cycles, color reversal and fixed-seed reproducibility.
+Sanity checks enforce conservation at every evaluated node and reproduce the root value from weighted stopping contributions. Tests cover forced moves, beneficial and harmful deviations relative to an explicit leaf baseline, duplicate chapters, shared leaves, transpositions, own-move conflicts, sparse and missing evidence, residual buckets, inconsistent responses, first-entry weighting, cycles and color reversal.
 
 ```sh
 uv run --no-sync pytest -q

@@ -11,8 +11,8 @@ from .board_cache import children, fen_number, geometry, move_text, owner_outcom
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .evaluate import best_routes, reaches
 from .graph import chapter_policy_overrides, resolve
-from .insights import depth_distribution, first_entry_examples
 from .model import node_empirical, prepare_node, score
+from .routes import depth_distribution, first_entry_examples
 from .status import Status
 
 
