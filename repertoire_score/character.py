@@ -358,7 +358,8 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
     return sorted(rows.values(), key=lambda r: (-r['reach'], len(r['line'].split()), r['line'], r['position']))
 
 
-def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probability=1.0):
+def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probability=1.0, wdl_values=None):
+    """Character metrics for one scope. `wdl_values` is a WDL table for this evaluator to extend and reuse."""
     reach = evaluator.reaches(starts)
     value = evaluator.evaluate(starts)
     decisions = []
@@ -378,7 +379,7 @@ def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probabili
     for kind in sorted({r['type'] for r in stops}):
         profiles[kind] = position_profile([r for r in stops if r['type'] == kind], evaluator.color)
     unknown = sum(r['reach'] for r in stops if r['type'] == 'unresolved_distribution')
-    wdl_values = recursive_wdl(evaluator)
+    wdl_values = recursive_wdl(evaluator, wdl_values)
     positions = position_reach_rows(evaluator, starts, reach, lines, wdl_values)
     gaps = gap_distribution(evaluator, starts, entry_probability)
     unanswered = {
@@ -421,13 +422,15 @@ def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
     evaluators = Evaluators(
         graph, color, evidence, facts, manifest['configuration'].get('policy', {}), manifest['sparse_threshold']
     )
+    wdl_tables = {}  # one WDL table per shared evaluator
     for scope in scopes:
         expected = scope.pop('score')
         if not scope['starts']:
             scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
             continue
         evaluator = evaluators(scope['chapter'])
-        scope.update(scope_metrics(evaluator, scope['starts'], lines, games, scope['entry_probability']))
+        wdl_values = wdl_tables.setdefault(evaluator, {})
+        scope.update(scope_metrics(evaluator, scope['starts'], lines, games, scope['entry_probability'], wdl_values))
         validation = scope['validation']
         for actual, desired in [
             (validation['resolved_score'], expected['resolved_contribution']),

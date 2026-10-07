@@ -4,6 +4,8 @@ import math
 
 import numpy as np
 
+from .evaluate import fold
+
 FIELDS = ('win_probability', 'draw_probability', 'loss_probability', 'unresolved_probability')
 
 
@@ -46,23 +48,33 @@ def summarize(distribution):
     return result
 
 
-def recursive_wdl(evaluator):
-    """Reuse the scorer's exact edges, stopping rules, and canonical postorder."""
-    values = {}
-    for position, expected in evaluator.values.items():
+def recursive_wdl(evaluator, values=None):
+    """Win, draw, loss and unresolved probabilities for every compiled position, over the scorer's model.
+
+    Pass the previous result as `values` to extend it after the evaluator compiles more positions.
+    """
+
+    def combine(position, parts):
         value = np.zeros(4)
-        for _, probability, target in evaluator.edges[position]:
-            value += probability * values[target]
-        for _, probability, _, counts, fixed in evaluator.stops[position]:
-            value += probability * stopping_wdl(counts, evaluator.color, fixed)
+        for _, probability, child in parts:
+            value += probability * child
+        expected = evaluator.values[position]
         if (
             not np.isclose(value.sum(), 1.0, atol=1e-9)
             or not math.isclose(value[0] + value[1] / 2, expected[0], abs_tol=1e-10)
             or not math.isclose(value[3], expected[1], abs_tol=1e-10)
         ):
             raise AssertionError('Recursive WDL did not reproduce repertoire score and unresolved mass')
-        values[position] = value
-    return values
+        return value
+
+    return fold(
+        evaluator.model,
+        list(evaluator.values),
+        evaluator.sampled,
+        lambda b, _: stopping_wdl(b.counts, evaluator.color, b.fixed_score),
+        combine,
+        values,
+    )
 
 
 def scope_outcomes(evaluator, starts, values=None):

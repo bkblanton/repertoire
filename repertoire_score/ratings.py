@@ -90,11 +90,24 @@ def stop_key(row):
     return '|'.join(str(row.get(k) or '') for k in ('parent_position', 'move', 'type'))
 
 
+class ReplyRatings:
+    """Ratings of individual opponent move rows, computed once per stage. Each call returns a fresh copy."""
+
+    def __init__(self, evidence):
+        self.evidence, self.cache = evidence, {}
+
+    def __call__(self, k, move):
+        if (k, move) not in self.cache:
+            self.cache[k, move] = reply_rating(self.evidence.get(k), move)
+        return dict(self.cache[k, move])
+
+
 class Context:
     """Flow-aware local ratings and once-per-game stopping-evidence moments."""
 
-    def __init__(self, evaluator, starts, initial=None):
+    def __init__(self, evaluator, starts, initial=None, replies=None):
         self.evaluator = evaluator
+        self.reply = replies or ReplyRatings(evaluator.evidence)
         self.starts = starts
         self.initial = initial or {}
         self.reach = evaluator.reaches(starts)
@@ -107,7 +120,7 @@ class Context:
                 continue
             for move, p, target in evaluator.edges[k]:
                 if evaluator.facts[k]['turn'] != evaluator.color:
-                    arrivals[target].append((mass * p, reply_rating(evaluator.evidence.get(k), move), k, move))
+                    arrivals[target].append((mass * p, self.reply(k, move), k, move))
         self.local = {}
         for k, mass in self.reach.items():
             if mass <= 0:
@@ -142,7 +155,7 @@ class Context:
         if kind in ('no_recorded_continuation', 'unresolved_distribution'):
             return unavailable('unidentified continuation or missing distribution')
         if move:
-            return reply_rating(self.evaluator.evidence.get(k), move)
+            return self.reply(k, move)
         return self.local.get(k, unavailable())
 
     def continuation(self, k, incoming=None):
@@ -153,11 +166,7 @@ class Context:
             return self.moments[k]
         parts = [(p, self.stop(k, move, kind)) for move, p, kind, _, _ in self.evaluator.stops[k]]
         for move, p, target in self.evaluator.edges[k]:
-            incoming = (
-                reply_rating(self.evaluator.evidence.get(k), move)
-                if self.evaluator.facts[k]['turn'] != self.evaluator.color
-                else None
-            )
+            incoming = self.reply(k, move) if self.evaluator.facts[k]['turn'] != self.evaluator.color else None
             parts.append((p, self.continuation(target, incoming)))
         if not math.isclose(sum(p for p, _ in parts), 1.0, abs_tol=1e-9):
             raise AssertionError('Stopping rating probability not conserved')
@@ -359,6 +368,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     output = []
 
     evaluators = Evaluators(graph, color, evidence, facts, policy, manifest['sparse_threshold'])
+    replies = ReplyRatings(evidence)
 
     for sid, prep in prep_scopes.items():
         cid = None if sid == 'overall' else sid
@@ -379,7 +389,7 @@ def analyze(path, cache=DEFAULT_CACHE):
             scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
             output.append(scope)
             continue
-        context = Context(evaluator, prep['starts'], initial)
+        context = Context(evaluator, prep['starts'], initial, replies)
         value = evaluator.evaluate(prep['starts'])
         expected = saved['overall'] if not cid else chapters[cid]['score']
         if not math.isclose(value[0], expected['resolved_contribution'], abs_tol=1e-10) or not math.isclose(

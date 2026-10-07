@@ -2,6 +2,7 @@
 
 import math
 
+from .evaluate import fold
 from .sharpness import stopping_wdl, summarize
 
 
@@ -66,21 +67,26 @@ def mixture(parts, expected=None):
 
 
 def recursive_spread(evaluator):
-    """Follow the scorer's postorder; each transposition has one continuation."""
-    values = {}
-    for k, expected in evaluator.values.items():
-        parts = [(p, values[target]) for _, p, target in evaluator.edges[k]]
-        parts += [(p, stopping_counts(sample, evaluator.color, fixed)) for _, p, _, sample, fixed in evaluator.stops[k]]
-        value = mixture(parts, float(expected[0]) if expected[1] == 0 else None)
+    """Recursive score spread for every compiled position; each transposition has one continuation."""
+
+    def combine(k, parts):
+        expected = evaluator.values[k]
+        value = mixture([(p, child) for _, p, child in parts], float(expected[0]) if expected[1] == 0 else None)
         opponent = evaluator.facts[k]['turn'] != evaluator.color and evaluator.facts[k]['outcome'] is None
-        reply_mass = sum(p for move, p, _ in evaluator.edges[k] if move is not None)
-        reply_mass += sum(p for move, p, _, _, _ in evaluator.stops[k] if move is not None)
+        reply_mass = sum(p for b, p, _ in parts if b.move is not None)
         value['reply_distribution_coverage'] = reply_mass if opponent else None
         if opponent and math.isclose(reply_mass, 1.0, abs_tol=1e-10) and value['variance'] is not None:
             value['immediate_variance'] = value['local_variance']
             value['immediate_standard_deviation'] = math.sqrt(value['local_variance'])
-        values[k] = value
-    return values
+        return value
+
+    return fold(
+        evaluator.model,
+        list(evaluator.values),
+        evaluator.sampled,
+        lambda b, _: stopping_counts(b.counts, evaluator.color, b.fixed_score),
+        combine,
+    )
 
 
 def assert_outcomes(value, outcomes):

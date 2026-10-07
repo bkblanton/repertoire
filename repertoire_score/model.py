@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 
 from .board_cache import children, owner_outcome, turn
 from .explorer import counts, validate
+from .graph import Graph
+from .schema import Position
 
 
 @dataclass
@@ -24,11 +26,20 @@ class ModelNode:
     potential_targets: list[str] = field(default_factory=list)
 
 
+# Colors are booleans as in python-chess: True is White. A sampled branch is (probability, score); in the
+# simulation tests both may be arrays of draws.
+Sample = tuple[float, float | None]
+Model = dict[Position, ModelNode]
+Sampled = dict[Position, list[Sample]]
+Evidence = dict[Position, dict]
+Selected = dict[str, tuple[Position, float]]  # move -> (target, policy weight)
+
+
 class MissingEvidence(ValueError):
     """A position the model needs has no cached table; distinct from a table with zero games."""
 
 
-def prepare_node(k, selected, color, evidence):
+def prepare_node(k: Position, selected: Selected, color: bool, evidence: Evidence) -> ModelNode:
     """The model node for one position, from its selected transitions and cached table."""
     result = owner_outcome(k, color)
     if result is not None:
@@ -65,16 +76,18 @@ def prepare_node(k, selected, color, evidence):
     return ModelNode("opponent", branches, total)
 
 
-def prepare(graph, transitions, order, color, evidence):
+def prepare(
+    graph: Graph, transitions: dict[Position, Selected], order: list[Position], color: bool, evidence: Evidence
+) -> Model:
     return {k: prepare_node(k, transitions[k], color, evidence) for k in order}
 
 
-def score(count, color):
+def score(count: list[int], color: bool) -> float | None:
     total = sum(count)
     return ((count[0] if color else count[2]) + 0.5 * count[1]) / total if total else None
 
 
-def node_empirical(n, color):
+def node_empirical(n: ModelNode, color: bool) -> list[Sample]:
     """Each branch's observed probability and score, in the (probability, score) format of evaluate."""
     return [
         (
@@ -85,5 +98,5 @@ def node_empirical(n, color):
     ]
 
 
-def empirical(model, color):
+def empirical(model: Model, color: bool) -> Sampled:
     return {k: node_empirical(n, color) for k, n in model.items()}

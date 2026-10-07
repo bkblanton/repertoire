@@ -1,6 +1,7 @@
 """Cache-only stopping outcomes and their repertoire score contributions."""
 
 import json
+from collections.abc import Collection
 from typing import NamedTuple
 
 import chess
@@ -9,10 +10,11 @@ import numpy as np
 from .attribution import enrich
 from .board_cache import children, fen_number, geometry, move_text, owner_outcome
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
-from .evaluate import best_routes, reaches
-from .graph import chapter_policy_overrides, resolve
-from .model import node_empirical, prepare_node, score
+from .evaluate import Route, Weights, best_routes, reaches
+from .graph import Graph, chapter_policy_overrides, resolve
+from .model import Evidence, node_empirical, prepare_node, score
 from .routes import depth_distribution, first_entry_examples
+from .schema import Position
 from .status import Status
 
 
@@ -41,7 +43,16 @@ class Evaluator:
     Vector: resolved score, unresolved mass, prepared depth, sparse score, sparse mass.
     """
 
-    def __init__(self, graph, color, evidence, facts, policy=None, chapter=None, sparse=30):
+    def __init__(
+        self,
+        graph: Graph,
+        color: bool,
+        evidence: Evidence,
+        facts: dict,
+        policy: dict | None = None,
+        chapter: str | None = None,
+        sparse: int = 30,
+    ):
         self.graph, self.color, self.evidence, self.facts = graph, color, evidence, facts
         self.policy, self.chapter, self.sparse = policy or {}, chapter, sparse
         transitions = resolve(graph, color, self.policy)
@@ -53,10 +64,10 @@ class Evaluator:
         self.transitions = transitions
         self.model, self.sampled, self.values, self.edges, self.stops = {}, {}, {}, {}, {}
 
-    def own_choices(self, k):
+    def own_choices(self, k: Position) -> dict[str, float]:
         return {m: w for m, (_, w) in self.transitions[k].items()}
 
-    def stopping(self, sample, fixed=None):
+    def stopping(self, sample: list[int], fixed: float | None = None) -> np.ndarray:
         n = sum(sample)
         s = fixed if fixed is not None else score(sample, self.color)
         if s is None:
@@ -64,7 +75,7 @@ class Evaluator:
         sparse = fixed is None and n < self.sparse
         return np.array([s, 0.0, 0.0, s if sparse else 0.0, float(sparse)])
 
-    def compile(self, start):
+    def compile(self, start: Position) -> None:
         """Add every position reachable from `start` that is not yet compiled, children first."""
         if start not in self.graph.nodes:
             raise ValueError('Chapter entry position is absent from the repertoire')
@@ -84,7 +95,7 @@ class Evaluator:
                 active.add(target)
                 pending.append((target, iter(t for t, _ in self.transitions[target].values())))
 
-    def _evaluate(self, k):
+    def _evaluate(self, k: Position) -> None:
         node = self.model[k] = prepare_node(k, self.transitions[k], self.color, self.evidence)
         sampled = self.sampled[k] = node_empirical(node, self.color)
         value, edges, stops = np.zeros(5), [], []
@@ -101,22 +112,27 @@ class Evaluator:
             value[2] += 1
         self.values[k], self.edges[k], self.stops[k] = value, edges, stops
 
-    def value(self, k):
+    def value(self, k: Position) -> np.ndarray:
         self.compile(k)
         return self.values[k]
 
-    def evaluate(self, starts):
+    def evaluate(self, starts: Weights) -> np.ndarray:
         for k, w in starts.items():
             if w:
                 self.compile(k)
         return sum((w * self.values[k] for k, w in starts.items() if w), np.zeros(5))
 
-    def reaches(self, starts, stop_at=()):
+    def reaches(self, starts: Weights, stop_at: Collection[Position] = ()) -> dict[Position, float]:
         """Incoming probability at each compiled position; see evaluate.reaches."""
         self.evaluate(starts)
         return reaches(self.model, list(self.values), self.sampled, starts, stop_at)
 
-    def routes(self, starts, stop_at=(), replies=False):
+    def routes(
+        self,
+        starts: Weights,
+        stop_at: Collection[Position] = (),
+        replies: bool = False,
+    ) -> dict[Position, Route]:
         """The most likely route to each position; see evaluate.best_routes."""
         self.evaluate(starts)
         return best_routes(self.model, list(self.values), self.sampled, starts, stop_at, replies)
@@ -126,13 +142,15 @@ class Evaluators:
     """One Evaluator per distinct comparison policy. Chapters whose first recorded moves agree with the overall
     policy share its evaluator, so each position is compiled once per policy rather than once per chapter."""
 
-    def __init__(self, graph, color, evidence, facts, policy=None, sparse=30):
+    def __init__(
+        self, graph: Graph, color: bool, evidence: Evidence, facts: dict, policy: dict | None = None, sparse: int = 30
+    ):
         self.graph, self.color, self.evidence, self.facts = graph, color, evidence, facts
         self.policy, self.sparse = policy or {}, sparse
         self.transitions = resolve(graph, color, self.policy)
         self.shared = {}
 
-    def __call__(self, chapter=None):
+    def __call__(self, chapter: str | None = None) -> Evaluator:
         """The evaluator for a chapter's comparison policy, or for the overall policy when `chapter` is None."""
         overrides = (
             {} if chapter is None else chapter_policy_overrides(self.graph, self.color, self.transitions, chapter)
