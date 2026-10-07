@@ -1,5 +1,7 @@
 """Evidence preparation, independent of network access."""
+
 from dataclasses import dataclass, field
+
 from .board_cache import children, owner_outcome, turn
 from .explorer import counts, validate
 
@@ -41,15 +43,23 @@ def prepare_node(k, selected, color, evidence):
     if turn(k) == color:
         return ModelNode("stop", [Branch(counts=counts(data), kind="theory_leaf")], total)
     if not total:
-        return ModelNode("stop", [Branch(kind="unresolved_distribution")], 0, [target for target, _ in selected.values()])
+        return ModelNode(
+            "stop", [Branch(kind="unresolved_distribution")], 0, [target for target, _ in selected.values()]
+        )
     rows = {r["uci"]: counts(r) for r in data["moves"]}
     branches = []
     moves = children(k)
     for uci in sorted(moves):
         target = selected.get(uci, (None, None))[0]
-        branches.append(Branch(move=uci, target=target, counts=rows.get(uci, [0, 0, 0]),
-                               kind=None if target else "deviation",
-                               fixed_score=None if target else owner_outcome(moves[uci], color)))
+        branches.append(
+            Branch(
+                move=uci,
+                target=target,
+                counts=rows.get(uci, [0, 0, 0]),
+                kind=None if target else "deviation",
+                fixed_score=None if target else owner_outcome(moves[uci], color),
+            )
+        )
     if sum(residual):
         branches.append(Branch(counts=residual, kind="no_recorded_continuation"))
     return ModelNode("opponent", branches, total)
@@ -61,13 +71,18 @@ def prepare(graph, transitions, order, color, evidence):
 
 def score(count, color):
     total = sum(count)
-    return ((count[0] if color else count[2])+0.5*count[1])/total if total else None
+    return ((count[0] if color else count[2]) + 0.5 * count[1]) / total if total else None
 
 
 def node_empirical(n, color):
     """Each branch's observed probability and score, in the (probability, score) format of evaluate."""
-    return [(b.weight if n.mode == "own" else sum(b.counts)/n.sample if n.mode == "opponent" else 1.0,
-             b.fixed_score if b.fixed_score is not None else score(b.counts, color)) for b in n.branches]
+    return [
+        (
+            b.weight if n.mode == "own" else sum(b.counts) / n.sample if n.mode == "opponent" else 1.0,
+            b.fixed_score if b.fixed_score is not None else score(b.counts, color),
+        )
+        for b in n.branches
+    ]
 
 
 def empirical(model, color):

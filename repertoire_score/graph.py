@@ -1,9 +1,13 @@
 """PGN parsing, position identity, policy resolution and chapter entries."""
+
 from dataclasses import dataclass, field
 from pathlib import Path
+
 import chess
 import chess.pgn
-from .board_cache import canonical as key, children, terminal_white, turn
+
+from .board_cache import canonical as key
+from .board_cache import children, terminal_white, turn
 
 
 @dataclass
@@ -34,11 +38,11 @@ def parse(path, exclusions=()):
             board = game.board()
             if not board.is_valid():
                 raise ValueError(f"Invalid root position: {board.fen()}")
-            cid = game.headers.get("ChapterURL", "").rstrip("/").split("/")[-1] or str(len(chapters)+1)
+            cid = game.headers.get("ChapterURL", "").rstrip("/").split("/")[-1] or str(len(chapters) + 1)
             if cid in exclusions:
                 continue
             if any(c["id"] == cid for c in chapters):
-                cid += f"-copy-{len(chapters)+1}"
+                cid += f"-copy-{len(chapters) + 1}"
             root = key(board)
             roots.append(root)
             mainline = [root]
@@ -46,8 +50,15 @@ def parse(path, exclusions=()):
             for move in game.mainline_moves():
                 mb.push(move)
                 mainline.append(key(mb))
-            chapters.append({"id": cid, "name": game.headers.get("ChapterName", game.headers.get("Event", cid)),
-                             "url": game.headers.get("ChapterURL"), "root": root, "mainline": mainline})
+            chapters.append(
+                {
+                    "id": cid,
+                    "name": game.headers.get("ChapterName", game.headers.get("Event", cid)),
+                    "url": game.headers.get("ChapterURL"),
+                    "root": root,
+                    "mainline": mainline,
+                }
+            )
             stack = [(game, board, [])]
             while stack:
                 pgn, b, moves = stack.pop()
@@ -77,8 +88,11 @@ def parse(path, exclusions=()):
 
 
 def conflicts(graph, color):
-    return [{"position": k, "path": n.path, "choices": {m: sorted(n.provenance[m]) for m in n.edges}}
-            for k, n in graph.nodes.items() if turn(k) == color and len(n.edges) > 1]
+    return [
+        {"position": k, "path": n.path, "choices": {m: sorted(n.provenance[m]) for m in n.edges}}
+        for k, n in graph.nodes.items()
+        if turn(k) == color and len(n.edges) > 1
+    ]
 
 
 def resolve(graph, color, policy):
@@ -95,7 +109,11 @@ def resolve(graph, color, policy):
             if chosen is None:
                 chosen = next(iter(n.edges))
             weights = {chosen: 1.0} if isinstance(chosen, str) else chosen
-            if not weights or any(m not in n.edges or not 0 <= w <= 1 for m, w in weights.items()) or abs(sum(weights.values())-1) > 1e-10:
+            if (
+                not weights
+                or any(m not in n.edges or not 0 <= w <= 1 for m, w in weights.items())
+                or abs(sum(weights.values()) - 1) > 1e-10
+            ):
                 raise ValueError(f"Invalid policy at {k}: {weights}")
             transitions[k] = {m: (n.edges[m], w) for m, w in weights.items() if w > 0}
         else:
@@ -126,9 +144,12 @@ def chapter_policy_overrides(graph, color, global_transitions, chapter_id):
 
 def topology(transitions, roots):
     order, visited, active = [], set(), []
+
     def visit(k):
         if k in active:
-            raise ValueError(f"Reachable cycle; change policy or exclude the repeated line: {active[active.index(k):] + [k]}")
+            raise ValueError(
+                f"Reachable cycle; change policy or exclude the repeated line: {active[active.index(k) :] + [k]}"
+            )
         if k in visited:
             return
         active.append(k)
@@ -137,31 +158,43 @@ def topology(transitions, roots):
         active.pop()
         visited.add(k)
         order.append(k)
+
     for root in roots:
         visit(root)
     return order
+
+
+def chapter_frontier(graph, cid, root):
+    """The first positions along the chapter's own moves that belong to no other chapter."""
+    frontier, visited, pending = set(), set(), [root]
+    while pending:
+        k = pending.pop()
+        if k in visited:
+            continue
+        visited.add(k)
+        n = graph.nodes[k]
+        if n.chapters == {cid}:
+            frontier.add(k)
+            continue
+        pending.extend(target for move, target in n.edges.items() if cid in n.provenance[move])
+    return frontier
 
 
 def infer_entries(graph):
     """Find all first chapter-unique positions across every variation."""
     entries = {}
     for c in graph.chapters:
-        cid, frontier, visited = c["id"], set(), set()
-        def walk(k):
-            if k in visited:
-                return
-            visited.add(k)
-            n = graph.nodes[k]
-            if n.chapters == {cid}:
-                frontier.add(k)
-                return
-            for move, target in n.edges.items():
-                if cid in n.provenance[move]:
-                    walk(target)
-        walk(c["root"])
-        entries[cid] = {"positions": sorted(frontier), "candidates": sorted(frontier),
-                        "status": "inferred_unique_frontier" if len(frontier) == 1 else
-                        "inferred_multiple_frontiers" if frontier else "automatic_fallback_needed"}
+        cid = c["id"]
+        frontier = chapter_frontier(graph, cid, c["root"])
+        entries[cid] = {
+            "positions": sorted(frontier),
+            "candidates": sorted(frontier),
+            "status": "inferred_unique_frontier"
+            if len(frontier) == 1
+            else "inferred_multiple_frontiers"
+            if frontier
+            else "automatic_fallback_needed",
+        }
     return entries
 
 
@@ -183,8 +216,7 @@ def chapter_region(graph, chapter_id, anchors):
             continue
         region.add(k)
         node = graph.nodes[k]
-        pending.extend(target for move, target in node.edges.items()
-                       if chapter_id in node.provenance[move])
+        pending.extend(target for move, target in node.edges.items() if chapter_id in node.provenance[move])
     return region
 
 

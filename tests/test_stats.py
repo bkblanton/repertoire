@@ -17,7 +17,7 @@ def test_midpoint_ranks_and_weighted_correlation():
 
 
 def test_cell_formats_estimates():
-    result = {'pearson': .5, 'slope_pp_per_move': 1.25, 'spearman': None}
+    result = {'pearson': 0.5, 'slope_pp_per_move': 1.25, 'spearman': None}
     assert cell(result, 'pearson') == '0.500'
     assert cell(result, 'slope_pp_per_move') == '1.250%'
     assert cell(result, 'spearman') == 'undefined'

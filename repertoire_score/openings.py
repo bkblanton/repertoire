@@ -1,6 +1,7 @@
 """Cached opening names, transposition inheritance, and first-entry cohorts."""
-from collections import defaultdict, deque
+
 import math
+from collections import defaultdict, deque
 
 import numpy as np
 
@@ -10,8 +11,18 @@ from .explorer import counts
 from .gaps import distribution as gap_distribution
 from .model import score
 from .preparation import Evaluators, chess_facts
-from .ratings import (comparison_fields, comparison_mixture, first_entries as rating_entries,
-                      mixture as rating_mixture, reply_rating, response_rating)
+from .ratings import (
+    comparison_fields,
+    comparison_mixture,
+    reply_rating,
+    response_rating,
+)
+from .ratings import (
+    first_entries as rating_entries,
+)
+from .ratings import (
+    mixture as rating_mixture,
+)
 from .sharpness import recursive_wdl, stopping_wdl, summarize
 from .status import Status
 
@@ -19,8 +30,12 @@ from .status import Status
 def opening_identity(value):
     if not value:
         return None
-    if (not isinstance(value, dict) or not isinstance(value.get('name'), str)
-            or not value['name'].strip() or not isinstance(value.get('eco'), str)):
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get('name'), str)
+        or not value['name'].strip()
+        or not isinstance(value.get('eco'), str)
+    ):
         raise ValueError('Invalid cached opening name')
     return value['name']
 
@@ -34,7 +49,7 @@ def classify(graph, evidence, facts, color):
     """
     exact, catalog = {}, {}
     edges = {k: set(n.edges.values()) for k, n in graph.nodes.items()}
-    for k, node in graph.nodes.items():
+    for k in graph.nodes:
         value = evidence.get(k, {}).get('opening')
         identity = opening_identity(value)
         if identity:
@@ -61,14 +76,17 @@ def classify(graph, evidence, facts, color):
                 pending.append(target)
     # Only cached names with a literal family/variation prefix are parents.
     # An unrelated earlier name is a transition, not a hierarchy relationship.
-    for identity, opening in catalog.items():
+    for opening in catalog.values():
         opening['eco_codes'] = sorted(opening['eco_codes'])
         opening['eco'] = ', '.join(opening['eco_codes'])
-        opening['parent_ids'] = sorted(other for other, parent in catalog.items()
-            if opening['name'].startswith(parent['name'] + ': ')
-            or opening['name'].startswith(parent['name'] + ', '))
-    memberships = {k: ids | {p for identity in ids for p in catalog[identity]['parent_ids']}
-                   for k, ids in labels.items()}
+        opening['parent_ids'] = sorted(
+            other
+            for other, parent in catalog.items()
+            if opening['name'].startswith(parent['name'] + ': ') or opening['name'].startswith(parent['name'] + ', ')
+        )
+    memberships = {
+        k: ids | {p for identity in ids for p in catalog[identity]['parent_ids']} for k, ids in labels.items()
+    }
     return catalog, exact, labels, memberships
 
 
@@ -94,8 +112,8 @@ def name_flow(evaluator, roots, exact, *, initial=None, stop_at=()):
     stop_at = set(stop_at)
     for k, weight in roots.items():
         if weight:
-            incoming = {exact[k]: 1.} if k in exact else (initial or {}).get(k, {None: 1.})
-            if not math.isclose(sum(incoming.values()), 1., abs_tol=1e-10):
+            incoming = {exact[k]: 1.0} if k in exact else (initial or {}).get(k, {None: 1.0})
+            if not math.isclose(sum(incoming.values()), 1.0, abs_tol=1e-10):
                 raise AssertionError('Initial opening name weights are not normalized')
             for identity, share in incoming.items():
                 flows[k][identity] += weight * share
@@ -128,12 +146,14 @@ def most_common_source(weights):
 
 
 def chapter_sources(evaluators, saved, exact, overall_flows):
-    scopes = [dict(id='overall', positions={k: most_common_source(v) for k, v in overall_flows.items()}, entry_sources={})]
+    scopes = [
+        dict(id='overall', positions={k: most_common_source(v) for k, v in overall_flows.items()}, entry_sources={})
+    ]
     manifest = saved['manifest']
     for chapter in saved['chapters']:
         starts = {k: w for k, w in chapter['score'].get('first_entry_weights', {}).items() if w}
         if not starts and len(chapter['entries']) == 1:
-            starts = {chapter['entries'][0]['position']: 1.}
+            starts = {chapter['entries'][0]['position']: 1.0}
         scope = dict(id=chapter['id'], positions={}, entry_sources={})
         if not starts:
             scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
@@ -150,8 +170,9 @@ def chapter_sources(evaluators, saved, exact, overall_flows):
             initial[k] = {identity: mass / total for identity, mass in incoming.items()}
             scope['entry_sources'][k] = most_common_source(incoming)
         value = evaluator.evaluate(starts)
-        if (not math.isclose(value[0], chapter['score']['resolved_contribution'], abs_tol=1e-10)
-                or not math.isclose(value[1], chapter['score']['unresolved_mass'], abs_tol=1e-10)):
+        if not math.isclose(value[0], chapter['score']['resolved_contribution'], abs_tol=1e-10) or not math.isclose(
+            value[1], chapter['score']['unresolved_mass'], abs_tol=1e-10
+        ):
             raise AssertionError('Opening sources did not reproduce the chapter comparison score')
         flow = name_flow(evaluator, starts, exact, initial=initial)
         scope['positions'] = {k: most_common_source(v) for k, v in flow.items()}
@@ -187,20 +208,30 @@ def first_entries(evaluator, roots, region):
     """Absorb on first membership, including cached unprepared reply boards."""
     incoming = evaluator.reaches(roots, stop_at=region)
     best = evaluator.routes(roots, stop_at=region, replies=True)
-    entries, missed = [], 0.
+    entries, missed = [], 0.0
     for k in reversed(evaluator.values):
         mass = incoming[k]
         if not mass:
             continue
         if k in region:
-            entries.append(dict(position=k, mass=mass, parent=None, move=None, sample=None,
-                                fixed=None, witness=best[k]))
+            entries.append(
+                dict(position=k, mass=mass, parent=None, move=None, sample=None, fixed=None, witness=best[k])
+            )
             continue
         for move, p, kind, sample, fixed in evaluator.stops[k]:
             target = evaluator.facts[k]['after'][move][0] if kind == 'deviation' else None
             if target in region:
-                entries.append(dict(position=target, mass=mass * p, parent=k, move=move,
-                                    sample=sample, fixed=fixed, witness=best[target]))
+                entries.append(
+                    dict(
+                        position=target,
+                        mass=mass * p,
+                        parent=k,
+                        move=move,
+                        sample=sample,
+                        fixed=fixed,
+                        witness=best[target],
+                    )
+                )
             else:
                 missed += mass * p
     total = sum(r['mass'] for r in entries)
@@ -230,16 +261,21 @@ def first_entries(evaluator, roots, region):
 def example(evaluator, witness):
     probability, root, moves = witness
     text, position, _ = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
-    return dict(root_fen=evaluator.graph.nodes[root].fen, path_uci=list(moves),
-                line=text or '(PGN root)', root_probability=probability, position=position)
+    return dict(
+        root_fen=evaluator.graph.nodes[root].fen,
+        path_uci=list(moves),
+        line=text or '(PGN root)',
+        root_probability=probability,
+        position=position,
+    )
 
 
 def cohort(evaluator, entries, total, wdl):
     """Mix continuations and entry baselines with the same first-arrival weights."""
     outcomes = np.zeros(4)
-    baseline_known = baseline_unknown = depth = regular_mass = 0.
+    baseline_known = baseline_unknown = depth = regular_mass = 0.0
     regular_starts, direct_gaps = defaultdict(float), defaultdict(float)
-    direct_terminal = 0.
+    direct_terminal = 0.0
     rows = {}
     for entry in entries:
         k, weight = entry['position'], entry['mass'] / total
@@ -269,46 +305,70 @@ def cohort(evaluator, entries, total, wdl):
         route = example(evaluator, entry['witness'])
         if route['position'] != k:
             raise AssertionError('Opening entry witness reaches the wrong board')
-        row = rows.setdefault(k, dict(position=k, conditional_weight=0., entry_probability=0.,
-            example=route, games=0, games_source='parent move rows' if is_reply else 'position',
-            baseline_contribution=0., baseline_unresolved_weight=0.,
-            repertoire_contribution=0., unresolved_weight=0., outcomes_vector=np.zeros(4), origins=[], chapter_ids=set(), rating_parts=[]))
+        row = rows.setdefault(
+            k,
+            dict(
+                position=k,
+                conditional_weight=0.0,
+                entry_probability=0.0,
+                example=route,
+                games=0,
+                games_source='parent move rows' if is_reply else 'position',
+                baseline_contribution=0.0,
+                baseline_unresolved_weight=0.0,
+                repertoire_contribution=0.0,
+                unresolved_weight=0.0,
+                outcomes_vector=np.zeros(4),
+                origins=[],
+                chapter_ids=set(),
+                rating_parts=[],
+            ),
+        )
         row['chapter_ids'].update(evaluator.graph.nodes[entry['parent'] if is_reply else k].chapters)
         row['conditional_weight'] += weight
         row['entry_probability'] += entry['mass']
         row['games'] += sum(sample) if fixed is None else 0
-        row['baseline_contribution'] += weight * (base or 0.)
+        row['baseline_contribution'] += weight * (base or 0.0)
         row['baseline_unresolved_weight'] += weight * (base is None)
         row['repertoire_contribution'] += weight * (continuation[0] + continuation[1] / 2)
         row['unresolved_weight'] += weight * continuation[3]
         row['outcomes_vector'] += weight * continuation
-        row['origins'].append(dict(parent=entry['parent'], move=entry['move'], conditional_weight=weight,
-                                  counts_white_draw_black=sample, fixed_outcome=fixed))
+        row['origins'].append(
+            dict(
+                parent=entry['parent'],
+                move=entry['move'],
+                conditional_weight=weight,
+                counts_white_draw_black=sample,
+                fixed_outcome=fixed,
+            )
+        )
         row['rating_parts'].append((weight, entry['opponent_rating']))
     summary = summarize(outcomes)
     repertoire = summary['resolved_score'] if summary['unresolved_probability'] == 0 else None
     baseline = baseline_known if baseline_unknown == 0 else None
     # Mix canonical gap distributions before taking their Euclidean norm.
     gaps = dict(direct_gaps)
-    terminal, unknown = direct_terminal, 0.
+    terminal, unknown = direct_terminal, 0.0
     if regular_mass:
         normalized = {k: w / regular_mass for k, w in regular_starts.items()}
         result = gap_distribution(evaluator, normalized)
         for gap in result['gaps']:
             k = gap['position']
-            gaps[k] = gaps.get(k, 0.) + regular_mass * gap['reach']
+            gaps[k] = gaps.get(k, 0.0) + regular_mass * gap['reach']
         terminal += regular_mass * result['terminal_mass']
         unknown += regular_mass * result['unresolved_mass']
     gap_mass = sum(gaps.values())
-    if not math.isclose(gap_mass + terminal + unknown, 1., abs_tol=1e-9):
+    if not math.isclose(gap_mass + terminal + unknown, 1.0, abs_tol=1e-9):
         raise AssertionError('Opening gap probability is not conserved')
     collision = sum(p * p for p in gaps.values())
-    largest = max(gaps.values(), default=0.)
-    bounds = [math.sqrt(collision), math.sqrt(min(1., collision + 2 * largest * unknown + unknown ** 2))]
+    largest = max(gaps.values(), default=0.0)
+    bounds = [math.sqrt(collision), math.sqrt(min(1.0, collision + 2 * largest * unknown + unknown**2))]
     for row in rows.values():
         weight = row['conditional_weight']
         row['chapter_ids'] = [c['id'] for c in evaluator.graph.chapters if c['id'] in row['chapter_ids']]
-        row['baseline_score'] = row['baseline_contribution'] / weight if row['baseline_unresolved_weight'] == 0 else None
+        row['baseline_score'] = (
+            row['baseline_contribution'] / weight if row['baseline_unresolved_weight'] == 0 else None
+        )
         row['repertoire_score'] = row['repertoire_contribution'] / weight if row['unresolved_weight'] == 0 else None
         row['outcomes'] = summarize(row.pop('outcomes_vector') / weight)
         row['example']['conditional_probability'] = row['example']['root_probability'] / total
@@ -317,23 +377,53 @@ def cohort(evaluator, entries, total, wdl):
         if all(r['basis'] == 'current opponent response rows' for _, r in parts):
             context['basis'] = 'current opponent response rows'
         else:
-            context.update(comparison_mixture([(p, {field: r.get(field, 0. if 'coverage' in field else None)
-                for field in ('parent_mean', 'parent_known_coverage', 'difference_vs_parent', 'comparison_coverage')})
-                for p, r in parts]))
+            context.update(
+                comparison_mixture(
+                    [
+                        (
+                            p,
+                            {
+                                field: r.get(field, 0.0 if 'coverage' in field else None)
+                                for field in (
+                                    'parent_mean',
+                                    'parent_known_coverage',
+                                    'difference_vs_parent',
+                                    'comparison_coverage',
+                                )
+                            },
+                        )
+                        for p, r in parts
+                    ]
+                )
+            )
         if any(r.get('reason') == 'no_preceding_opponent_move' for _, r in parts):
             context['reason'] = 'no_preceding_opponent_move'
         row['opponent_rating'] = context
-    return dict(repertoire_score=repertoire, outcomes=summary,
-        entry_baseline=dict(raw_score=baseline, unresolved_mass=baseline_unknown,
-                            conditional_bounds=[baseline_known, baseline_known + baseline_unknown]),
+    return dict(
+        repertoire_score=repertoire,
+        outcomes=summary,
+        entry_baseline=dict(
+            raw_score=baseline,
+            unresolved_mass=baseline_unknown,
+            conditional_bounds=[baseline_known, baseline_known + baseline_unknown],
+        ),
         difference_pp=100 * (repertoire - baseline) if repertoire is not None and baseline is not None else None,
         expected_prepared_moves=float(depth),
-        gap_coverage=dict(equivalent_gap_reach=bounds[0] if unknown == 0 else None,
-                          equivalent_gap_reach_bounds=bounds, unresolved_mass=unknown,
-                          distinct_gaps=len(gaps), gap_mass=gap_mass, terminal_mass=terminal),
+        gap_coverage=dict(
+            equivalent_gap_reach=bounds[0] if unknown == 0 else None,
+            equivalent_gap_reach_bounds=bounds,
+            unresolved_mass=unknown,
+            distinct_gaps=len(gaps),
+            gap_mass=gap_mass,
+            terminal_mass=terminal,
+        ),
         entries=sorted(rows.values(), key=lambda r: (-r['conditional_weight'], r['position'])),
-        validation=dict(first_entry_weights_sum=float(sum(r['conditional_weight'] for r in rows.values())),
-                        gap_probability_conserved=True, canonical_gaps_merged_before_squaring=True))
+        validation=dict(
+            first_entry_weights_sum=float(sum(r['conditional_weight'] for r in rows.values())),
+            gap_probability_conserved=True,
+            canonical_gaps_merged_before_squaring=True,
+        ),
+    )
 
 
 def analyze(path, cache=DEFAULT_CACHE):
@@ -341,13 +431,16 @@ def analyze(path, cache=DEFAULT_CACHE):
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     evidence = analysis.read_evidence(cache)
     facts = chess_facts(graph, color, evidence)
-    evaluators = Evaluators(graph, color, evidence, facts, manifest['configuration'].get('policy', {}),
-                            manifest['sparse_threshold'])
+    evaluators = Evaluators(
+        graph, color, evidence, facts, manifest['configuration'].get('policy', {}), manifest['sparse_threshold']
+    )
     evaluator = evaluators()
     roots = manifest['root_weights']
     value = evaluator.evaluate(roots)
-    for actual, expected in [(value[0], saved['overall']['resolved_contribution']),
-                             (value[1], saved['overall']['unresolved_mass'])]:
+    for actual, expected in [
+        (value[0], saved['overall']['resolved_contribution']),
+        (value[1], saved['overall']['unresolved_mass']),
+    ]:
         if not math.isclose(actual, expected, abs_tol=1e-10):
             raise AssertionError('Opening analysis did not reproduce the saved score')
     wdl, reach = recursive_wdl(evaluator), evaluator.reaches(roots)
@@ -363,13 +456,20 @@ def analyze(path, cache=DEFAULT_CACHE):
         for identity, weight in active.items():
             for category in [identity, *catalog[identity]['parent_ids']]:
                 membership[category] += weight
-        positions[k] = dict(exact_name=exact.get(k), cached_opening=evidence.get(k, {}).get('opening'),
+        positions[k] = dict(
+            exact_name=exact.get(k),
+            cached_opening=evidence.get(k, {}).get('opening'),
             potential_ids=sorted(potential.get(k, ())),
-            current_ids=[exact[k]] if k in exact else sorted(active), membership_ids=sorted(membership),
-            reach=mass, current_name_reach=active,
+            current_ids=[exact[k]] if k in exact else sorted(active),
+            membership_ids=sorted(membership),
+            reach=mass,
+            current_name_reach=active,
             current_name_weights={identity: weight / mass for identity, weight in active.items()} if mass else {},
-            unclassified_reach=incoming.get(None, 0.), membership_reach=dict(membership),
-            opening_reach_contributions={}, opening_reach_fractions={})
+            unclassified_reach=incoming.get(None, 0.0),
+            membership_reach=dict(membership),
+            opening_reach_contributions={},
+            opening_reach_fractions={},
+        )
     rows, unreachable = [], []
     for identity, opening in catalog.items():
         entries, total, missed = first_entries(evaluator, roots, regions[identity])
@@ -381,35 +481,68 @@ def analyze(path, cache=DEFAULT_CACHE):
             if mass > board['reach'] + 1e-10 or mass > total + 1e-10:
                 raise AssertionError('Opening origin exceeds actual board or opening reach')
             board['opening_reach_contributions'][identity] = mass
-            board['opening_reach_fractions'][identity] = min(1., mass / board['reach'])
+            board['opening_reach_fractions'][identity] = min(1.0, mass / board['reach'])
         chapter_ids = set()
         for k in regions[identity]:
-            if reach.get(k, 0.) > 0:
+            if reach.get(k, 0.0) > 0:
                 chapter_ids.update(graph.nodes[k].chapters)
         for entry in entries:
             if entry['parent']:
                 chapter_ids.update(graph.nodes[entry['parent']].chapters)
-        rows.append(dict(**opening, reach=total, not_reached_probability=missed,
-                         chapter_ids=[c['id'] for c in graph.chapters if c['id'] in chapter_ids],
-                         **cohort(evaluator, entries, total, wdl)))
+        rows.append(
+            dict(
+                **opening,
+                reach=total,
+                not_reached_probability=missed,
+                chapter_ids=[c['id'] for c in graph.chapters if c['id'] in chapter_ids],
+                **cohort(evaluator, entries, total, wdl),
+            )
+        )
     _, classified_reach, _ = first_entries(evaluator, roots, set(exact))
     sources = chapter_sources(evaluators, saved, exact, flows)
     analysis.require_source('opening analysis')
-    return dict(color=saved['color'], openings=sorted(rows, key=lambda r: (-r['reach'], r['name'], r['eco'])),
+    return dict(
+        color=saved['color'],
+        openings=sorted(rows, key=lambda r: (-r['reach'], r['name'], r['eco'])),
         catalog=sorted(catalog.values(), key=lambda r: (r['name'], r['eco'])),
-        positions=positions, source_scopes=sources,
-        coverage=dict(ever_classified_probability=classified_reach, unreachable_opening_ids=sorted(unreachable),
-                      named_repertoire_positions=len(exact), inherited_positions=sum(bool(p['current_ids']) and not p['exact_name'] for p in positions.values()),
-                      multi_name_positions=sum(len(p['current_ids']) > 1 for p in positions.values())),
-        manifest=analysis.companion_manifest(source_pgn_unchanged=True, policy_basis='overall selected repertoire policy',
-            naming_rule='Exact cached names replace the current name on every arriving route. Unnamed boards preserve each incoming name and its probability share under the selected policy. Structural potential labels never add probability. Unprepared replies inherit parent name flows without child queries.',
-            parent_rule='Only existing cached names that match at colon or comma boundaries are broader parents. Earlier unrelated labels are not parents.',
-            reach_rule='First arrival at a cached exact name or a known more specific named descendant. Inheritance preserves existing route probability and never introduces another opening. Each modeled game counts once per opening; rows overlap. Per-board origin contributions retain the mass that previously entered each opening, even after a later name reset.',
-            score_rule='Recursive repertoire WDL at regular entries; parent move-row WDL at unprepared entries. Baselines, depth and gap distributions use the same normalized first-entry weights.'),
-        validation=dict(saved_score_reproduced=True, no_unprepared_child_queries=True,
-                        first_entry_probability_conserved=True, name_flow_conserved=True,
-                        origin_contributions_bounded_by_board_reach=True, chapter_source_scores_reproduced=True,
-                        source_pgn_unchanged=True))
+        positions=positions,
+        source_scopes=sources,
+        coverage=dict(
+            ever_classified_probability=classified_reach,
+            unreachable_opening_ids=sorted(unreachable),
+            named_repertoire_positions=len(exact),
+            inherited_positions=sum(bool(p['current_ids']) and not p['exact_name'] for p in positions.values()),
+            multi_name_positions=sum(len(p['current_ids']) > 1 for p in positions.values()),
+        ),
+        manifest=analysis.companion_manifest(
+            source_pgn_unchanged=True,
+            policy_basis='overall selected repertoire policy',
+            naming_rule='Exact cached names replace the current name on every arriving route. '
+            'Unnamed boards preserve each incoming name and its probability share '
+            'under the selected policy. Structural potential labels never add '
+            'probability. Unprepared replies inherit parent name flows without '
+            'child queries.',
+            parent_rule='Only existing cached names that match at colon or comma boundaries '
+            'are broader parents. Earlier unrelated labels are not parents.',
+            reach_rule='First arrival at a cached exact name or a known more specific named '
+            'descendant. Inheritance preserves existing route probability and '
+            'never introduces another opening. Each modeled game counts once per '
+            'opening; rows overlap. Per-board origin contributions retain the mass '
+            'that previously entered each opening, even after a later name reset.',
+            score_rule='Recursive repertoire WDL at regular entries; parent move-row WDL at '
+            'unprepared entries. Baselines, depth and gap distributions use the '
+            'same normalized first-entry weights.',
+        ),
+        validation=dict(
+            saved_score_reproduced=True,
+            no_unprepared_child_queries=True,
+            first_entry_probability_conserved=True,
+            name_flow_conserved=True,
+            origin_contributions_bounded_by_board_reach=True,
+            chapter_source_scores_reproduced=True,
+            source_pgn_unchanged=True,
+        ),
+    )
 
 
 def main():

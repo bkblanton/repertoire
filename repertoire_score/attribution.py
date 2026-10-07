@@ -1,33 +1,37 @@
 """Chapter provenance for displayed moves and positions."""
+
 import os
-from pathlib import Path
 import tempfile
 import time
-
+from pathlib import Path
 
 from .board_cache import children
 
-
-ATTRIBUTION_NOTE = ('Chapter attribution follows the exact position or final recorded move, so a representative route can combine chapters. '
-                    'Shared sources list every contributing chapter. Unprepared replies name their parent context; '
-                    'transpositions name the chapters containing the reached position.')
+ATTRIBUTION_NOTE = (
+    'Chapter attribution follows the exact position or final recorded '
+    'move, so a representative route can combine chapters. '
+    'Shared sources list every contributing chapter. Unprepared replies name their parent context; '
+    'transpositions name the chapters containing the reached position.'
+)
 
 
 def write_text(path, text):
     """Replace complete outputs atomically, tolerating brief Windows sync locks."""
     path = Path(path)
-    with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=path.parent,
-                                     prefix='.chapter-attribution-',suffix='.tmp',delete=False) as stream:
+    with tempfile.NamedTemporaryFile(
+        mode='w', encoding='utf-8', dir=path.parent, prefix='.chapter-attribution-', suffix='.tmp', delete=False
+    ) as stream:
         temporary = Path(stream.name)
         stream.write(text)
     try:
         for attempt in range(8):
             try:
-                os.replace(temporary,path)
+                os.replace(temporary, path)
                 break
             except OSError:
-                if attempt == 7: raise
-                time.sleep(min(.1*2**attempt,1.0))
+                if attempt == 7:
+                    raise
+                time.sleep(min(0.1 * 2**attempt, 1.0))
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -35,17 +39,18 @@ def write_text(path, text):
 class Attribution:
     def __init__(self, graph):
         self.graph = graph
-        self.catalog = [{k:c.get(k) for k in ('id','name','url')} for c in graph.chapters]
-        self.order = {c['id']:i for i,c in enumerate(graph.chapters)}
+        self.catalog = [{k: c.get(k) for k in ('id', 'name', 'url')} for c in graph.chapters]
+        self.order = {c['id']: i for i, c in enumerate(graph.chapters)}
         self.cache = {}
 
     def ordered(self, ids):
-        return sorted(set(ids), key=lambda cid:(self.order.get(cid,len(self.order)),cid))
+        return sorted(set(ids), key=lambda cid: (self.order.get(cid, len(self.order)), cid))
 
     def position_or_move(self, position, move=None):
         position = ' '.join(position.split()[:4])
-        identity = position,move
-        if identity in self.cache: return self.cache[identity]
+        identity = position, move
+        if identity in self.cache:
+            return self.cache[identity]
         node = self.graph.nodes.get(position)
         context = self.ordered(node.chapters) if node else []
         sources, transpositions = [], []
@@ -70,74 +75,90 @@ def enrich(report, graph):
     report['chapter_catalog'] = attribution.catalog
     if 'events' in report:
         for row in report['events']:
-            row['chapter_attribution'] = attribution.position_or_move(row['parent_position'],row.get('move'))
+            row['chapter_attribution'] = attribution.position_or_move(row['parent_position'], row.get('move'))
         for chapter in report['chapters']:
             for entry in chapter['entries']:
                 entry['chapter_attribution'] = attribution.position_or_move(entry['position'])
     elif 'scopes' in report:
         for scope in report['scopes']:
             for row in scope.get('stops', []):
-                row['chapter_attribution'] = attribution.position_or_move(row['parent_position'],row.get('move'))
+                row['chapter_attribution'] = attribution.position_or_move(row['parent_position'], row.get('move'))
             for row in scope.get('entry_routes', {}).get('positions', []):
                 row['chapter_attribution'] = attribution.position_or_move(row['position'])
-            if 'reuse' not in scope: continue
+            if 'reuse' not in scope:
+                continue
             for row in scope.get('positions', []):
                 origins = row.get('unprepared_origins', [])
                 if origins:
                     contexts = [attribution.position_or_move(o['parent_position'], o['move']) for o in origins]
-                    row['chapter_attribution'] = dict(source_ids=[], transposition_ids=[],
+                    row['chapter_attribution'] = dict(
+                        source_ids=[],
+                        transposition_ids=[],
                         context_ids=attribution.ordered(cid for context in contexts for cid in context['context_ids']),
-                        basis='unprepared move')
+                        basis='unprepared move',
+                    )
                 else:
                     row['chapter_attribution'] = attribution.position_or_move(row['position'])
             for row in scope['reuse']['decisions']:
-                row['chapter_attribution'] = attribution.position_or_move(row['position'],row['move'])
+                row['chapter_attribution'] = attribution.position_or_move(row['position'], row['move'])
             for row in scope['predictability']['positions']:
                 row['chapter_attribution'] = attribution.position_or_move(row['position'])
                 for reply in row['replies']:
-                    reply['chapter_attribution'] = attribution.position_or_move(row['position'],reply['move'])
+                    reply['chapter_attribution'] = attribution.position_or_move(row['position'], reply['move'])
             examples = {}
             for row in scope['stopping_outcomes']:
-                row['chapter_attribution'] = attribution.position_or_move(row['parent_position'],row.get('move'))
-                examples[row['position'],row['line']] = row['chapter_attribution']
+                row['chapter_attribution'] = attribution.position_or_move(row['parent_position'], row.get('move'))
+                examples[row['position'], row['line']] = row['chapter_attribution']
             for profile in scope['position_profiles'].values():
                 for distribution in profile['distributions'].values():
                     for row in distribution:
-                        row['example_chapter_attribution'] = examples[row['example_position'],row['example_line']]
+                        row['example_chapter_attribution'] = examples[row['example_position'], row['example_line']]
     else:
         # Rankings reuse the row objects of all_signed_rows; visit each object once.
         seen = set()
+
         def visit(item):
-            if id(item) in seen: return
+            if id(item) in seen:
+                return
             seen.add(id(item))
-            if isinstance(item,list):
-                for child in item: visit(child)
-            elif isinstance(item,dict):
-                if item.get('kind') in ('own','opponent') and 'position' in item and 'move' in item:
-                    item['chapter_attribution'] = attribution.position_or_move(item['position'],item['move'])
+            if isinstance(item, list):
+                for child in item:
+                    visit(child)
+            elif isinstance(item, dict):
+                if item.get('kind') in ('own', 'opponent') and 'position' in item and 'move' in item:
+                    item['chapter_attribution'] = attribution.position_or_move(item['position'], item['move'])
                     if item.get('alternative'):
                         alt = item['alternative']
-                        alt['chapter_attribution'] = attribution.position_or_move(item['position'],alt['move'])
-                for field,child in list(item.items()):
-                    if field != 'chapter_attribution': visit(child)
-        visit(report.get('overall',{}))
-        visit(report.get('chapters',[]))
+                        alt['chapter_attribution'] = attribution.position_or_move(item['position'], alt['move'])
+                for field, child in list(item.items()):
+                    if field != 'chapter_attribution':
+                        visit(child)
+
+        visit(report.get('overall', {}))
+        visit(report.get('chapters', []))
     return report
 
 
 def chapter_text(row, catalog):
     attribution = row.get('chapter_attribution')
-    if attribution is None: return 'Not attributed'
-    lookup = {c['id']:c for c in catalog}
+    if attribution is None:
+        return 'Not attributed'
+    lookup = {c['id']: c for c in catalog}
+
     def names(ids):
         result = []
         for cid in ids:
-            chapter = lookup.get(cid,{'name':cid})
-            label = chapter['name'].replace('|','&#124;').replace('[','&#91;').replace(']','&#93;').replace('\n',' ')
+            chapter = lookup.get(cid, {'name': cid})
+            label = (
+                chapter['name'].replace('|', '&#124;').replace('[', '&#91;').replace(']', '&#93;').replace('\n', ' ')
+            )
             result.append(f"[{label}]({chapter['url']})" if chapter.get('url') else label)
         return '; '.join(result) or 'None'
-    if attribution['source_ids']: return names(attribution['source_ids'])
-    if attribution['transposition_ids']: return 'Transposition into: '+names(attribution['transposition_ids'])
+
+    if attribution['source_ids']:
+        return names(attribution['source_ids'])
+    if attribution['transposition_ids']:
+        return 'Transposition into: ' + names(attribution['transposition_ids'])
     if attribution['basis'] == 'unprepared move':
-        return 'Unprepared'+('; parent: '+names(attribution['context_ids']) if attribution['context_ids'] else '')
+        return 'Unprepared' + ('; parent: ' + names(attribution['context_ids']) if attribution['context_ids'] else '')
     return 'None'

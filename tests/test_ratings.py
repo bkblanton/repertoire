@@ -2,15 +2,23 @@ import json
 
 import chess
 import pytest
+from helpers import data, graph, position, run_fixture
 
-from repertoire_score.report.generate import generate
-from repertoire_score.report.bundle import load
 from repertoire_score.preparation import Evaluator, chess_facts
-from repertoire_score.ratings import (Context, analyze, first_entries, mixture, move_context,
-                                      reply_rating, response_rating, unavailable,
-                                      comparison_fields, add_reply_differences)
-from helpers import data, graph, position
-from helpers import run_fixture
+from repertoire_score.ratings import (
+    Context,
+    add_reply_differences,
+    analyze,
+    comparison_fields,
+    first_entries,
+    mixture,
+    move_context,
+    reply_rating,
+    response_rating,
+    unavailable,
+)
+from repertoire_score.report.bundle import load
+from repertoire_score.report.generate import generate
 
 
 def rated(w, d, b, moves=()):
@@ -21,11 +29,10 @@ def rated(w, d, b, moves=()):
 
 
 def test_reply_mean_count_weights_missing_ratings_and_residual_games():
-    rows = rated(100, 0, 100, [('e7e5', 50, 0, 50, 2000), ('c7c5', 20, 0, 40, 1000),
-                              ('e7e6', 10, 0, 10, None)])
+    rows = rated(100, 0, 100, [('e7e5', 50, 0, 50, 2000), ('c7c5', 20, 0, 40, 1000), ('e7e6', 10, 0, 10, None)])
     mean = response_rating(rows)
     assert mean['mean'] == 1625
-    assert mean['known_coverage'] == .8 and mean['missing_coverage'] == pytest.approx(.2)
+    assert mean['known_coverage'] == 0.8 and mean['missing_coverage'] == pytest.approx(0.2)
     assert mean['rated_observations'] == 160
     assert reply_rating(rows, 'e7e5')['mean'] == 2000
     assert reply_rating(rows, 'e7e6')['mean'] is None
@@ -39,35 +46,40 @@ def test_reply_mean_count_weights_missing_ratings_and_residual_games():
 
 def test_reply_rating_difference_uses_same_player_parent_mean_and_discloses_coverage():
     from repertoire_score.report.format import rating_difference
-    table = rated(50, 0, 50, [('e7e5', 30, 0, 30, 1000), ('c7c5', 10, 0, 10, 2000),
-                             ('e7e6', 10, 0, 10, None)])
+
+    table = rated(50, 0, 50, [('e7e5', 30, 0, 30, 1000), ('c7c5', 10, 0, 10, 2000), ('e7e6', 10, 0, 10, None)])
     parent = response_rating(table)
     lower = comparison_fields(reply_rating(table, 'e7e5'), parent)
     higher = comparison_fields(reply_rating(table, 'c7c5'), parent)
     assert parent['mean'] == 1250
     assert lower['difference_vs_parent'] == -250
     assert higher['difference_vs_parent'] == 750
-    assert lower['parent_known_coverage'] == .8
+    assert lower['parent_known_coverage'] == 0.8
     assert rating_difference(lower) == '-250 (parent 80.0% rated)'
     assert rating_difference(higher) == '+750 (parent 80.0% rated)'
-    assert .75 * lower['difference_vs_parent'] + .25 * higher['difference_vs_parent'] == 0
+    assert 0.75 * lower['difference_vs_parent'] + 0.25 * higher['difference_vs_parent'] == 0
     missing = comparison_fields(reply_rating(table, 'e7e6'), parent)
     assert missing['difference_vs_parent'] is None and missing['comparison_coverage'] == 0
     assert rating_difference(missing) == 'unavailable'
     assert comparison_fields(reply_rating(table, 'e7e5'), unavailable())['difference_vs_parent'] is None
-    assert rating_difference(response_rating(table)) == 'n/a'  # current-position response average is not a specific reply
+    assert (
+        rating_difference(response_rating(table)) == 'n/a'
+    )  # current-position response average is not a specific reply
 
 
-@pytest.mark.parametrize('color,path,own_move,opponent_move', [
-    (chess.WHITE, '1. e4 e5 2. Nf3 *', 'e2e4', 'e7e5'),
-    (chess.BLACK, '1. e4 e5 2. Nf3 *', 'e7e5', 'e2e4')])
+@pytest.mark.parametrize(
+    'color,path,own_move,opponent_move',
+    [(chess.WHITE, '1. e4 e5 2. Nf3 *', 'e2e4', 'e7e5'), (chess.BLACK, '1. e4 e5 2. Nf3 *', 'e7e5', 'e2e4')],
+)
 def test_move_maker_rule_for_both_colors_and_no_child_queries(tmp_path, color, path, own_move, opponent_move):
     g = graph(tmp_path, path)
     root, e4, e5, end = [position(p) for p in ('', 'e4', 'e4 e5', 'e4 e5 Nf3')]
-    evidence = {root: rated(50, 0, 50, [('e2e4', 50, 0, 50, 900 if color else 2100)]),
-                e4: rated(50, 0, 50, [('e7e5', 50, 0, 50, 2100 if color else 900)]),
-                e5: rated(50, 0, 50, [('g1f3', 50, 0, 50, 900 if color else 2200)]),
-                end: rated(50, 0, 50, [('b8c6', 50, 0, 50, 2300 if color else 900)])}
+    evidence = {
+        root: rated(50, 0, 50, [('e2e4', 50, 0, 50, 900 if color else 2100)]),
+        e4: rated(50, 0, 50, [('e7e5', 50, 0, 50, 2100 if color else 900)]),
+        e5: rated(50, 0, 50, [('g1f3', 50, 0, 50, 900 if color else 2200)]),
+        end: rated(50, 0, 50, [('b8c6', 50, 0, 50, 2300 if color else 900)]),
+    }
     e = Evaluator(g, color, evidence, chess_facts(g, color, evidence))
     context = Context(e, {root: 1})
     own_position = root if color else e4
@@ -89,27 +101,47 @@ def test_move_maker_rule_for_both_colors_and_no_child_queries(tmp_path, color, p
 
 
 def test_starting_board_local_context_keeps_opponent_response_average_in_the_report(tmp_path):
-    from repertoire_score.report.sections import character_section
     from repertoire_score.ratings import attach
-    from repertoire_score.report.links import Chapters
     from repertoire_score.report.format import opponent_rating
+    from repertoire_score.report.links import Chapters
+    from repertoire_score.report.sections import character_section
+
     g = graph(tmp_path, '1. e4 c5 *')
     root, e4, leaf = [position(p) for p in ('', 'e4', 'e4 c5')]
-    evidence = {root: rated(100, 0, 0, [('e2e4', 75, 0, 0, 1600), ('d2d4', 25, 0, 0, 2000)]),
-                e4: rated(100, 0, 0, [('c7c5', 100, 0, 0, 9999)]),
-                leaf: rated(100, 0, 0, [('g1f3', 100, 0, 0, 1800)])}
+    evidence = {
+        root: rated(100, 0, 0, [('e2e4', 75, 0, 0, 1600), ('d2d4', 25, 0, 0, 2000)]),
+        e4: rated(100, 0, 0, [('c7c5', 100, 0, 0, 9999)]),
+        leaf: rated(100, 0, 0, [('g1f3', 100, 0, 0, 1800)]),
+    }
     black = Context(Evaluator(g, chess.BLACK, evidence, chess_facts(g, chess.BLACK, evidence)), {root: 1}).inventory()
     assert black['positions'][root]['local']['mean'] == 1700
     assert 'continuation' not in black['positions'][root]
     assert 'score_evidence' not in black
-    row = dict(position=root, line='(PGN root)', reach=1., effective_replies=2.,
-               recorded_reply_observations=100, sparse=False, replies=[])
-    scope = dict(id='overall', reuse=dict(reachable_distinct_decisions=0, curve=[], decisions=[]),
-                 predictability=dict(effective_replies=2., recorded_reply_coverage=1.,
-                                     sparse_recorded_opportunity_fraction=0., positions=[row]),
-                 position_profiles={'all': dict(effective_pawn_structures=1., distributions={}, features={})})
-    bundle = dict(report=dict(color='black', chapters=[], events=[]), character=dict(scopes=[scope]),
-                  ratings=dict(scopes=[dict(id='overall', **black)]))
+    row = dict(
+        position=root,
+        line='(PGN root)',
+        reach=1.0,
+        effective_replies=2.0,
+        recorded_reply_observations=100,
+        sparse=False,
+        replies=[],
+    )
+    scope = dict(
+        id='overall',
+        reuse=dict(reachable_distinct_decisions=0, curve=[], decisions=[]),
+        predictability=dict(
+            effective_replies=2.0,
+            recorded_reply_coverage=1.0,
+            sparse_recorded_opportunity_fraction=0.0,
+            positions=[row],
+        ),
+        position_profiles={'all': dict(effective_pawn_structures=1.0, distributions={}, features={})},
+    )
+    bundle = dict(
+        report=dict(color='black', chapters=[], events=[]),
+        character=dict(scopes=[scope]),
+        ratings=dict(scopes=[dict(id='overall', **black)]),
+    )
     attach(bundle)
     assert row['opponent_rating']['mean'] == 1700
     rendered = '\n'.join(character_section(scope, Chapters(bundle['report']), 1))
@@ -129,14 +161,16 @@ def transposed_context(tmp_path, duplicate=False):
         for move in node.edges:
             n = 10000 if move == 'd7d5' else 100
             value = 1000 if move == 'g8f6' else 2000
-            if board.turn == chess.WHITE: value = 9999
+            if board.turn == chess.WHITE:
+                value = 9999
             # The final opponent move differs across transposed arrivals.
-            if k == position('Nf3 d5 g3'): value = 1000
+            if k == position('Nf3 d5 g3'):
+                value = 1000
             rows.append((move, n // 2, 0, n // 2, value))
         total = sum(r[1] + r[3] for r in rows) or 100
         evidence[k] = rated(total // 2, 0, total // 2, rows)
     root = g.roots[0]
-    policy = {root: {'g1f3': .75, 'g2g3': .25}}
+    policy = {root: {'g1f3': 0.75, 'g2g3': 0.25}}
     e = Evaluator(g, chess.WHITE, evidence, chess_facts(g, chess.WHITE, evidence), policy)
     return e, root
 
@@ -188,48 +222,57 @@ def test_transposed_reply_difference_partial_arrival_coverage(tmp_path):
     add_reply_differences(dict(color='white', scopes=[scope], manifest={}, validation={}), e.evidence)
     row = scope['positions'][position('Nf3 d5 g3 Nf6')]['local']
     assert row['difference_vs_parent'] == -1000
-    assert row['comparison_coverage'] == .75 and row['known_coverage'] == .75
+    assert row['comparison_coverage'] == 0.75 and row['known_coverage'] == 0.75
 
 
 def test_multiple_first_entries_separate_initial_and_later_arrivals(tmp_path):
     e, root = transposed_context(tmp_path)
     early, final = position('Nf3 d5'), position('Nf3 d5 g3 Nf6')
     weights, initial = first_entries(e, {root: 1}, {early, final})
-    assert weights == {early: .75, final: .25}
+    assert weights == {early: 0.75, final: 0.25}
     assert initial[final]['mean'] == 2000  # earlier 1000 route has already entered
     ctx = Context(e, weights, initial)
     assert ctx.local[final]['mean'] == 1250  # combine later arrivals for local position
     assert ctx.score_evidence()['mean'] == 1250
-    direct = mixture([(ctx.reach[k] * p, ctx.stop(k, move, kind))
-                      for k in ctx.reach for move, p, kind, _, _ in e.stops[k]], 'enumeration')
+    direct = mixture(
+        [(ctx.reach[k] * p, ctx.stop(k, move, kind)) for k in ctx.reach for move, p, kind, _, _ in e.stops[k]],
+        'enumeration',
+    )
     assert direct['weighted_rating_sum'] == ctx.score_evidence()['weighted_rating_sum']
 
 
 def test_stopping_mixture_does_not_weight_every_visited_node(tmp_path):
     g = graph(tmp_path, '1. e4 e5 2. Nf3 Nc6 *')
     root, e4, e5, nf3, leaf = [position(p) for p in ('', 'e4', 'e4 e5', 'e4 e5 Nf3', 'e4 e5 Nf3 Nc6')]
-    evidence = {root: rated(50, 0, 50, [('e2e4', 50, 0, 50, 9999)]),
-                e4: rated(50, 0, 50, [('e7e5', 25, 0, 25, 1500), ('c7c5', 15, 0, 15, 2000)]),
-                e5: rated(50, 0, 50, [('g1f3', 50, 0, 50, 9999)]),
-                nf3: rated(50, 0, 50, [('b8c6', 50, 0, 50, 2400)]), leaf: data(50, 0, 50)}
+    evidence = {
+        root: rated(50, 0, 50, [('e2e4', 50, 0, 50, 9999)]),
+        e4: rated(50, 0, 50, [('e7e5', 25, 0, 25, 1500), ('c7c5', 15, 0, 15, 2000)]),
+        e5: rated(50, 0, 50, [('g1f3', 50, 0, 50, 9999)]),
+        nf3: rated(50, 0, 50, [('b8c6', 50, 0, 50, 2400)]),
+        leaf: data(50, 0, 50),
+    }
     ctx = Context(Evaluator(g, chess.WHITE, evidence, chess_facts(g, chess.WHITE, evidence)), {root: 1})
     result = ctx.score_evidence()
-    assert result['known_coverage'] == pytest.approx(.8)  # unnamed residual 20%
-    assert result['mean'] == pytest.approx((.5 * 2400 + .3 * 2000) / .8)
+    assert result['known_coverage'] == pytest.approx(0.8)  # unnamed residual 20%
+    assert result['mean'] == pytest.approx((0.5 * 2400 + 0.3 * 2000) / 0.8)
     assert position('e4 c5') not in evidence
     assert ctx.inventory()['positions'][position('e4 c5')]['local']['mean'] == 2000
     assert result['known_coverage'] + result['missing_coverage'] == 1
 
 
 def test_cache_only_ledger_preserves_scores_and_has_no_overall_mean(tmp_path, monkeypatch):
-    from repertoire_score.preparation import analyze as preparation
     from repertoire_score.character import analyze as character
+    from repertoire_score.preparation import analyze as preparation
     from repertoire_score.vulnerabilities import analyze as vulnerabilities
+
     saved, cache = run_fixture(tmp_path, monkeypatch, common_entry=True, multiple_entries=True)
     path = tmp_path / 'white.json'
     for family, fn in [('preparation', preparation), ('character', character), ('vulnerabilities', vulnerabilities)]:
         path.with_suffix(f'.{family}.json').write_text(json.dumps(fn(path, cache)), encoding='utf-8')
-    originals = {p: p.read_bytes() for p in [path, *tmp_path.glob('white.*.json'), tmp_path / 'fixture.pgn', *cache.glob('*.json')]}
+    originals = {
+        p: p.read_bytes()
+        for p in [path, *tmp_path.glob('white.*.json'), tmp_path / 'fixture.pgn', *cache.glob('*.json')]
+    }
     result = analyze(path, cache)
     overall = result['scopes'][0]
     assert 'score_evidence' not in overall and 'entry_baseline' not in overall
@@ -266,27 +309,35 @@ def test_cache_only_ledger_preserves_scores_and_has_no_overall_mean(tmp_path, mo
     assert 'ratings' in load([path], strict=False)[0]['unavailable']
 
 
-
-
 def test_rated_alternative_chapters_keep_their_own_policy_and_entry_baseline(tmp_path, monkeypatch):
-    from repertoire_score.preparation import analyze as preparation
     from repertoire_score.character import analyze as character
+    from repertoire_score.preparation import analyze as preparation
     from repertoire_score.vulnerabilities import analyze as vulnerabilities
+
     saved, cache = run_fixture(tmp_path, monkeypatch, common_entry=True)
-    leaves = {position('e4 e6 d4 d5 e5 c5 c3'): 1400,
-              position('e4 e6 d4 d5 Nd2 Nf6 e5'): 2400,
-              position('e4 e6 d4 d5 Nd2 c5 exd5'): 2000}
+    leaves = {
+        position('e4 e6 d4 d5 e5 c5 c3'): 1400,
+        position('e4 e6 d4 d5 Nd2 Nf6 e5'): 2400,
+        position('e4 e6 d4 d5 Nd2 c5 exd5'): 2000,
+    }
     for path in cache.glob('*.json'):
         item = json.loads(path.read_bytes())
         fen = item['identity']['query']['fen']
-        k = ' '.join(fen.split()[:4]); board = chess.Board(fen)
+        k = ' '.join(fen.split()[:4])
+        board = chess.Board(fen)
         table = item['data']
         for row in table['moves']:
             row['averageRating'] = 9999 if board.turn else 1800
         if k in leaves:
-            table['moves'] = [dict(uci=next(iter(board.legal_moves)).uci(),
-                                    white=table['white'], draws=table['draws'], black=table['black'],
-                                    averageRating=leaves[k])]
+            table['moves'] = [
+                dict(
+                    uci=next(iter(board.legal_moves)).uci(),
+                    white=table['white'],
+                    draws=table['draws'],
+                    black=table['black'],
+                    averageRating=leaves[k],
+                )
+            ]
         path.write_text(json.dumps(item), encoding='utf-8')
     path = tmp_path / 'white.json'
     original = path.read_bytes()
@@ -301,4 +352,3 @@ def test_rated_alternative_chapters_keep_their_own_policy_and_entry_baseline(tmp
         assert scopes[sid]['entry_baseline']['mean'] == 1800
         assert scopes[sid]['entry_baseline']['known_coverage'] == 1
     assert path.read_bytes() == original
-

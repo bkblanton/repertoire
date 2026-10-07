@@ -4,26 +4,44 @@ from pathlib import Path
 
 import chess
 import pytest
+from helpers import check_score_tables, run_fixture
 
 from repertoire_score.character import analyze as character
-from repertoire_score.report.links import Chapters
-from repertoire_score.report.format import centipawn_delta, centipawn_equivalent, cp, cp_change, display, elo_equivalent, headline_delta, line, per_thousand
-from repertoire_score.report.sections import common_positions_for_scope, common_positions_section, exits_section, position_tree, strengths_section, vulnerabilities_section
-from repertoire_score.report.derive import combined_overall, exit_points, non_sparse_rows, position_contributions
-from repertoire_score.report.generate import generate, page_names
 from repertoire_score.report.bundle import load
-from repertoire_score.report.pages import summary_report
-from repertoire_score.report.format import spread_display
+from repertoire_score.report.derive import combined_overall, exit_points, non_sparse_rows, position_contributions
+from repertoire_score.report.format import (
+    centipawn_delta,
+    centipawn_equivalent,
+    cp,
+    cp_change,
+    display,
+    elo_equivalent,
+    headline_delta,
+    line,
+    per_thousand,
+    spread_display,
+)
+from repertoire_score.report.generate import generate, page_names
+from repertoire_score.report.links import Chapters
 from repertoire_score.report.markdown import compressed_columns, report_navigation, table
-from helpers import run_fixture
-from helpers import check_score_tables
+from repertoire_score.report.pages import summary_report
+from repertoire_score.report.sections import (
+    common_positions_for_scope,
+    common_positions_section,
+    exits_section,
+    position_tree,
+    strengths_section,
+    vulnerabilities_section,
+)
 
 
 def chapter_pages(directory, report):
     """Concatenated chapter pages, in chapter order."""
     prefix = report['color'][0].upper()
-    return [(Path(directory) / 'chapters' / f'{prefix}{i}.md').read_text(encoding='utf-8')
-            for i in range(1, len(report['chapters']) + 1)]
+    return [
+        (Path(directory) / 'chapters' / f'{prefix}{i}.md').read_text(encoding='utf-8')
+        for i in range(1, len(report['chapters']) + 1)
+    ]
 
 
 def check_links(directory):
@@ -51,8 +69,8 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     chapters = chapter_pages(path.parent, report)
-    prefix = f'| White | 50.00% | 40.00% | {headline_delta(.4, .5)} |'
-    assert prefix in full and headline_delta(.4, .5) == f'-10.00% ({centipawn_delta(.4, .5):+.0f} cp)'
+    prefix = f'| White | 50.00% | 40.00% | {headline_delta(0.4, 0.5)} |'
+    assert prefix in full and headline_delta(0.4, 0.5) == f'-10.00% ({centipawn_delta(0.4, 0.5):+.0f} cp)'
     assert '| White | 50.0% | 40.0% | -10.0% (-110 cp) | -70 |' in summary
     assert not re.search(r'^\| Black \|', full, flags=re.M) and '[Black repertoire](#black)' not in full
     assert prefix + ' -70.4 |' in full
@@ -79,8 +97,9 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
         assert 'Most common opening source' in rendered and 'Unclassified' in rendered
         assert 'Unclassified (100.00%)' not in rendered and 'Unclassified (100.0%)' not in rendered
         for header in rendered.splitlines():
-            if header.startswith('| ') and any(label in header for label in
-                    ('Chapter source', 'Chapter context', 'Entry-position sources')):
+            if header.startswith('| ') and any(
+                label in header for label in ('Chapter source', 'Chapter context', 'Entry-position sources')
+            ):
                 assert 'Most common opening source' in header
     assert not bundles[0]['unavailable'] and bundles[0]['current_source']
     for p, content in originals.items():
@@ -96,6 +115,7 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
 
 def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
     from repertoire_score.report.format import gap_percentage
+
     path, report = complete
     bundle = generate([path])[0]
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
@@ -111,8 +131,9 @@ def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
         metrics = chapter['gap_coverage']
         assert metrics
         if metrics['entry_probability'] is not None:
-            assert metrics['weighted_equivalent_gap_reach_bounds'] == pytest.approx([
-                metrics['entry_probability'] * p for p in metrics['equivalent_gap_reach_bounds']])
+            assert metrics['weighted_equivalent_gap_reach_bounds'] == pytest.approx(
+                [metrics['entry_probability'] * p for p in metrics['equivalent_gap_reach_bounds']]
+            )
         assert f"weighted gap reach contribution **{gap_percentage(metrics, weighted=True)}**" in page
         assert '## Equivalent gap reach' in page
     assert 'Chapters overlap, so their values are not additive' in full
@@ -120,10 +141,14 @@ def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
 
 def test_gap_display_keeps_unknown_reach_bounded():
     from repertoire_score.report.format import gap_percentage
+
     assert gap_percentage(None) == 'unavailable'
-    assert gap_percentage(dict(equivalent_gap_reach=0.)) == '0.00%'
-    assert gap_percentage(dict(equivalent_gap_reach_bounds=[.1, .2])) == '10.00% to 20.00% (bounds)'
-    assert gap_percentage(dict(weighted_equivalent_gap_reach_bounds=[.02, .04]), weighted=True) == '2.00% to 4.00% (bounds)'
+    assert gap_percentage(dict(equivalent_gap_reach=0.0)) == '0.00%'
+    assert gap_percentage(dict(equivalent_gap_reach_bounds=[0.1, 0.2])) == '10.00% to 20.00% (bounds)'
+    assert (
+        gap_percentage(dict(weighted_equivalent_gap_reach_bounds=[0.02, 0.04]), weighted=True)
+        == '2.00% to 4.00% (bounds)'
+    )
 
 
 def test_recursive_sharpness_in_overall_and_every_chapter(complete):
@@ -139,11 +164,15 @@ def test_recursive_sharpness_in_overall_and_every_chapter(complete):
     pages = chapter_pages(path.parent, report)
     assert all('outcome volatility **' not in page and 'Outcome volatility (0%-100%)' in page for page in pages)
     scopes = {s['id']: s for s in bundle['character']['scopes']}
-    for sid, score in [('overall', bundle['report']['overall']),
-                       *[(c['id'], c['score']) for c in bundle['report']['chapters']]]:
+    for sid, score in [
+        ('overall', bundle['report']['overall']),
+        *[(c['id'], c['score']) for c in bundle['report']['chapters']],
+    ]:
         outcomes = score['outcomes']
         assert outcomes == scopes[sid]['outcomes']
-        assert outcomes['win_probability'] + outcomes['draw_probability'] / 2 == pytest.approx(score['raw_empirical_score'])
+        assert outcomes['win_probability'] + outcomes['draw_probability'] / 2 == pytest.approx(
+            score['raw_empirical_score']
+        )
 
 
 @pytest.mark.parametrize('field', ['report_sha256', 'input_sha256', 'filters', 'color'])
@@ -199,6 +228,7 @@ def test_saved_snapshot_and_missing_analyses_are_explicit(tmp_path, monkeypatch)
 
 def test_stale_correlations_rejected_and_matching_estimates_shown(complete):
     from repertoire_score.position_correlations import analyze
+
     path, _ = complete
     correlations = path.parent / 'prepared-depth-gain-correlation.json'
     analyze([path], correlations, path.parent / 'cache')
@@ -219,21 +249,33 @@ def test_stale_correlations_rejected_and_matching_estimates_shown(complete):
             generate([path])
         data['provenance']['white'][key] = original[key]
     generate([path], strict=False)
-    assert 'Correlation analysis unavailable: belongs to different score snapshots' in (path.parent / 'report.md').read_text()
+    assert (
+        'Correlation analysis unavailable: belongs to different score snapshots'
+        in (path.parent / 'report.md').read_text()
+    )
 
 
 def test_rating_correlations_render_beside_depth_and_reject_stale_inputs(complete):
     from repertoire_score import rating_correlations
+
     path, _ = complete
     result = rating_correlations.analyze([path])
-    rows = [dict(position=str(i), rating=x + 400*i, score=y + .1*i, weight=w)
-            for i in range(4) for x, y, w in ((1500, .6, 1), (1600, .55, 2), (1700, .5, 1))]
+    rows = [
+        dict(position=str(i), rating=x + 400 * i, score=y + 0.1 * i, weight=w)
+        for i in range(4)
+        for x, y, w in ((1500, 0.6, 1), (1600, 0.55, 2), (1700, 0.5, 1))
+    ]
     result['results']['white']['reply_associations']['all'] = rating_correlations.within_parent(rows)
     target = path.parent / 'opponent-rating-score-correlation.json'
     target.write_text(json.dumps(result), encoding='utf-8')
     generate([path])
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
-    assert full.index('\n## Correlations\n') < full.index('\n### Future preparation gain\n') < full.index('\n### Opponent rating and score improvement\n') < full.index('\n## Definitions and evidence\n')
+    assert (
+        full.index('\n## Correlations\n')
+        < full.index('\n### Future preparation gain\n')
+        < full.index('\n### Opponent rating and score improvement\n')
+        < full.index('\n## Definitions and evidence\n')
+    )
     assert '[Opponent rating and score improvement](#rating-correlations)' in full
     assert '| -1.000 | -5.000% |' in full
     assert 'reach-weighted mean continuation score' in full and 'These are point estimates.' in full
@@ -249,7 +291,10 @@ def test_rating_correlations_render_beside_depth_and_reject_stale_inputs(complet
         assert all((path.parent / name).read_bytes() == value for name, value in originals.items())
         hashes[family] = original
     generate([path], strict=False)
-    assert 'Rating correlation analysis unavailable: belongs to different analysis snapshots' in (path.parent / 'report.md').read_text()
+    assert (
+        'Rating correlation analysis unavailable: belongs to different analysis snapshots'
+        in (path.parent / 'report.md').read_text()
+    )
 
 
 def test_compact_chapter_sources_and_readable_notation(complete):
@@ -288,7 +333,18 @@ def test_destinations_and_relative_links(complete):
 
 def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch):
     import sys
-    from repertoire_score import vulnerabilities, preparation, character, ratings, position_correlations, rating_correlations, openings, report_insights
+
+    from repertoire_score import (
+        character,
+        openings,
+        position_correlations,
+        preparation,
+        rating_correlations,
+        ratings,
+        report_insights,
+        vulnerabilities,
+    )
+
     directory = tmp_path / 'reports'
     data = directory / 'data'
     data.mkdir(parents=True)
@@ -307,7 +363,10 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     (data / 'opponent-rating-score-correlation.json').write_text(json.dumps(rating_result), encoding='utf-8')
     generate([path], require_complete=True)
     assert set(p.relative_to(directory).as_posix() for p in directory.rglob('*.md')) == {
-        'report.md', 'summary.md', *page_names(report)}
+        'report.md',
+        'summary.md',
+        *page_names(report),
+    }
     check_links(directory)
     # A chapter that disappears from the study also loses its stale page.
     stale = directory / 'chapters' / 'W99.md'
@@ -333,42 +392,56 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
 
 
 def test_elo_equivalent_inverts_expected_score_and_handles_boundaries():
-    assert elo_equivalent(.5, .5) == pytest.approx(0)
-    assert elo_equivalent(.55, .5) == pytest.approx(34.86007028756008)
-    assert elo_equivalent(.4, .5) == pytest.approx(-elo_equivalent(.6, .5))
-    assert elo_equivalent(.55, .55) == pytest.approx(0)
-    shift = elo_equivalent(.57, .52)
-    initial_elo = elo_equivalent(.52, .5)
-    assert 1 / (1 + 10 ** (-(initial_elo + shift) / 400)) == pytest.approx(.57)
-    for score, baseline in [(None, .5), (.5, None), (0, .5), (1, .5), (.5, 0), (.5, 1)]:
+    assert elo_equivalent(0.5, 0.5) == pytest.approx(0)
+    assert elo_equivalent(0.55, 0.5) == pytest.approx(34.86007028756008)
+    assert elo_equivalent(0.4, 0.5) == pytest.approx(-elo_equivalent(0.6, 0.5))
+    assert elo_equivalent(0.55, 0.55) == pytest.approx(0)
+    shift = elo_equivalent(0.57, 0.52)
+    initial_elo = elo_equivalent(0.52, 0.5)
+    assert 1 / (1 + 10 ** (-(initial_elo + shift) / 400)) == pytest.approx(0.57)
+    for score, baseline in [(None, 0.5), (0.5, None), (0, 0.5), (1, 0.5), (0.5, 0), (0.5, 1)]:
         assert elo_equivalent(score, baseline) is None
 
 
 def test_centipawn_equivalent_is_direct_and_delta_subtracts_converted_scores():
     import math
-    assert centipawn_equivalent(.5) == pytest.approx(0)
-    assert centipawn_equivalent(.524967433244753) == pytest.approx(27.145761493072506)
-    assert centipawn_delta(.55, .55) == pytest.approx(0)
-    assert centipawn_equivalent(.4) == pytest.approx(-centipawn_equivalent(.6))
-    value = centipawn_delta(.57, .52) + centipawn_equivalent(.52)
-    assert 1 / (1 + math.exp(-.00368208 * value)) == pytest.approx(.57)
-    assert centipawn_equivalent(.5472049870420534) == pytest.approx(51.43396313235625)
-    assert centipawn_delta(.8, .6) != pytest.approx(centipawn_delta(.6, .4))
-    assert centipawn_delta(.524967433244753, .4808664795231225) == pytest.approx(47.94147281528)
-    for score in [None, 0, 1, -.1, 1.1]:
+
+    assert centipawn_equivalent(0.5) == pytest.approx(0)
+    assert centipawn_equivalent(0.524967433244753) == pytest.approx(27.145761493072506)
+    assert centipawn_delta(0.55, 0.55) == pytest.approx(0)
+    assert centipawn_equivalent(0.4) == pytest.approx(-centipawn_equivalent(0.6))
+    value = centipawn_delta(0.57, 0.52) + centipawn_equivalent(0.52)
+    assert 1 / (1 + math.exp(-0.00368208 * value)) == pytest.approx(0.57)
+    assert centipawn_equivalent(0.5472049870420534) == pytest.approx(51.43396313235625)
+    assert centipawn_delta(0.8, 0.6) != pytest.approx(centipawn_delta(0.6, 0.4))
+    assert centipawn_delta(0.524967433244753, 0.4808664795231225) == pytest.approx(47.94147281528)
+    for score in [None, 0, 1, -0.1, 1.1]:
         assert centipawn_equivalent(score) is None
         assert cp(score) == 'unavailable'
-    for score, baseline in [(None, .5), (.5, None), (0, .5), (1, .5), (.5, 0), (.5, 1)]:
+    for score, baseline in [(None, 0.5), (0.5, None), (0, 0.5), (1, 0.5), (0.5, 0), (0.5, 1)]:
         assert centipawn_delta(score, baseline) is None
         assert cp_change(score, baseline) == 'unavailable'
 
 
 def test_compressed_columns_preserve_values_and_inputs():
-    headers = ['Line', 'Position reach', 'Avg games per encounter', 'Opening', 'ECO', 'Avg opponent rating', 'Rating Δ vs parent']
+    headers = [
+        'Line',
+        'Position reach',
+        'Avg games per encounter',
+        'Opening',
+        'ECO',
+        'Avg opponent rating',
+        'Rating Δ vs parent',
+    ]
     rows = [['1. e4', '20.00%', '5', 'Kings Pawn', 'B00', '1,800 (90.0% rated)', '+30']]
     original = [r[:] for r in rows]
     names, values = compressed_columns(headers, rows)
-    assert names == ['Line', 'Position reach<br>Avg games per encounter', 'Opening / ECO', 'Avg opponent rating<br>Rating Δ vs parent']
+    assert names == [
+        'Line',
+        'Position reach<br>Avg games per encounter',
+        'Opening / ECO',
+        'Avg opponent rating<br>Rating Δ vs parent',
+    ]
     assert values == [['1. e4', '20.00%<br>1 per 5 games', 'Kings Pawn<br>B00', '1,800 (90.0% rated)<br>Δ +30']]
     assert rows == original and len(headers) == 7
     assert compressed_columns(names, values) == (names, values)
@@ -377,12 +450,42 @@ def test_compressed_columns_preserve_values_and_inputs():
 
 
 def test_top_navigation_covers_all_major_sections_and_preserves_existing_anchors():
-    document = ['# Report', '', '<!-- report-navigation -->', '', '<a id="overview"></a>', '',
-                '## Score overview', '', '### Score uncertainty', '', '<a id="white"></a>', '',
-                '## White repertoire', '', '### Equivalent gap reach', '', '<a id="white-chapters"></a>', '',
-                '### White chapters (2)', '', '#### W1. Test', '', '<a id="black"></a>', '',
-                '## Black repertoire', '', '### Equivalent gap reach', '', '<a id="methods"></a>', '',
-                '## Definitions and evidence', '', '### White evidence', '']
+    document = [
+        '# Report',
+        '',
+        '<!-- report-navigation -->',
+        '',
+        '<a id="overview"></a>',
+        '',
+        '## Score overview',
+        '',
+        '### Score uncertainty',
+        '',
+        '<a id="white"></a>',
+        '',
+        '## White repertoire',
+        '',
+        '### Equivalent gap reach',
+        '',
+        '<a id="white-chapters"></a>',
+        '',
+        '### White chapters (2)',
+        '',
+        '#### W1. Test',
+        '',
+        '<a id="black"></a>',
+        '',
+        '## Black repertoire',
+        '',
+        '### Equivalent gap reach',
+        '',
+        '<a id="methods"></a>',
+        '',
+        '## Definitions and evidence',
+        '',
+        '### White evidence',
+        '',
+    ]
     rendered = '\n'.join(report_navigation(document))
     navigation = rendered.split('<a id="overview">', 1)[0]
     anchors = re.findall(r'<a id="([^"]+)"></a>\n\n#{2,3} ', rendered)
@@ -399,7 +502,7 @@ def test_top_navigation_covers_all_major_sections_and_preserves_existing_anchors
 
 def test_score_table_checker_reproduces_headline_cp_and_rejects_cp_elsewhere():
     header = '| Repertoire | Starting baseline | Repertoire score | Delta |\n| --- | --- | --- | --- |\n'
-    assert check_score_tables(header + f'| White | 50.00% | 60.00% | {headline_delta(.6, .5)} |\n') == 1
+    assert check_score_tables(header + f'| White | 50.00% | 60.00% | {headline_delta(0.6, 0.5)} |\n') == 1
     with pytest.raises(AssertionError):
         check_score_tables(header + '| White | 50.00% | 60.00% | +10.00% (+40 cp) |\n')
     with pytest.raises(AssertionError):
@@ -410,11 +513,12 @@ def test_cp_appears_only_beside_headline_deltas(complete):
     path, report = complete
     generate([path])
     for name in ('report.md', 'summary.md'):
-        assert check_score_tables((path.parent/name).read_text(encoding='utf-8')) == 1
+        assert check_score_tables((path.parent / name).read_text(encoding='utf-8')) == 1
     for page in chapter_pages(path.parent, report):
         assert check_score_tables(page) == 0
         assert [row for row in page.splitlines() if ' cp)' in row] == [
-            row for row in page.splitlines() if row.startswith('Chapter reach **')]
+            row for row in page.splitlines() if row.startswith('Chapter reach **')
+        ]
         headline = next(row for row in page.splitlines() if row.startswith('Chapter reach **'))
         assert re.search(r'delta \*\*[+-][\d.]+% \([+-]\d+ cp\)\*\*', headline)
 
@@ -422,18 +526,22 @@ def test_cp_appears_only_beside_headline_deltas(complete):
 def test_all_repertoire_score_tables_show_spread_without_extra_columns(complete):
     path, report = complete
     bundles = generate([path])
-    documents = [('report.md', (path.parent / 'report.md').read_text(encoding='utf-8')),
-                 ('summary.md', (path.parent / 'summary.md').read_text(encoding='utf-8')),
-                 *[('chapter', page) for page in chapter_pages(path.parent, report)]]
+    documents = [
+        ('report.md', (path.parent / 'report.md').read_text(encoding='utf-8')),
+        ('summary.md', (path.parent / 'summary.md').read_text(encoding='utf-8')),
+        *[('chapter', page) for page in chapter_pages(path.parent, report)],
+    ]
     for filename, text in documents:
         for block in re.findall(r'(?m)(?:^\|.*\|\n)+', text):
             rows = [[c.strip() for c in row.strip().strip('|').split('|')] for row in block.splitlines()]
             headers = rows[0]
             if headers[0] == 'Repertoire':
                 continue  # the headline table keeps only the summary's leading measures
-            for score_header, spread_headers in [('Repertoire score', ('Score spread',)),
-                    ('Before reply (repertoire)', ('Score spread<br>Before / after', 'Score spread before reply')),
-                    ('After reply (repertoire)', ('Score spread<br>Before / after',))]:
+            for score_header, spread_headers in [
+                ('Repertoire score', ('Score spread',)),
+                ('Before reply (repertoire)', ('Score spread<br>Before / after', 'Score spread before reply')),
+                ('After reply (repertoire)', ('Score spread<br>Before / after',)),
+            ]:
                 if score_header not in headers:
                     continue
                 spread_header = next(h for h in spread_headers if h in headers)
@@ -460,11 +568,27 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     bundle = load([path])[0]
     refs = Chapters(bundle['report'])
     original = next(r for r in bundle['vulnerabilities']['overall']['all_signed_rows'] if r['kind'] == 'opponent')
-    common = dict(original, reference_score=.575, move_score=.525, branch_reach=.02,
-                  branch_probability=.1, local_drop_pp=5., weighted_drag_pp=.1, sample_count=100,
-                  sparse=False)
-    scope = dict(id='overall', rankings={'own': [], 'opponent': [
-        dict(common, line='Prepared reply', prepared=True), dict(common, line='Unprepared reply', prepared=False)]})
+    common = dict(
+        original,
+        reference_score=0.575,
+        move_score=0.525,
+        branch_reach=0.02,
+        branch_probability=0.1,
+        local_drop_pp=5.0,
+        weighted_drag_pp=0.1,
+        sample_count=100,
+        sparse=False,
+    )
+    scope = dict(
+        id='overall',
+        rankings={
+            'own': [],
+            'opponent': [
+                dict(common, line='Prepared reply', prepared=True),
+                dict(common, line='Unprepared reply', prepared=False),
+            ],
+        },
+    )
     full = '\n'.join(vulnerabilities_section(scope, refs, 10))
     before, after = (spread_display(common.get(k), False) for k in ('reference_spread', 'move_spread'))
     prepared, unprepared = full.split('**Prepared opponent replies**')[::-1]
@@ -472,9 +596,9 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     assert f'| 57.50% | 52.50% | {before} | 5.00%<br>95%:' in unprepared  # nothing after an unprepared reply
     assert '| Score spread before reply |' in unprepared and '| Score spread<br>Before / after |' in prepared
     # 0.1 percentage points per game is one point per 1,000 games.
-    assert per_thousand(.1) == '1.0' and full.count('| 1.0 |') == 2
+    assert per_thousand(0.1) == '1.0' and full.count('| 1.0 |') == 2
     assert full.count('| Drag | Drag per 1,000 games |') == 2
-    assert ' cp' not in full and centipawn_delta(.525, .575) < 0
+    assert ' cp' not in full and centipawn_delta(0.525, 0.575) < 0
     assert check_score_tables(full) == 0
     bundle['vulnerabilities']['overall'] = scope
     summary = summary_report([bundle])
@@ -485,6 +609,7 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
 
 def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(complete):
     from helpers import position
+
     path, report = complete
     bundle = load([path])[0]
     refs = Chapters(bundle['report'])
@@ -492,26 +617,63 @@ def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(comple
     own = next(r for r in old_scope['all_signed_rows'] if r['kind'] == 'own')
     reply = next(r for r in old_scope['all_signed_rows'] if r['kind'] == 'opponent')
     # Without a move SAN the row keeps its own label, which lets the assertions identify each row.
-    own = dict(own, sparse=False, parent_sparse=False, continuation_endpoint_sparse=False, move_san=None,
-               local_gain_pp=10., local_drop_pp=10., sample_count=100, parent_sample_count=100)
-    own_rows = [dict(own, line='EXCLUDED_LOCAL', sparse=True),
-                dict(own, line='EXCLUDED_PARENT', parent_sparse=True),
-                dict(own, line='EXCLUDED_ENDPOINT', continuation_endpoint_sparse=True),
-                dict(own, line='Supported own move')]
+    own = dict(
+        own,
+        sparse=False,
+        parent_sparse=False,
+        continuation_endpoint_sparse=False,
+        move_san=None,
+        local_gain_pp=10.0,
+        local_drop_pp=10.0,
+        sample_count=100,
+        parent_sample_count=100,
+    )
+    own_rows = [
+        dict(own, line='EXCLUDED_LOCAL', sparse=True),
+        dict(own, line='EXCLUDED_PARENT', parent_sparse=True),
+        dict(own, line='EXCLUDED_ENDPOINT', continuation_endpoint_sparse=True),
+        dict(own, line='Supported own move'),
+    ]
     replies = []
     for prepared in (False, True):
         label = 'prepared' if prepared else 'unprepared'
-        replies.extend([dict(reply, line=f'EXCLUDED_REPLY_{label}', prepared=prepared, sparse=True, move_san=None),
-                        dict(reply, line=f'Supported {label} reply', prepared=prepared, sparse=False, move_san=None)])
-    scope = dict(id='overall', rankings={'own':own_rows, 'opponent':replies}, strengths=own_rows)
+        replies.extend(
+            [
+                dict(reply, line=f'EXCLUDED_REPLY_{label}', prepared=prepared, sparse=True, move_san=None),
+                dict(reply, line=f'Supported {label} reply', prepared=prepared, sparse=False, move_san=None),
+            ]
+        )
+    scope = dict(id='overall', rankings={'own': own_rows, 'opponent': replies}, strengths=own_rows)
+
     def reached(path, route, reach, games, kind='opponent_reply', **extra):
-        return dict(position=position(path), line=route, reach=reach, games=games, kind=kind,
-                    is_starting_position=False, to_move='black', repertoire_score=.6, database_score=.6, **extra)
-    positions = dict(bundle['character']['scopes'][0], positions=[
-        reached('e4 c5', 'EXCLUDED_POSITION', .5, 10),
-        reached('e4 d5', 'EXCLUDED_POOLED_POSITION', .7, 60, kind='unprepared_reply',
-                unprepared_origins=[dict(games=10), dict(games=50)]),
-        reached('e4 e6', 'Supported reached position', .3, 100)])
+        return dict(
+            position=position(path),
+            line=route,
+            reach=reach,
+            games=games,
+            kind=kind,
+            is_starting_position=False,
+            to_move='black',
+            repertoire_score=0.6,
+            database_score=0.6,
+            **extra,
+        )
+
+    positions = dict(
+        bundle['character']['scopes'][0],
+        positions=[
+            reached('e4 c5', 'EXCLUDED_POSITION', 0.5, 10),
+            reached(
+                'e4 d5',
+                'EXCLUDED_POOLED_POSITION',
+                0.7,
+                60,
+                kind='unprepared_reply',
+                unprepared_origins=[dict(games=10), dict(games=50)],
+            ),
+            reached('e4 e6', 'Supported reached position', 0.3, 100),
+        ],
+    )
     full = '\n'.join(vulnerabilities_section(scope, refs, 1) + strengths_section(scope, positions, refs, 1))
     assert 'EXCLUDED_' not in full
     assert 'Supported own move' in full
@@ -533,25 +695,43 @@ def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(comple
 @pytest.mark.parametrize('color', ['white', 'black'])
 def test_position_contributions_include_intermediate_boards_and_cached_unprepared_replies(color):
     def row(label, reach, score, kind='opponent_reply', games=100, **extra):
-        return dict(position=label, line=label, reach=reach, kind=kind, games=games,
-                    to_move='black' if color == 'white' else 'white', is_starting_position=False,
-                    repertoire_score=score, database_score=.1, **extra)
-    root = row('starting board', 1., .99)
+        return dict(
+            position=label,
+            line=label,
+            reach=reach,
+            kind=kind,
+            games=games,
+            to_move='black' if color == 'white' else 'white',
+            is_starting_position=False,
+            repertoire_score=score,
+            database_score=0.1,
+            **extra,
+        )
+
+    root = row('starting board', 1.0, 0.99)
     root['is_starting_position'] = True
-    scope = dict(id='chapter', positions=[root,
-        row('1.e4', 1., .57),
-        row('1.e4 e5', .5, .62, kind='own_move'),
-        row('1.e4 e5 2.Nc3', .5, .62),
-        dict(row('unprepared transposed reply', .3, None, kind='unprepared_reply'), database_score=.8,
-             unprepared_origins=[dict(reach=.1, games=100), dict(reach=.2, games=100)]),
-        row('prepared endpoint', .2, .85, kind='theory_leaf'),
-        row('unresolved', .9, None, kind='unresolved_distribution'),
-        row('sparse position', .9, .99, games=10),
-        row('unknown local games', .9, .99, games=None)])
+    scope = dict(
+        id='chapter',
+        positions=[
+            root,
+            row('1.e4', 1.0, 0.57),
+            row('1.e4 e5', 0.5, 0.62, kind='own_move'),
+            row('1.e4 e5 2.Nc3', 0.5, 0.62),
+            dict(
+                row('unprepared transposed reply', 0.3, None, kind='unprepared_reply'),
+                database_score=0.8,
+                unprepared_origins=[dict(reach=0.1, games=100), dict(reach=0.2, games=100)],
+            ),
+            row('prepared endpoint', 0.2, 0.85, kind='theory_leaf'),
+            row('unresolved', 0.9, None, kind='unresolved_distribution'),
+            row('sparse position', 0.9, 0.99, games=10),
+            row('unknown local games', 0.9, 0.99, games=None),
+        ],
+    )
     ranked = non_sparse_rows(position_contributions(scope, color))
     assert [r['line'] for r in ranked] == ['1.e4', '1.e4 e5 2.Nc3', 'unprepared transposed reply', 'prepared endpoint']
-    assert [r['contribution_pp'] for r in ranked] == pytest.approx([57., 31., 24., 17.])
-    assert ranked[2]['score'] == .8 and ranked[2]['score_basis'] == 'database'
+    assert [r['contribution_pp'] for r in ranked] == pytest.approx([57.0, 31.0, 24.0, 17.0])
+    assert ranked[2]['score'] == 0.8 and ranked[2]['score_basis'] == 'database'
     assert sum(r['contribution_pp'] for r in ranked) > 100  # overlapping continuation values are not additive
     refs = Chapters(dict(color=color, chapters=[]))
     displayed = '\n'.join(strengths_section(None, scope, refs, 2))
@@ -560,33 +740,39 @@ def test_position_contributions_include_intermediate_boards_and_cached_unprepare
     assert 'Position reach after chapter entry' in displayed
     assert 'Rows overlap and must not be added' in displayed
     # Both displayed rows are prepared positions, so the uniform type column is dropped.
-    assert '| Position type |' not in displayed and per_thousand(57.) == '570' and '| 570 |' in displayed
+    assert '| Position type |' not in displayed and per_thousand(57.0) == '570' and '| 570 |' in displayed
     assert check_score_tables(displayed) == 0
 
 
 def score_bundle(color, score, baseline, depth, chapters, games):
-    return {'report': {'color': color, 'overall': {'raw_empirical_score': score, 'prepared_depth': {'expected_moves': depth}},
-            'starting_position_reference': {'owner_score': baseline, 'sample_count': games}, 'chapters': [{}] * chapters,
-            'manifest': {'filters': {'speeds': 'blitz,rapid,classical'}, 'overall_basis': 'standard starting position'}}}
+    return {
+        'report': {
+            'color': color,
+            'overall': {'raw_empirical_score': score, 'prepared_depth': {'expected_moves': depth}},
+            'starting_position_reference': {'owner_score': baseline, 'sample_count': games},
+            'chapters': [{}] * chapters,
+            'manifest': {'filters': {'speeds': 'blitz,rapid,classical'}, 'overall_basis': 'standard starting position'},
+        }
+    }
 
 
 def test_combined_score_uses_equal_color_weights_before_elo_conversion():
-    white = score_bundle('white', .7, .55, 8, 20, 1000)
-    black = score_bundle('black', .5, .45, 4, 3, 1)
+    white = score_bundle('white', 0.7, 0.55, 8, 20, 1000)
+    black = score_bundle('black', 0.5, 0.45, 4, 3, 1)
     result = combined_overall([black, white])
-    assert result['weights'] == {'white': .5, 'black': .5}
-    assert result['repertoire_score'] == pytest.approx(.6)
-    assert result['starting_baseline'] == pytest.approx(.5)
+    assert result['weights'] == {'white': 0.5, 'black': 0.5}
+    assert result['repertoire_score'] == pytest.approx(0.6)
+    assert result['starting_baseline'] == pytest.approx(0.5)
     assert result['difference_pp'] == pytest.approx(10)
     assert result['elo_equivalent'] == pytest.approx(70.43650362227247)
-    assert result['centipawn_equivalent'] == pytest.approx(centipawn_equivalent(.6))
+    assert result['centipawn_equivalent'] == pytest.approx(centipawn_equivalent(0.6))
     assert result['baseline_centipawn_equivalent'] == pytest.approx(0)
-    assert result['centipawn_delta'] == pytest.approx(centipawn_delta(.6, .5))
+    assert result['centipawn_delta'] == pytest.approx(centipawn_delta(0.6, 0.5))
     assert result['expected_prepared_depth'] == pytest.approx(6)
     assert result['chapters'] == 23
-    averaged_elo = (elo_equivalent(.7, .55) + elo_equivalent(.5, .45)) / 2
+    averaged_elo = (elo_equivalent(0.7, 0.55) + elo_equivalent(0.5, 0.45)) / 2
     assert result['elo_equivalent'] != pytest.approx(averaged_elo)
-    averaged_cp = (centipawn_equivalent(.7) + centipawn_equivalent(.5)) / 2
+    averaged_cp = (centipawn_equivalent(0.7) + centipawn_equivalent(0.5)) / 2
     assert result['centipawn_equivalent'] != pytest.approx(averaged_cp)
     assert combined_overall([white]) is None
     black['report']['overall']['raw_empirical_score'] = None
@@ -596,8 +782,8 @@ def test_combined_score_uses_equal_color_weights_before_elo_conversion():
 
 
 def test_incompatible_color_scopes_are_not_combined():
-    white = score_bundle('white', .56, .52, 4, 1, 10)
-    black = score_bundle('black', .52, .48, 4, 1, 10)
+    white = score_bundle('white', 0.56, 0.52, 4, 1, 10)
+    black = score_bundle('black', 0.52, 0.48, 4, 1, 10)
     black['report']['manifest']['filters']['speeds'] = 'blitz'
     assert 'different Explorer filters' in combined_overall([white, black])['unavailable']
     black['report']['manifest']['filters'] = dict(white['report']['manifest']['filters'])
@@ -608,77 +794,109 @@ def test_incompatible_color_scopes_are_not_combined():
 def test_combined_sharpness_uses_owner_relative_wdl_mixture():
     from repertoire_score.sharpness import summarize
     from repertoire_score.spread import stopping_counts
-    white = score_bundle('white', 1., .5, 1, 1, 1000)
-    black = score_bundle('black', 0., .5, 1, 1, 1)
-    white['report']['overall']['outcomes'] = summarize([1., 0., 0., 0.])
-    black['report']['overall']['outcomes'] = summarize([0., 0., 1., 0.])
-    white['report']['overall']['branch_score_spread'] = stopping_counts([0, 0, 0], True, 1.)
-    black['report']['overall']['branch_score_spread'] = stopping_counts([0, 0, 0], False, 0.)
+
+    white = score_bundle('white', 1.0, 0.5, 1, 1, 1000)
+    black = score_bundle('black', 0.0, 0.5, 1, 1, 1)
+    white['report']['overall']['outcomes'] = summarize([1.0, 0.0, 0.0, 0.0])
+    black['report']['overall']['outcomes'] = summarize([0.0, 0.0, 1.0, 0.0])
+    white['report']['overall']['branch_score_spread'] = stopping_counts([0, 0, 0], True, 1.0)
+    black['report']['overall']['branch_score_spread'] = stopping_counts([0, 0, 0], False, 0.0)
     combined = combined_overall([white, black])
     outcomes = combined['outcomes']
-    assert outcomes['win_probability'] == outcomes['loss_probability'] == .5
-    assert outcomes['sharpness'] == 100.  # both separate sharpness values are zero
-    assert outcomes['resolved_score'] == .5
-    assert combined['branch_score_spread']['variance'] == .25
-    assert combined['branch_score_spread']['standard_deviation'] == .5  # separate spreads are zero
+    assert outcomes['win_probability'] == outcomes['loss_probability'] == 0.5
+    assert outcomes['sharpness'] == 100.0  # both separate sharpness values are zero
+    assert outcomes['resolved_score'] == 0.5
+    assert combined['branch_score_spread']['variance'] == 0.25
+    assert combined['branch_score_spread']['standard_deviation'] == 0.5  # separate spreads are zero
 
 
 def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypatch):
     from types import SimpleNamespace
+
     from repertoire_score import score as cli
+
     path, white = complete
-    args = SimpleNamespace(config=str(path.parent/'config.json'), pgn=white['manifest']['input_path'], color='black',
-                           output=str(path.parent/'black'), command='run', cache=str(path.parent/'cache'), offline=True,
-                           refresh=False, prior=[.5]*3, sparse_threshold=30, tolerance=1)
+    args = SimpleNamespace(
+        config=str(path.parent / 'config.json'),
+        pgn=white['manifest']['input_path'],
+        color='black',
+        output=str(path.parent / 'black'),
+        command='run',
+        cache=str(path.parent / 'cache'),
+        offline=True,
+        refresh=False,
+        prior=[0.5] * 3,
+        sparse_threshold=30,
+        tolerance=1,
+    )
     cli.analyze(args)
-    black_path = path.parent/'black.json'
+    black_path = path.parent / 'black.json'
     bundles = generate([path, black_path])
     result = combined_overall(bundles)
     delta = headline_delta(result['repertoire_score'], result['starting_baseline'])
     assert delta == f"{result['difference_pp']:+.2f}% ({result['centipawn_delta']:+.0f} cp)"
-    prefix = (f"| **Combined** | {100*result['starting_baseline']:.2f}% | {100*result['repertoire_score']:.2f}% | "
-              f"{delta} | {result['elo_equivalent']:+.1f} |")
+    prefix = (
+        f"| **Combined** | {100 * result['starting_baseline']:.2f}% | {100 * result['repertoire_score']:.2f}% | "
+        f"{delta} | {result['elo_equivalent']:+.1f} |"
+    )
     for filename in ['report.md', 'summary.md']:
-        text = (path.parent/filename).read_text(encoding='utf-8')
+        text = (path.parent / filename).read_text(encoding='utf-8')
         if filename == 'report.md':
             assert prefix in text
         else:
             with display(digits=1):
                 short = headline_delta(result['repertoire_score'], result['starting_baseline'])
-            assert (f"| **Combined** | {100*result['starting_baseline']:.1f}% | {100*result['repertoire_score']:.1f}% | "
-                    f"{short} | {result['elo_equivalent']:+.0f} |") in text
+            assert (
+                f"| **Combined** | {100 * result['starting_baseline']:.1f}% | "
+                f"{100 * result['repertoire_score']:.1f}% | "
+                f"{short} | {result['elo_equivalent']:+.0f} |"
+            ) in text
         assert 'Elo equivalent' in text and '50% each' in text
         assert '| Score CP |' not in text and '| Baseline CP |' not in text and '| CP delta |' not in text
         assert check_score_tables(text) == 3  # White, Black and Combined headline deltas
         assert 'rating forecasts' in text
-    full = (path.parent/'report.md').read_text(encoding='utf-8')
+    full = (path.parent / 'report.md').read_text(encoding='utf-8')
     assert '[Combined repertoire](#combined)' in full and '<a id="combined"></a>' in full
     assert '## Combined repertoire' in full and '50% each' in full
     assert full.count('| **Combined** |') == 1
     for bundle in bundles:
-        report = bundle['report']; color = report['color']
+        report = bundle['report']
+        color = report['color']
         subsection = re.split(r'^## ', full.split(f'<a id="{color}"></a>', 1)[1], flags=re.M)[1]
         headings = re.findall(r'^### (.+)$', subsection, flags=re.M)
         expected = [
-            f'{color.title()} chapters ({len(report["chapters"])})', 'Where preparation ends', 'Most common positions',
-            'Openings reached', 'Vulnerabilities', 'Strengths', 'Equivalent gap reach', 'Prepared-depth distribution',
-            'Branch score spread', 'Preparation, replies, and resulting positions',
-            'Score and evidence limits', 'Uncertainty priorities and prior sensitivity']
+            f'{color.title()} chapters ({len(report["chapters"])})',
+            'Where preparation ends',
+            'Most common positions',
+            'Openings reached',
+            'Vulnerabilities',
+            'Strengths',
+            'Equivalent gap reach',
+            'Prepared-depth distribution',
+            'Branch score spread',
+            'Preparation, replies, and resulting positions',
+            'Score and evidence limits',
+            'Uncertainty priorities and prior sensitivity',
+        ]
         assert headings == [heading for heading in expected if heading in headings]
         if not bundle['unavailable']:
             assert headings == expected
-        elo = elo_equivalent(report['overall']['raw_empirical_score'], report['starting_position_reference']['owner_score'])
+        elo = elo_equivalent(
+            report['overall']['raw_empirical_score'], report['starting_position_reference']['owner_score']
+        )
         assert f'| {color.title()} |' in full and f'| {elo:+.1f} |' in full
         assert subsection.index(f'{color.title()} repertoire') < subsection.index(f'<a id="{color}-exits"')
         assert subsection.index(f'<a id="{color}-exits"') < subsection.index(f'<a id="{color}-common-positions"')
         if '### Vulnerabilities' in subsection:
             assert subsection.index('### Most common positions') < subsection.index('### Vulnerabilities')
         written = [p.relative_to(path.parent).as_posix() for p in path.parent.rglob('*.md')]
-        assert all(page in written for page in page_names(report) if 'openings' in bundle or not page.startswith('openings/'))
+        assert all(
+            page in written for page in page_names(report) if 'openings' in bundle or not page.startswith('openings/')
+        )
         assert (f'openings/{color}.md' in written) == ('openings' in bundle)
     check_links(path.parent)
     generate([path])
-    assert '| **Combined** |' not in (path.parent/'report.md').read_text(encoding='utf-8')
+    assert '| **Combined** |' not in (path.parent / 'report.md').read_text(encoding='utf-8')
     # The one-color render removes the other color's chapter and opening pages.
     assert not (path.parent / 'chapters' / 'B1.md').exists() and not (path.parent / 'openings' / 'black.md').exists()
 
@@ -686,12 +904,18 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
 def test_common_positions_are_prominent_and_link_to_chapters(complete):
     path, _ = complete
     bundles = generate([path], position_top=2)
-    full = (path.parent/'report.md').read_text(encoding='utf-8')
+    full = (path.parent / 'report.md').read_text(encoding='utf-8')
     assert '[Most common positions](#white-common-positions)' in full
-    assert full.index('## White repertoire') < full.index('### Most common positions') < full.index('### Vulnerabilities')
-    assert not re.search(r'^## Most common positions$',full,flags=re.M)
+    assert (
+        full.index('## White repertoire') < full.index('### Most common positions') < full.index('### Vulnerabilities')
+    )
+    assert not re.search(r'^## Most common positions$', full, flags=re.M)
     block = full.split('### Most common positions', 1)[1].split('### Openings reached', 1)[0]
-    assert '| Position (representative line) | Chapter source | Most common opening source | Position reach<br>Avg games per encounter | Repertoire score | Score spread | Games at position / reply |' in block
+    assert (
+        '| Position (representative line) | Chapter source | Most common '
+        'opening source | Position reach<br>Avg games per encounter | '
+        'Repertoire score | Score spread | Games at position / reply |' in block
+    )
     scope = bundles[0]['character']['scopes'][0]
     e4 = next(r for r in scope['positions'] if r['line'] == '1.e4')
     url = 'https://lichess.org/analysis/standard/' + '_'.join(e4['position'].split() + ['0', '1'])
@@ -703,30 +927,45 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     assert 'Showing 2 of' in block
     assert '(chapters/W' in block or '(#white-chapters)' in block
     assert sum(r.startswith('| [1.') for r in block.splitlines()) == 2
-    summary = (path.parent/'summary.md').read_text(encoding='utf-8')
+    summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     tree = summary.split('<summary>Most common positions</summary>', 1)[1].split('</details>', 1)[0]
     assert f'- **[1. e4]({url})**: 100.0% of games, score 40.0%' in tree
     with pytest.raises(ValueError, match='positive table lengths'):
         generate([path], position_top=0)
     scope = bundles[0]['character']['scopes'][0]
-    scope['unresolved_opponent_distribution_mass'] = .1
-    assert 'Only known reach is ranked' in '\n'.join(common_positions_section(bundles,2))
+    scope['unresolved_opponent_distribution_mass'] = 0.1
+    assert 'Only known reach is ranked' in '\n'.join(common_positions_section(bundles, 2))
     scope.pop('positions')
-    assert 'Position reach is not available' in '\n'.join(common_positions_section(bundles,2))
+    assert 'Position reach is not available' in '\n'.join(common_positions_section(bundles, 2))
 
 
 def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoints():
     from helpers import position
+
     def row(path, kind, turn, reach):
-        return dict(position=position(path), line=path, kind=kind, to_move=turn, reach=reach, is_starting_position=False,
-                    repertoire_score=.6, database_score=.45, games=1234)
-    scope = {'id': 'overall', 'positions': [
-        row('e4 e5', 'own_move', 'white', .5),
-        row('e4 e5 Nf3', 'opponent_reply', 'black', .5),
-        row('e4 c5', 'unprepared_reply', 'white', .3),
-        row('e4 e6 d4', 'theory_leaf', 'black', .2),
-        row('e4 d5', 'theory_leaf', 'white', .1)]}
-    scope['positions'][2]['unprepared_origins'] = [dict(reach=.1),dict(reach=.2)]
+        return dict(
+            position=position(path),
+            line=path,
+            kind=kind,
+            to_move=turn,
+            reach=reach,
+            is_starting_position=False,
+            repertoire_score=0.6,
+            database_score=0.45,
+            games=1234,
+        )
+
+    scope = {
+        'id': 'overall',
+        'positions': [
+            row('e4 e5', 'own_move', 'white', 0.5),
+            row('e4 e5 Nf3', 'opponent_reply', 'black', 0.5),
+            row('e4 c5', 'unprepared_reply', 'white', 0.3),
+            row('e4 e6 d4', 'theory_leaf', 'black', 0.2),
+            row('e4 d5', 'theory_leaf', 'white', 0.1),
+        ],
+    }
+    scope['positions'][2]['unprepared_origins'] = [dict(reach=0.1), dict(reach=0.2)]
     bundle = {'report': {'color': 'white', 'chapters': []}, 'character': {'scopes': [scope]}}
     text = '\n'.join(common_positions_section([bundle]))
     assert '[e4 e5](' not in text and '| [e4 e5 Nf3](' in text
@@ -734,16 +973,19 @@ def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoi
     assert 'e4 e6 d4<br>' not in text and 'e4 e6 d4)<br>' not in text
     assert 'Black to move' not in text and '| To move |' not in text
     assert '50.00%' in text and '30.00%' in text
-    prepared, unprepared = text.split('#### Unprepared opponent replies',1)
+    prepared, unprepared = text.split('#### Unprepared opponent replies', 1)
     assert 'e4 e5 Nf3' in prepared and 'e4 c5' not in prepared
     assert 'e4 c5' in unprepared and 'e4 e5 Nf3' not in unprepared
     assert re.search(r'\[e4 d5\]\([^)]+\)<br>White to move; no prepared reply', unprepared)
     assert 'e4 d5' not in prepared
-    assert '| Repertoire score | Score spread | Games at position / reply |' in prepared and '| 60.00% | unavailable | 1,234 |' in prepared
+    assert (
+        '| Repertoire score | Score spread | Games at position / reply |' in prepared
+        and '| 60.00% | unavailable | 1,234 |' in prepared
+    )
     # Unprepared replies end preparation, so the always-zero spread column is omitted.
     assert '| Database score | Games at position / reply |' in unprepared and '| 45.00% | 1,234† |' in unprepared
     # Filter before the limit: the lower-frequency unprepared reply still appears.
-    limited = '\n'.join(common_positions_section([bundle],1))
+    limited = '\n'.join(common_positions_section([bundle], 1))
     assert 'e4 e5 Nf3' in limited and 'e4 c5' in limited and 'e4 e6 d4' not in limited
     tree = '\n'.join(position_tree(scope, Chapters(bundle['report']), 2))
     assert '- **[e4 e5 Nf3](' in tree and '  - **[e4 e6 d4](' not in tree and 'e4 c5' not in tree
@@ -758,12 +1000,29 @@ def test_common_positions_collapse_guaranteed_replies_and_flag_unanswered_endpoi
 
 def test_position_tree_nests_by_route_and_shows_only_new_moves():
     from helpers import position
+
     def row(route, reach):
         moves = ' '.join(token.split('.')[-1] for token in route.split())
-        return dict(position=position(moves), line=route, kind='opponent_reply', to_move='black', reach=reach,
-                    is_starting_position=False, repertoire_score=.55, games=10)
-    scope = {'id': 'overall', 'positions': [row('1.e4', 1.), row('1.e4 1...e5 2.Nc3', .5),
-                                            row('1.e4 1...e5 2.Nc3 2...Nc6 3.g3', .2), row('1.e4 1...c5 2.Nc3', .3)]}
+        return dict(
+            position=position(moves),
+            line=route,
+            kind='opponent_reply',
+            to_move='black',
+            reach=reach,
+            is_starting_position=False,
+            repertoire_score=0.55,
+            games=10,
+        )
+
+    scope = {
+        'id': 'overall',
+        'positions': [
+            row('1.e4', 1.0),
+            row('1.e4 1...e5 2.Nc3', 0.5),
+            row('1.e4 1...e5 2.Nc3 2...Nc6 3.g3', 0.2),
+            row('1.e4 1...c5 2.Nc3', 0.3),
+        ],
+    }
     tree = position_tree(scope, Chapters({'color': 'white', 'chapters': []}))
     labels = [re.match(r'( *)- \*\*\[([^\]]+)\]', item).groups() for item in tree if item]
     assert labels == [('', '1. e4'), ('  ', '1... e5 2. Nc3'), ('    ', '2... Nc6 3. g3'), ('  ', '1... c5 2. Nc3')]
@@ -772,38 +1031,70 @@ def test_position_tree_nests_by_route_and_shows_only_new_moves():
 
 def test_exit_points_group_unprepared_replies_by_last_prepared_board():
     from helpers import position
+
     parent, other = position('e4 c5 Nf3 Nc6 Bc4 e6'), position('e4 c5')
+
     def stop(board, move, reach, score):
-        child = chess.Board(board + ' 0 1'); child.push_uci(move)
-        return dict(type='deviation', parent_position=board, position=' '.join(child.fen().split()[:4]), move=move,
-                    line=f'route {move}', reach=reach, score=score)
-    scope = {'id': 'overall', 'positions': [
-        dict(position=parent, line='1.e4 1...c5 2.Nf3 2...Nc6 3.Bc4 3...e6', reach=.06, kind='opponent_reply'),
-        dict(position=other, line='1.e4 1...c5', reach=.6, kind='opponent_reply'),
-        dict(position='leaf', line='1.e4 1...d5', reach=.01, kind='theory_leaf')],
-        'stopping_outcomes': [stop(parent, 'e1g1', .03, .5), stop(parent, 'd2d4', .02, .6), stop(parent, 'b1c3', .01, None),
-                              stop(other, 'd2d3', .04, .52),
-                              dict(type='theory_leaf', parent_position='leaf', position='leaf', move=None, line='leaf', reach=.01, score=.4),
-                              dict(type='terminal', parent_position=other, position='mate', move=None, line='mate', reach=.5, score=1.)]}
+        child = chess.Board(board + ' 0 1')
+        child.push_uci(move)
+        return dict(
+            type='deviation',
+            parent_position=board,
+            position=' '.join(child.fen().split()[:4]),
+            move=move,
+            line=f'route {move}',
+            reach=reach,
+            score=score,
+        )
+
+    scope = {
+        'id': 'overall',
+        'positions': [
+            dict(position=parent, line='1.e4 1...c5 2.Nf3 2...Nc6 3.Bc4 3...e6', reach=0.06, kind='opponent_reply'),
+            dict(position=other, line='1.e4 1...c5', reach=0.6, kind='opponent_reply'),
+            dict(position='leaf', line='1.e4 1...d5', reach=0.01, kind='theory_leaf'),
+        ],
+        'stopping_outcomes': [
+            stop(parent, 'e1g1', 0.03, 0.5),
+            stop(parent, 'd2d4', 0.02, 0.6),
+            stop(parent, 'b1c3', 0.01, None),
+            stop(other, 'd2d3', 0.04, 0.52),
+            dict(
+                type='theory_leaf',
+                parent_position='leaf',
+                position='leaf',
+                move=None,
+                line='leaf',
+                reach=0.01,
+                score=0.4,
+            ),
+            dict(type='terminal', parent_position=other, position='mate', move=None, line='mate', reach=0.5, score=1.0),
+        ],
+    }
     rows = exit_points(scope)
     assert [r['position'] for r in rows] == [parent, other, 'leaf']
-    assert rows[0]['reach'] == pytest.approx(.06) and rows[0]['share'] == pytest.approx(1.)
-    assert rows[0]['score'] == pytest.approx((.03 * .5 + .02 * .6) / .05)  # unresolved replies stay out of the score
-    assert rows[1]['share'] == pytest.approx(.04 / .6) and rows[2]['leaf'] and not rows[2]['replies']
+    assert rows[0]['reach'] == pytest.approx(0.06) and rows[0]['share'] == pytest.approx(1.0)
+    assert rows[0]['score'] == pytest.approx(
+        (0.03 * 0.5 + 0.02 * 0.6) / 0.05
+    )  # unresolved replies stay out of the score
+    assert rows[1]['share'] == pytest.approx(0.04 / 0.6) and rows[2]['leaf'] and not rows[2]['replies']
     text = '\n'.join(exits_section(scope, Chapters({'color': 'black', 'chapters': []}), 2))
     assert '| [1. e4 c5 2. Nf3 Nc6 3. Bc4 e6](' in text and '| 6.00%<br>1 per 17 games | 100.00% | 3 |' in text
     assert re.search(r'\[4\. O-O\]\([^)]+\) 3\.00%, \[4\. d4\]\([^)]+\) 2\.00%, \[4\. Nc3\]\([^)]+\) 1\.00%', text)
     assert '| 4.00%<br>1 per 25 games | 6.67% | 1 |' in text and 'leaf' not in text
-    assert 'These 2 positions are where **10.00%** of Black games leave preparation. Preparation ends at 3 positions in all.' in text
+    assert (
+        'These 2 positions are where **10.00%** of Black games leave '
+        'preparation. Preparation ends at 3 positions in all.' in text
+    )
 
 
 def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(tmp_path, monkeypatch):
     report, cache = run_fixture(tmp_path, monkeypatch)
-    path = tmp_path/'white.json'
+    path = tmp_path / 'white.json'
     path.with_suffix('.character.json').write_text(json.dumps(character(path, cache)), encoding='utf-8')
-    before = {p:p.read_bytes() for p in tmp_path.glob('*.json')}
+    before = {p: p.read_bytes() for p in tmp_path.glob('*.json')}
     bundles = generate([path], position_top=1)
-    text = (tmp_path/'report.md').read_text(encoding='utf-8')
+    text = (tmp_path / 'report.md').read_text(encoding='utf-8')
     refs = Chapters(bundles[0]['report'])
     assert 'Most frequently used own decisions' not in text
     for chapter in report['chapters']:
@@ -817,11 +1108,13 @@ def test_chapter_common_positions_use_conditional_reach_and_alternative_policy(t
         assert block.index('\n## Most common positions\n') < block.index('\n## Strengths\n')
         assert chapter['url'] in block
     alternative = next(c for c in report['chapters'] if c['id'] == 'tarrasch')
-    assert alternative['score']['entry_probability'] == pytest.approx(.6)
+    assert alternative['score']['entry_probability'] == pytest.approx(0.6)
     block = (tmp_path / 'chapters' / 'W2.md').read_text(encoding='utf-8')
     block = block.split('<a id="white-chapter-2-common-positions"></a>', 1)[1].split('## Strengths', 1)[0]
     assert '| [1. e4 e6 2. d4 d5 3. Nd2 Nf6 4. e5](' in block
-    assert '| 100.00%<br>1 per 1.0 games | 90.00% |' in block  # conditional on entry, not multiplied by the 60% chapter reach
+    assert (
+        '| 100.00%<br>1 per 1.0 games | 90.00% |' in block
+    )  # conditional on entry, not multiplied by the 60% chapter reach
     overall = text.split('### Most common positions', 1)[1].split('### Openings reached', 1)[0]
     assert '3. Nd2 Nf6' not in overall  # overall still selects the Advance
     assert all(p.read_bytes() == data for p, data in before.items())
@@ -842,7 +1135,9 @@ def test_summary_leads_with_exits_and_own_moves_and_keeps_snapshot_notices_visib
         assert content.count(row) == 1
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
-    assert full.index('### White chapters') < full.index('### Where preparation ends') < full.index('### Vulnerabilities')
+    assert (
+        full.index('### White chapters') < full.index('### Where preparation ends') < full.index('### Vulnerabilities')
+    )
     assert '<summary>Chapter comparisons (3 chapters)</summary>' in summary
     assert '### Openings reached' not in summary
     assert '| Opening family / variation |' not in summary
@@ -863,15 +1158,21 @@ def test_summary_leads_with_exits_and_own_moves_and_keeps_snapshot_notices_visib
     assert depth == 0
     visible = '\n'.join(visible)
     assert 'snapshot notice' in visible
-    assert '| Preparation ends after |' in visible and '| Games leaving prep here<br>Avg games per encounter |' in visible
+    assert (
+        '| Preparation ends after |' in visible and '| Games leaving prep here<br>Avg games per encounter |' in visible
+    )
     assert 'Costly unprepared replies' not in visible and '| Position (representative line) |' not in visible
     assert re.findall(r'^### (.+)$', visible, flags=re.M) == summary_headings
     assert 'Chapters |' not in visible and 'Outcome volatility' not in visible
     assert 'database evidence retrieved' not in visible
     assert '<summary>Most common positions</summary>' in summary
     assert '<summary>Preparation and variability</summary>' in summary
-    assert (summary.index('### Where preparation ends') < summary.index('<summary>Most common positions')
-            < summary.index('<summary>Chapter comparisons') < summary.index('<summary>Preparation and variability'))
+    assert (
+        summary.index('### Where preparation ends')
+        < summary.index('<summary>Most common positions')
+        < summary.index('<summary>Chapter comparisons')
+        < summary.index('<summary>Preparation and variability')
+    )
     assert '### Largest position contributions' not in summary
     assert '### Equivalent gap reach' not in summary
     assert '**Gaps driving repeat encounters**' not in summary

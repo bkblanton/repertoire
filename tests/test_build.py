@@ -4,6 +4,7 @@ from pathlib import Path
 import chess
 import httpx
 import pytest
+from helpers import cache_row, data, position
 
 from repertoire_score import build, render
 from repertoire_score.board_cache import geometry, owner_outcome
@@ -11,15 +12,16 @@ from repertoire_score.character import board_fingerprint
 from repertoire_score.explorer import Explorer
 from repertoire_score.graph import Graph, Node, key, parse, resolve
 from repertoire_score.preparation import chess_facts
-from helpers import data, position
-from helpers import cache_row
 
 
 def test_shared_geometry_preserves_legal_moves_terminals_and_graph_membership():
-    boards = [chess.Board(), chess.Board('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1'),
-              chess.Board('4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1'),
-              chess.Board('7k/6Q1/5K2/8/8/8/8/8 b - - 0 1'),
-              chess.Board('7k/5K2/6Q1/8/8/8/8/8 b - - 0 1')]
+    boards = [
+        chess.Board(),
+        chess.Board('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1'),
+        chess.Board('4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1'),
+        chess.Board('7k/6Q1/5K2/8/8/8/8/8 b - - 0 1'),
+        chess.Board('7k/5K2/6Q1/8/8/8/8/8 b - - 0 1'),
+    ]
     for board in boards:
         k = key(board)
         expected = {}
@@ -28,10 +30,15 @@ def test_shared_geometry_preserves_legal_moves_terminals_and_graph_membership():
             child.push(move)
             expected[move.uci()] = key(child)
         assert dict(geometry(k).moves) == expected
-        terminal = (float(board.turn != chess.WHITE) if board.is_checkmate() else
-                    .5 if board.is_stalemate() or board.is_insufficient_material() else None)
+        terminal = (
+            float(board.turn != chess.WHITE)
+            if board.is_checkmate()
+            else 0.5
+            if board.is_stalemate() or board.is_insufficient_material()
+            else None
+        )
         assert owner_outcome(k, chess.WHITE) == terminal
-        assert owner_outcome(k, chess.BLACK) == (None if terminal is None else 1-terminal)
+        assert owner_outcome(k, chess.BLACK) == (None if terminal is None else 1 - terminal)
     root, after = position('e4'), position('e4 e5')
     lone = Graph({root: Node(root + ' 0 1', [])}, [], [root])
     joined = Graph(dict(lone.nodes, **{after: Node(after + ' 0 1', [])}), [], [root])
@@ -65,21 +72,27 @@ def test_checkpoints_validate_bytes_and_recover_from_failure(tmp_path):
     source.write_text('one')
     runner = build.Builder(tmp_path / 'state.json')
     count = []
+
     def action():
         count.append(1)
         output.write_text(source.read_text())
+
     def step():
         runner.step('work', lambda: build.file_inputs([source]), [output], action)
-    step(); step()
+
+    step()
+    step()
     assert len(count) == 1
     output.write_text('corrupt')
     step()
     source.write_text('two')
     step()
     assert len(count) == 3
+
     def fail():
         output.write_text('partial')
         raise RuntimeError('interrupted')
+
     runner.force = True
     with pytest.raises(RuntimeError, match='interrupted'):
         runner.step('work', lambda: build.file_inputs([source]), [output], fail)
@@ -90,11 +103,13 @@ def test_checkpoints_validate_bytes_and_recover_from_failure(tmp_path):
 
 
 def test_cache_dependencies_include_misses_but_ignore_unrelated_tables(tmp_path):
-    cache = tmp_path / 'cache'; cache.mkdir()
+    cache = tmp_path / 'cache'
+    cache.mkdir()
     parent, missing = position('e4'), position('e4 e5')
     cache_row(cache, parent, data(50, 0, 50))
     runner = build.Builder(tmp_path / 'state.json')
     calls, output = [], tmp_path / 'out'
+
     def action():
         calls.append(1)
         explorer = Explorer(cache, offline=True)
@@ -107,9 +122,12 @@ def test_cache_dependencies_include_misses_but_ignore_unrelated_tables(tmp_path)
         finally:
             explorer.close()
         output.write_text('done')
+
     def step():
         runner.step('work', lambda: {}, [output], action)
-    step(); step()
+
+    step()
+    step()
     cache_row(cache, position('d4'), data(50, 0, 50))
     step()
     assert len(calls) == 1
@@ -123,26 +141,42 @@ def test_cache_dependencies_include_misses_but_ignore_unrelated_tables(tmp_path)
 @pytest.fixture
 def batch(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx.Client, 'request', lambda *a, **k: pytest.fail('Batch must stay offline'))
-    text = ('[ChapterURL "https://lichess.org/study/test/a"]\n[ChapterName "King pawn"]\n\n'
-            '1. e4 e5 2. Nf3 Nc6 *\n\n'
-            '[ChapterURL "https://lichess.org/study/test/b"]\n[ChapterName "Queen pawn"]\n\n'
-            '1. d4 d5 2. Nf3 Nf6 *')
+    text = (
+        '[ChapterURL "https://lichess.org/study/test/a"]\n[ChapterName "King pawn"]\n\n'
+        '1. e4 e5 2. Nf3 Nc6 *\n\n'
+        '[ChapterURL "https://lichess.org/study/test/b"]\n[ChapterName "Queen pawn"]\n\n'
+        '1. d4 d5 2. Nf3 Nf6 *'
+    )
     white, black = tmp_path / 'white.pgn', tmp_path / 'black.pgn'
-    white.write_text(text); black.write_text(text)
-    cache = tmp_path / 'cache'; cache.mkdir()
+    white.write_text(text)
+    black.write_text(text)
+    cache = tmp_path / 'cache'
+    cache.mkdir()
     for k, n in parse(white).nodes.items():
         size = 100 // max(1, len(n.edges))
-        row = data(50, 0, 50, [(m, size//2, 0, size//2) for m in n.edges])
+        row = data(50, 0, 50, [(m, size // 2, 0, size // 2) for m in n.edges])
         cache_row(cache, k, row)
     renders = []
     original = build.generate
+
     def counted(*args, **kwargs):
         renders.append(1)
         return original(*args, **kwargs)
+
     monkeypatch.setattr(build, 'generate', counted)
+
     def run(**options):
-        return build.build(white, black, white_config=None, black_config=None,
-            directory=tmp_path / 'data', cache=cache, offline=True, **options)
+        return build.build(
+            white,
+            black,
+            white_config=None,
+            black_config=None,
+            directory=tmp_path / 'data',
+            cache=cache,
+            offline=True,
+            **options,
+        )
+
     return run, white, black, renders
 
 
@@ -172,7 +206,9 @@ def test_failed_batch_preserves_readable_reports_and_resumes(batch, monkeypatch)
     full = white.parent / 'report.md'
     full.write_text('previous successful report')
     original = build.preparation.analyze
-    monkeypatch.setattr(build.preparation, 'analyze', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('failed prep')))
+    monkeypatch.setattr(
+        build.preparation, 'analyze', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('failed prep'))
+    )
     with pytest.raises(RuntimeError, match='failed prep'):
         run()
     assert renders == [] and full.read_text() == 'previous successful report'
@@ -185,15 +221,25 @@ def test_presentation_change_only_renders_and_missing_analysis_rebuilds_dependan
     run, white, black, renders = batch
     run()
     original = build.code_inputs
-    monkeypatch.setattr(build, 'code_inputs', lambda presentation=False:
-        dict(original(presentation), presentation_revision='new') if presentation else original(False))
+    monkeypatch.setattr(
+        build,
+        'code_inputs',
+        lambda presentation=False: (
+            dict(original(presentation), presentation_revision='new') if presentation else original(False)
+        ),
+    )
     changed = run()
     assert changed['built'] == 1 and changed['reused'] == 16
     assert changed['steps'][-1]['step'] == 'render' and renders == [1, 1]
     (black.parent / 'data' / 'black.character.json').unlink()
     recovered = run()
     assert {s['step'] for s in recovered['steps'] if s['status'] == 'built'} == {
-        'black.character', 'black.ratings', 'black.insights', 'rating-correlations', 'render'}
+        'black.character',
+        'black.ratings',
+        'black.insights',
+        'rating-correlations',
+        'render',
+    }
 
 
 def test_rendering_code_invalidates_only_the_render_step():

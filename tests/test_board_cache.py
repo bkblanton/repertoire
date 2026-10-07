@@ -2,8 +2,18 @@ import random
 
 import chess
 
-from repertoire_score.board_cache import (STARTING_POSITION, after_fen, canonical, children, fen_number, fen_position,
-                                          move_text, next_number, san, turn)
+from repertoire_score.board_cache import (
+    STARTING_POSITION,
+    after_fen,
+    canonical,
+    children,
+    fen_number,
+    fen_position,
+    move_text,
+    next_number,
+    san,
+    turn,
+)
 
 
 def test_cached_move_facts_match_python_chess_over_random_games():
@@ -33,9 +43,13 @@ def test_cached_move_facts_match_python_chess_over_random_games():
 
 
 def test_halfmove_clock_and_numbers_for_castling_en_passant_and_promotion():
-    cases = [('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 3 10', 'e1g1'), ('r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 3 10', 'e8c8'),
-             ('4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 7', 'e5d6'), ('1n2k3/P7/8/8/8/8/8/4K3 w - - 5 40', 'a7b8q'),
-             ('4k3/8/8/8/8/8/8/R3K3 b - - 12 30', 'e8d7')]
+    cases = [
+        ('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 3 10', 'e1g1'),
+        ('r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 3 10', 'e8c8'),
+        ('4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 7', 'e5d6'),
+        ('1n2k3/P7/8/8/8/8/8/4K3 w - - 5 40', 'a7b8q'),
+        ('4k3/8/8/8/8/8/8/R3K3 b - - 12 30', 'e8d7'),
+    ]
     for fen, uci in cases:
         board = chess.Board(fen)
         move = chess.Move.from_uci(uci)

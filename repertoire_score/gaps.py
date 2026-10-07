@@ -4,8 +4,9 @@ This walk uses cached parent move rows only. Exact transpositions can rejoin
 prepared positions in any chapter. Small cyclic components are solved as an
 absorbing Markov chain; a closed component remains unresolved.
 """
-from collections import defaultdict
+
 import math
+from collections import defaultdict
 
 import numpy as np
 
@@ -54,12 +55,21 @@ def components(edges):
 def distribution(evaluator, starts, entry_probability=1.0):
     """Aggregate unconditional first-gap mass by canonical board before squaring."""
     if not starts:
-        return dict(status=Status.UNRESOLVED_ENTRY_WEIGHTS, equivalent_gap_reach=None,
-                    equivalent_gap_reach_bounds=None, weighted_equivalent_gap_reach=None,
-                    weighted_equivalent_gap_reach_bounds=None, gaps=[])
-    if any(not math.isfinite(w) or w < 0 for w in starts.values()) or not math.isclose(sum(starts.values()), 1., abs_tol=1e-10):
+        return dict(
+            status=Status.UNRESOLVED_ENTRY_WEIGHTS,
+            equivalent_gap_reach=None,
+            equivalent_gap_reach_bounds=None,
+            weighted_equivalent_gap_reach=None,
+            weighted_equivalent_gap_reach_bounds=None,
+            gaps=[],
+        )
+    if any(not math.isfinite(w) or w < 0 for w in starts.values()) or not math.isclose(
+        sum(starts.values()), 1.0, abs_tol=1e-10
+    ):
         raise ValueError('Gap distribution requires normalized starting weights')
-    if entry_probability is not None and (not math.isfinite(entry_probability) or not 0 <= entry_probability <= 1 + 1e-10):
+    if entry_probability is not None and (
+        not math.isfinite(entry_probability) or not 0 <= entry_probability <= 1 + 1e-10
+    ):
         raise ValueError('Invalid chapter entry probability')
     graph, facts = evaluator.graph, evaluator.facts
     edges, stops = {}, {}
@@ -71,18 +81,18 @@ def distribution(evaluator, starts, entry_probability=1.0):
         node, fact = graph.nodes[k], facts[k]
         transitions, absorptions = defaultdict(float), []
         if fact['outcome'] is not None:
-            absorptions.append(('terminal', None, 1.))
+            absorptions.append(('terminal', None, 1.0))
         elif fact['turn'] == evaluator.color:
             if node.edges:
                 for move, probability in evaluator.own_choices(k).items():
                     transitions[node.edges[move]] += probability
             else:
-                absorptions.append(('gap', k, 1.))
+                absorptions.append(('gap', k, 1.0))
         else:
             data = evaluator.evidence.get(k)
             total = sum(counts(data)) if data is not None else 0
             if not total:
-                absorptions.append(('unresolved', None, 1.))
+                absorptions.append(('unresolved', None, 1.0))
             else:
                 recorded = 0
                 for row in data['moves']:
@@ -102,14 +112,14 @@ def distribution(evaluator, starts, entry_probability=1.0):
                     raise ValueError('Inconsistent cached gap response counts')
                 if recorded < total:
                     absorptions.append(('unresolved', None, (total - recorded) / total))
-        if not math.isclose(sum(transitions.values()) + sum(p for _, _, p in absorptions), 1., abs_tol=1e-10):
+        if not math.isclose(sum(transitions.values()) + sum(p for _, _, p in absorptions), 1.0, abs_tol=1e-10):
             raise AssertionError('Local gap probability is not conserved')
         edges[k], stops[k] = dict(transitions), absorptions
         pending.extend(transitions)
 
     incoming = defaultdict(float, starts)
     gaps = defaultdict(float)
-    terminal_mass = unresolved_mass = 0.
+    terminal_mass = unresolved_mass = 0.0
     cyclic_components = closed_components = 0
     for group in components(edges):
         membership = set(group)
@@ -136,7 +146,7 @@ def distribution(evaluator, starts, entry_probability=1.0):
         if np.any(flow < -1e-10) or not np.isfinite(flow).all():
             raise AssertionError('Invalid gap visit flow')
         for k, mass in zip(group, flow):
-            mass = max(0., float(mass))
+            mass = max(0.0, float(mass))
             for target, probability in edges[k].items():
                 if target not in membership:
                     incoming[target] += mass * probability
@@ -149,28 +159,44 @@ def distribution(evaluator, starts, entry_probability=1.0):
                 else:
                     unresolved_mass += weight
     gap_mass = sum(gaps.values())
-    if not math.isclose(gap_mass + terminal_mass + unresolved_mass, 1., abs_tol=1e-9):
+    if not math.isclose(gap_mass + terminal_mass + unresolved_mass, 1.0, abs_tol=1e-9):
         raise AssertionError('First-gap distribution does not conserve probability')
     if unresolved_mass < 1e-12:
-        unresolved_mass = 0.
-    largest = max(gaps.values(), default=0.)
+        unresolved_mass = 0.0
+    largest = max(gaps.values(), default=0.0)
     collision = sum(p * p for p in gaps.values())
     # Unknown mass can diffuse over unidentified boards or merge into the
     # largest known gap. These are conservative bounds, without a depth prior.
-    bounds = [math.sqrt(collision), math.sqrt(min(1., collision + 2 * largest * unresolved_mass + unresolved_mass ** 2))]
+    bounds = [math.sqrt(collision), math.sqrt(min(1.0, collision + 2 * largest * unresolved_mass + unresolved_mass**2))]
     equivalent = bounds[0] if not unresolved_mass else None
     weighted_bounds = [entry_probability * r for r in bounds] if entry_probability is not None else None
-    weighted = (entry_probability * equivalent if entry_probability is not None and equivalent is not None
-                else 0. if entry_probability == 0 else None)
-    return dict(status=Status.RESOLVED if not unresolved_mass else Status.UNRESOLVED_GAP_REACH,
-                equivalent_gap_reach=equivalent, equivalent_gap_reach_bounds=bounds,
-                known_repeat_gap_probability=collision,
-                repeat_gap_probability=collision if not unresolved_mass else None,
-                largest_gap_reach=largest, gap_mass=gap_mass, terminal_mass=terminal_mass,
-                unresolved_mass=unresolved_mass, distinct_gaps=len(gaps),
-                entry_probability=entry_probability, weighted_equivalent_gap_reach=weighted,
-                weighted_equivalent_gap_reach_bounds=weighted_bounds,
-                gaps=[dict(position=k, reach=p) for k, p in sorted(gaps.items(), key=lambda r: (-r[1], r[0])) if p > 0],
-                validation=dict(probability_conserved=True, canonical_gaps_merged_before_squaring=True,
-                                no_unprepared_child_queries=True, cyclic_components=cyclic_components,
-                                closed_components=closed_components))
+    weighted = (
+        entry_probability * equivalent
+        if entry_probability is not None and equivalent is not None
+        else 0.0
+        if entry_probability == 0
+        else None
+    )
+    return dict(
+        status=Status.RESOLVED if not unresolved_mass else Status.UNRESOLVED_GAP_REACH,
+        equivalent_gap_reach=equivalent,
+        equivalent_gap_reach_bounds=bounds,
+        known_repeat_gap_probability=collision,
+        repeat_gap_probability=collision if not unresolved_mass else None,
+        largest_gap_reach=largest,
+        gap_mass=gap_mass,
+        terminal_mass=terminal_mass,
+        unresolved_mass=unresolved_mass,
+        distinct_gaps=len(gaps),
+        entry_probability=entry_probability,
+        weighted_equivalent_gap_reach=weighted,
+        weighted_equivalent_gap_reach_bounds=weighted_bounds,
+        gaps=[dict(position=k, reach=p) for k, p in sorted(gaps.items(), key=lambda r: (-r[1], r[0])) if p > 0],
+        validation=dict(
+            probability_conserved=True,
+            canonical_gaps_merged_before_squaring=True,
+            no_unprepared_child_queries=True,
+            cyclic_components=cyclic_components,
+            closed_components=closed_components,
+        ),
+    )

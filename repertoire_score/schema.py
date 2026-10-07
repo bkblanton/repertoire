@@ -4,6 +4,7 @@ These TypedDicts document the format and give editors and type checkers somethin
 validates files against them at run time. Scores are owner-relative expected points between 0 and 1, and
 `*_pp` fields are percentage points. Fields that cannot be resolved from the evidence are None.
 """
+
 from typing import NotRequired, TypedDict
 
 from .status import Status
@@ -20,6 +21,7 @@ class Masses(TypedDict):
 
 class Posterior(TypedDict):
     """Calculated uncertainty from finite database samples (see uncertainty.py)."""
+
     mean: float
     standard_deviation: float
     credible_interval_95: list[float]
@@ -40,6 +42,7 @@ class PreparedDepth(TypedDict):
 
 class ScoreSummary(TypedDict):
     """A repertoire score: the exact empirical score plus its bounds, masses and posterior."""
+
     raw_empirical_score: float | None
     resolved_contribution: float
     unresolved_mass: float
@@ -53,6 +56,7 @@ class ScoreSummary(TypedDict):
 
 class ChapterScore(ScoreSummary, total=False):
     """A chapter's score conditional on first entry; `status` replaces the score when it cannot be resolved."""
+
     status: Status
     entry_probability: float | None
     posterior_entry_probability_mean: float | None
@@ -90,6 +94,7 @@ class Chapter(TypedDict):
 
 class StoppingEvent(TypedDict):
     """One way a modeled game leaves preparation under the overall policy."""
+
     parent_position: Position
     position: str  # full FEN after the move
     move: str | None
@@ -115,6 +120,7 @@ class StoppingEvent(TypedDict):
 
 class ScoreManifest(TypedDict):
     """How a score was made: source, configuration, evidence provenance and settings."""
+
     created_at: str
     input_path: str
     input_sha256: str
@@ -138,6 +144,7 @@ class ScoreManifest(TypedDict):
 
 class ScoreResult(TypedDict):
     """The saved score file for one color."""
+
     color: str
     overall: ScoreSummary
     chapters: list[Chapter]
@@ -152,6 +159,7 @@ class ScoreResult(TypedDict):
 
 class CompanionManifest(TypedDict, total=False):
     """Provenance every companion analysis shares; its hashes tie it to one exact score result."""
+
     created_at: str
     schema_version: int
     report_path: str

@@ -54,9 +54,10 @@ Sanity checks enforce conservation at every evaluated node and reproduce the roo
 ```sh
 uv run --no-sync pytest -q
 uv run --no-sync ruff check
+uv run --no-sync ruff format --check
 ```
 
-GitHub Actions runs both on Ubuntu and Windows for every push to `main` and every pull request. Shared test helpers (small PGN graphs, Explorer tables, cached runs) live in `tests/helpers.py`, and pytest fixtures in `tests/conftest.py`. Tests use synthetic data and cache fixtures; a live token is not required. On Windows, if pytest cannot write to the default temp folder:
+`ruff format` (without `--check`) applies the formatting; it keeps each string's existing quote style. GitHub Actions runs all three on Ubuntu and Windows for every push to `main` and every pull request. Shared test helpers (small PGN graphs, Explorer tables, cached runs) live in `tests/helpers.py`, and pytest fixtures in `tests/conftest.py`. Tests use synthetic data and cache fixtures; a live token is not required. On Windows, if pytest cannot write to the default temp folder:
 
 ```powershell
 $env:TMP = Join-Path $PWD '.cache/tmp'

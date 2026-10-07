@@ -1,4 +1,5 @@
 """The `repertoire` command: one entry point that dispatches to each stage's own parser."""
+
 import argparse
 import importlib
 import sys
@@ -22,8 +23,10 @@ COMMANDS = [
 
 def parser():
     result = argparse.ArgumentParser(
-        prog='repertoire', description='Score chess opening repertoires with Lichess Opening Explorer statistics.',
-        epilog="Run 'repertoire <command> --help' for a command's options.")
+        prog='repertoire',
+        description='Score chess opening repertoires with Lichess Opening Explorer statistics.',
+        epilog="Run 'repertoire <command> --help' for a command's options.",
+    )
     commands = result.add_subparsers(title='commands', metavar='<command>')
     for name, _, summary in COMMANDS:
         # Options are parsed by the stage itself; this parser only lists the commands.

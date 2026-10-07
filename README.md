@@ -65,6 +65,7 @@ uv run repertoire score inspect path/to/white.pgn --color white --output reports
 ```sh
 uv run pytest -q
 uv run ruff check
+uv run ruff format --check
 ```
 
 Tests use synthetic data and cache fixtures, so they need no token or network access.

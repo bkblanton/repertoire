@@ -1,4 +1,5 @@
 """Where outputs go: readable reports above their supporting data directory, and the data file format."""
+
 import json
 from pathlib import Path
 

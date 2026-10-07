@@ -1,5 +1,24 @@
 """Reusable tables of moves, replies, positions, chapters and openings."""
-from .format import count, delta_points, escape, gain_split, games_per_encounter, gap_percentage, interval_cell, line, move_reach_label, number, opponent_rating, per_thousand, percentage, position_reach_label, rating_difference, score_points, spread_display
+
+from .format import (
+    count,
+    delta_points,
+    escape,
+    gain_split,
+    games_per_encounter,
+    gap_percentage,
+    interval_cell,
+    line,
+    move_reach_label,
+    number,
+    opponent_rating,
+    per_thousand,
+    percentage,
+    position_reach_label,
+    rating_difference,
+    score_points,
+    spread_display,
+)
 from .links import linked_line
 from .markdown import SourceCell, drop_uniform, table
 
@@ -19,42 +38,113 @@ def chapter_table(report, refs):
         reach = percentage(s.get('entry_probability'))
         if alternatives:
             reach += '<br>Overall ' + percentage(s.get('overall_policy_entry_probability', s.get('entry_probability')))
-        rows.append([title, reach, percentage(base.get('raw_score')), percentage(s.get('raw_empirical_score')),
-                     score_points(base.get('difference_pp'), signed=True),
-                     number(s.get('prepared_depth', {}).get('expected_moves')), spread_display(s.get('branch_score_spread'), False),
-                     gap_percentage(c.get('gap_coverage')) + '<br>Weighted ' + gap_percentage(c.get('gap_coverage'), weighted=True),
-                     opponent_rating(c.get('opponent_ratings', {}).get('score_evidence'))])
-    return table(['Chapter', 'Chapter reach (incl. transpositions)' + ('<br>Overall-policy reach' if alternatives else ''),
-                  'Entry baseline', 'Repertoire score', 'Delta', 'Prepared depth', 'Score spread',
-                  'Equivalent gap reach after entry<br>Weighted gap reach contribution', 'Avg opponent rating'], rows)
+        rows.append(
+            [
+                title,
+                reach,
+                percentage(base.get('raw_score')),
+                percentage(s.get('raw_empirical_score')),
+                score_points(base.get('difference_pp'), signed=True),
+                number(s.get('prepared_depth', {}).get('expected_moves')),
+                spread_display(s.get('branch_score_spread'), False),
+                gap_percentage(c.get('gap_coverage'))
+                + '<br>Weighted '
+                + gap_percentage(c.get('gap_coverage'), weighted=True),
+                opponent_rating(c.get('opponent_ratings', {}).get('score_evidence')),
+            ]
+        )
+    return table(
+        [
+            'Chapter',
+            'Chapter reach (incl. transpositions)' + ('<br>Overall-policy reach' if alternatives else ''),
+            'Entry baseline',
+            'Repertoire score',
+            'Delta',
+            'Prepared depth',
+            'Score spread',
+            'Equivalent gap reach after entry<br>Weighted gap reach contribution',
+            'Avg opponent rating',
+        ],
+        rows,
+    )
 
 
 def own_move_table(rows, scope, refs, strongest=False):
     refs = refs.for_scope(scope.get('id'))
-    return table(['Line', 'Chapter source', move_reach_label(scope), 'Parent database score', 'Move database score',
-                  'Repertoire score', 'Score spread', 'Gain' if strongest else 'Drag',
-                  'Gain split: move / prep', 'Parent games', 'Avg opponent rating'],
-                 [[refs.move_cell(r), refs.sources(r), percentage(r['branch_reach']), percentage(r['reference_score']),
-                   percentage(r.get('move_database_score')), percentage(r['move_score']),
-                   spread_display(r.get('move_spread')), delta_points(r['move_score'], r['reference_score'], drag=not strongest)
-                   + '<br>95%: ' + interval_cell(r.get('local_gain_interval_pp' if strongest else 'local_drop_interval_pp')),
-                   gain_split(r), count(r['parent_sample_count']), opponent_rating(r.get('opponent_rating'))] for r in rows])
+    return table(
+        [
+            'Line',
+            'Chapter source',
+            move_reach_label(scope),
+            'Parent database score',
+            'Move database score',
+            'Repertoire score',
+            'Score spread',
+            'Gain' if strongest else 'Drag',
+            'Gain split: move / prep',
+            'Parent games',
+            'Avg opponent rating',
+        ],
+        [
+            [
+                refs.move_cell(r),
+                refs.sources(r),
+                percentage(r['branch_reach']),
+                percentage(r['reference_score']),
+                percentage(r.get('move_database_score')),
+                percentage(r['move_score']),
+                spread_display(r.get('move_spread')),
+                delta_points(r['move_score'], r['reference_score'], drag=not strongest)
+                + '<br>95%: '
+                + interval_cell(r.get('local_gain_interval_pp' if strongest else 'local_drop_interval_pp')),
+                gain_split(r),
+                count(r['parent_sample_count']),
+                opponent_rating(r.get('opponent_rating')),
+            ]
+            for r in rows
+        ],
+    )
 
 
 def reply_table(rows, scope, refs, prepared):
     """Unprepared replies stop preparation, so only the spread before the reply is informative."""
     spread_header = 'Score spread<br>Before / after' if prepared else 'Score spread before reply'
+
     def spread(r):
         before = spread_display(r.get('reference_spread'), False)
         return before + '<br>' + spread_display(r.get('move_spread'), False) if prepared else before
-    return table(['Line', 'Chapter source / context', move_reach_label(scope), 'Reply frequency at parent',
-                  'Before reply (repertoire)', 'After reply (repertoire)' if prepared else 'After reply (database)',
-                  spread_header, 'Drag', 'Drag per 1,000 games', 'Reply games', 'Avg opponent rating'],
-                 [[refs.move_cell(r), refs.sources(r), percentage(r['branch_reach']) + '<br>1 per ' + games_per_encounter(r['branch_reach']) + ' games',
-                   percentage(r['branch_probability']), percentage(r['reference_score']), percentage(r['move_score']), spread(r),
-                   score_points(r['local_drop_pp']) + '<br>95%: ' + interval_cell(r.get('local_drop_interval_pp')),
-                   per_thousand(r['weighted_drag_pp']), count(r['sample_count']), opponent_rating(r.get('opponent_rating'))
-                   + '<br>Δ ' + rating_difference(r.get('opponent_rating'))] for r in rows])
+
+    return table(
+        [
+            'Line',
+            'Chapter source / context',
+            move_reach_label(scope),
+            'Reply frequency at parent',
+            'Before reply (repertoire)',
+            'After reply (repertoire)' if prepared else 'After reply (database)',
+            spread_header,
+            'Drag',
+            'Drag per 1,000 games',
+            'Reply games',
+            'Avg opponent rating',
+        ],
+        [
+            [
+                refs.move_cell(r),
+                refs.sources(r),
+                percentage(r['branch_reach']) + '<br>1 per ' + games_per_encounter(r['branch_reach']) + ' games',
+                percentage(r['branch_probability']),
+                percentage(r['reference_score']),
+                percentage(r['move_score']),
+                spread(r),
+                score_points(r['local_drop_pp']) + '<br>95%: ' + interval_cell(r.get('local_drop_interval_pp')),
+                per_thousand(r['weighted_drag_pp']),
+                count(r['sample_count']),
+                opponent_rating(r.get('opponent_rating')) + '<br>Δ ' + rating_difference(r.get('opponent_rating')),
+            ]
+            for r in rows
+        ],
+    )
 
 
 def position_label(row, color, refs=None):
@@ -68,23 +158,51 @@ def position_label(row, color, refs=None):
 
 def position_games(row):
     games = row.get('games')
-    if games is None: return 'unavailable'
+    if games is None:
+        return 'unavailable'
     return count(games) + ('†' if len(row.get('unprepared_origins', [])) > 1 else '')
 
 
 def position_contribution_table(rows, scope, refs):
     refs = refs.for_scope(scope.get('id'))
+
     def kind(row):
-        if row['kind'] == 'terminal': return 'Game over'
-        if row['score_basis'] == 'database': return 'Unprepared reply'
+        if row['kind'] == 'terminal':
+            return 'Game over'
+        if row['score_basis'] == 'database':
+            return 'Unprepared reply'
         return 'Prepared endpoint' if row['kind'] == 'theory_leaf' else 'Prepared position'
 
     headers, values = drop_uniform(
-        ['Position (representative line)', 'Chapter source / context', 'Position type', position_reach_label(scope),
-         'Avg games per encounter', 'Score', 'Score spread', 'Contribution per 1,000 games', 'Games at position / reply', 'Avg opponent rating'],
-        [[position_label(r, refs.color, refs), refs.sources(r), kind(r), percentage(r['reach']), games_per_encounter(r['reach']), percentage(r['score']),
-          spread_display(r.get('branch_score_spread')), per_thousand(r['contribution_pp']), position_games(r), opponent_rating(r.get('opponent_rating'))]
-         for r in rows], {'Position type'})
+        [
+            'Position (representative line)',
+            'Chapter source / context',
+            'Position type',
+            position_reach_label(scope),
+            'Avg games per encounter',
+            'Score',
+            'Score spread',
+            'Contribution per 1,000 games',
+            'Games at position / reply',
+            'Avg opponent rating',
+        ],
+        [
+            [
+                position_label(r, refs.color, refs),
+                refs.sources(r),
+                kind(r),
+                percentage(r['reach']),
+                games_per_encounter(r['reach']),
+                percentage(r['score']),
+                spread_display(r.get('branch_score_spread')),
+                per_thousand(r['contribution_pp']),
+                position_games(r),
+                opponent_rating(r.get('opponent_rating')),
+            ]
+            for r in rows
+        ],
+        {'Position type'},
+    )
     return table(headers, values)
 
 
@@ -103,36 +221,95 @@ def leading_entries(chapter, scope, refs, top=3):
         if mixture:
             labels = [refs.opening_label(source) for source in mixture]
             cell = SourceCell(str(cell), labels[0] + ('<br>Also: ' + '; '.join(labels[1:]) if len(labels) > 1 else ''))
-        rows.append([linked_line(route['example']['line'], route['position']), percentage(route['conditional_first_entry_weight']),
-                     cell, opponent_rating(original.get('opponent_rating'))])
-    return ['**Where this chapter starts**', '',
-            'Leading first-entry boards, weighted over every transposed arrival; the example line is one actual route. '
-            'Later entry boards can bypass the main defining position.', '',
-            *table(['First-entry example', 'Entry-position weight', 'Chapter source', 'Avg opponent rating'], rows),
-            f'[All entry positions and routes](#{refs.anchor(chapter["id"])}-entries).', '']
+        rows.append(
+            [
+                linked_line(route['example']['line'], route['position']),
+                percentage(route['conditional_first_entry_weight']),
+                cell,
+                opponent_rating(original.get('opponent_rating')),
+            ]
+        )
+    return [
+        '**Where this chapter starts**',
+        '',
+        'Leading first-entry boards, weighted over every transposed arrival; the example line is one actual route. '
+        'Later entry boards can bypass the main defining position.',
+        '',
+        *table(['First-entry example', 'Entry-position weight', 'Chapter source', 'Avg opponent rating'], rows),
+        f'[All entry positions and routes](#{refs.anchor(chapter["id"])}-entries).',
+        '',
+    ]
 
 
 def summary_own_priorities(rows, refs, strongest=False, show_components=True):
     field, label = ('local_gain_pp', 'Gain') if strongest else ('local_drop_pp', 'Drag')
-    return table(['Line', 'Chapter source', 'Move reach', 'Repertoire score', 'Score spread', label,
-                  label + ' per 1,000 games', 'Avg opponent rating'],
-                 [[refs.move_cell(r), refs.sources(r), percentage(r['branch_reach']) + '<br>1 per ' + games_per_encounter(r['branch_reach']) + ' games',
-                   percentage(r['move_score']), spread_display(r.get('move_spread'), show_components),
-                   delta_points(r['move_score'], r['reference_score'], drag=not strongest)
-                   + ('<br>Move ' + score_points(r['database_move_gain_pp'], signed=True) + '; prep '
-                      + score_points(r['continuation_gain_pp'], signed=True) if show_components and r.get('database_move_gain_pp') is not None else '')
-                   + '<br>95%: ' + interval_cell(r.get('local_gain_interval_pp' if strongest else 'local_drop_interval_pp')),
-                   per_thousand(r['branch_reach'] * r[field], signed=strongest),
-                   opponent_rating(r.get('opponent_rating'))] for r in rows])
+    return table(
+        [
+            'Line',
+            'Chapter source',
+            'Move reach',
+            'Repertoire score',
+            'Score spread',
+            label,
+            label + ' per 1,000 games',
+            'Avg opponent rating',
+        ],
+        [
+            [
+                refs.move_cell(r),
+                refs.sources(r),
+                percentage(r['branch_reach']) + '<br>1 per ' + games_per_encounter(r['branch_reach']) + ' games',
+                percentage(r['move_score']),
+                spread_display(r.get('move_spread'), show_components),
+                delta_points(r['move_score'], r['reference_score'], drag=not strongest)
+                + (
+                    '<br>Move '
+                    + score_points(r['database_move_gain_pp'], signed=True)
+                    + '; prep '
+                    + score_points(r['continuation_gain_pp'], signed=True)
+                    if show_components and r.get('database_move_gain_pp') is not None
+                    else ''
+                )
+                + '<br>95%: '
+                + interval_cell(r.get('local_gain_interval_pp' if strongest else 'local_drop_interval_pp')),
+                per_thousand(r['branch_reach'] * r[field], signed=strongest),
+                opponent_rating(r.get('opponent_rating')),
+            ]
+            for r in rows
+        ],
+    )
 
 
 def opening_table(rows, refs, anchors):
     values = []
     for row in rows:
         base, repertoire = row['entry_baseline']['raw_score'], row['repertoire_score']
-        values.append([f"[{escape(row['name'])}](#{anchors[row['id']]})", escape(row['eco']), percentage(row['reach']),
-                       percentage(base), percentage(repertoire), score_points(row['difference_pp'], signed=True),
-                       spread_display(row.get('branch_score_spread'), False), number(row['expected_prepared_moves']),
-                       gap_percentage(row['gap_coverage']), refs.sources({'chapter_attribution': {'source_ids': row['chapter_ids']}})])
-    return table(['Opening', 'ECO', 'Reach', 'Entry baseline', 'Repertoire score', 'Delta', 'Score spread',
-                  'Prepared own moves after entry', 'Equivalent gap reach after entry', 'Chapters'], values)
+        values.append(
+            [
+                f"[{escape(row['name'])}](#{anchors[row['id']]})",
+                escape(row['eco']),
+                percentage(row['reach']),
+                percentage(base),
+                percentage(repertoire),
+                score_points(row['difference_pp'], signed=True),
+                spread_display(row.get('branch_score_spread'), False),
+                number(row['expected_prepared_moves']),
+                gap_percentage(row['gap_coverage']),
+                refs.sources({'chapter_attribution': {'source_ids': row['chapter_ids']}}),
+            ]
+        )
+    return table(
+        [
+            'Opening',
+            'ECO',
+            'Reach',
+            'Entry baseline',
+            'Repertoire score',
+            'Delta',
+            'Score spread',
+            'Prepared own moves after entry',
+            'Equivalent gap reach after entry',
+            'Chapters',
+        ],
+        values,
+    )

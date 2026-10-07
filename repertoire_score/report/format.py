@@ -1,4 +1,5 @@
 """Number, score, centipawn, rating and label formatting shared by every page."""
+
 import html
 import math
 import os
@@ -6,16 +7,16 @@ import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from types import MappingProxyType
 
 from ..explorer import DEFAULT_FILTERS
 from ..layout import report_directory
-
 
 LICHESS_WIN_CHANCE_COEFFICIENT = 0.00368208
 
 
 # The summary uses one decimal and compact game counts; the full report keeps two decimals.
-_display = ContextVar('display', default={'digits': 2, 'compact_counts': False})
+_display = ContextVar('display', default=MappingProxyType({'digits': 2, 'compact_counts': False}))
 
 
 @contextmanager
@@ -28,17 +29,18 @@ def display(**options):
 
 
 def percentage(value, digits=None):
-    if value is None: return 'unresolved'
+    if value is None:
+        return 'unresolved'
     digits = _display.get()['digits'] if digits is None else digits
-    smallest = 10 ** -digits
+    smallest = 10**-digits
     return f'<{smallest:.{digits}f}%' if 0 < 100 * value < smallest / 2 else f'{100 * value:.{digits}f}%'
 
 
 def number(value, digits=2, signed=False):
     if value is None:
         return 'unresolved'
-    if signed and 0 < abs(value) < .5 * 10 ** -digits:
-        return ('+<' if value > 0 else '-<') + f'{10 ** -digits:.{digits}f}'
+    if signed and 0 < abs(value) < 0.5 * 10**-digits:
+        return ('+<' if value > 0 else '-<') + f'{10**-digits:.{digits}f}'
     return format(value, f'{"+" if signed else ""}.{digits}f')
 
 
@@ -75,8 +77,10 @@ def plies(route):
 
 def games_per_encounter(probability):
     """Mean waiting interval in independent games with the displayed reach basis."""
-    if probability is None: return 'unavailable'
-    if probability <= 0: return 'never'
+    if probability is None:
+        return 'unavailable'
+    if probability <= 0:
+        return 'never'
     value = 1 / probability
     return f'{value:,.0f}' if value >= 10 else f'{value:.1f}'
 
@@ -144,12 +148,12 @@ def score_cell(value):
 
 
 def delta_cell(after, before, *, drag=False):
-    delta = None if after is None or before is None else 100 * (before-after if drag else after-before)
+    delta = None if after is None or before is None else 100 * (before - after if drag else after - before)
     return score_points(delta, signed=True) + ' (' + cp_change(after, before) + ' cp)'
 
 
 def delta_points(after, before, *, drag=False):
-    delta = None if after is None or before is None else 100 * (before-after if drag else after-before)
+    delta = None if after is None or before is None else 100 * (before - after if drag else after - before)
     return score_points(delta, signed=True)
 
 
@@ -166,8 +170,10 @@ def interval_cell(bounds):
 def gain_split(row):
     if row.get('database_move_gain_pp') is None:
         return 'unavailable'
-    return ('Move ' + score_points(row['database_move_gain_pp'], signed=True) + '<br>'
-            'Prep ' + score_points(row['continuation_gain_pp'], signed=True))
+    return (
+        'Move ' + score_points(row['database_move_gain_pp'], signed=True) + '<br>'
+        'Prep ' + score_points(row['continuation_gain_pp'], signed=True)
+    )
 
 
 def population_text(report):
@@ -176,14 +182,27 @@ def population_text(report):
     ratings = filters.get('ratings', '')
     bands = 'all ratings' if ratings == DEFAULT_FILTERS['ratings'] else f"rating groups {ratings or 'as configured'}"
     since, until = filters.get('since'), filters.get('until')
-    dates = 'all available dates' if (since, until) == (DEFAULT_FILTERS['since'], DEFAULT_FILTERS['until']) else f"{since or 'start'} to {until or 'end'}"
+    dates = (
+        'all available dates'
+        if (since, until) == (DEFAULT_FILTERS['since'], DEFAULT_FILTERS['until'])
+        else f"{since or 'start'} to {until or 'end'}"
+    )
     return f"Lichess rated {speeds}; {bands}; {dates}."
 
 
 def evidence_date(report):
-    dates = sorted({p['retrieved_at'][:10] for p in report['manifest'].get('evidence', {}).values()
-                    if p.get('retrieved_at', '')[:4].isdigit()})
-    return (dates[0] if dates[0] == dates[-1] else f'{dates[0]} to {dates[-1]}') if dates else report['manifest'].get('created_at', '')[:10]
+    dates = sorted(
+        {
+            p['retrieved_at'][:10]
+            for p in report['manifest'].get('evidence', {}).values()
+            if p.get('retrieved_at', '')[:4].isdigit()
+        }
+    )
+    return (
+        (dates[0] if dates[0] == dates[-1] else f'{dates[0]} to {dates[-1]}')
+        if dates
+        else report['manifest'].get('created_at', '')[:10]
+    )
 
 
 def display_source(source, result_path):
@@ -215,9 +234,9 @@ def rating_difference(context):
         return 'unavailable'
     result = f"{context['difference_vs_parent']:+,.0f}"
     notes = []
-    if context.get('comparison_coverage', 1.) < 1 - 1e-9:
+    if context.get('comparison_coverage', 1.0) < 1 - 1e-9:
         notes.append(f"{100 * context['comparison_coverage']:.1f}% compared")
-    if context.get('parent_known_coverage', 1.) < 1 - 1e-9:
+    if context.get('parent_known_coverage', 1.0) < 1 - 1e-9:
         notes.append(f"parent {100 * context['parent_known_coverage']:.1f}% rated")
     return result + (' (' + '; '.join(notes) + ')' if notes else '')
 

@@ -24,11 +24,19 @@ def client(responses, seen):
     def handler(request):
         seen.append(request)
         return responses.pop(0)
+
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-@pytest.mark.parametrize('value', ['abcd1234', 'https://lichess.org/study/abcd1234',
-                                   'lichess.org/study/abcd1234/', 'https://lichess.org/study/abcd1234/efgh5678#3'])
+@pytest.mark.parametrize(
+    'value',
+    [
+        'abcd1234',
+        'https://lichess.org/study/abcd1234',
+        'lichess.org/study/abcd1234/',
+        'https://lichess.org/study/abcd1234/efgh5678#3',
+    ],
+)
 def test_study_id_accepts_ids_and_study_or_chapter_urls(value):
     assert studies.study_id(value) == 'abcd1234'
 

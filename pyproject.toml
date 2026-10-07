@@ -42,6 +42,10 @@ pythonpath = ["."]
 line-length = 120
 extend-exclude = [".uv-cache", ".uv-python", ".cache"]
 
+[tool.ruff.format]
+quote-style = "preserve"
+
 [tool.ruff.lint]
-# Pyflakes only for now; widen once long lines are refactored.
-select = ["F"]
+select = ["E", "W", "F", "I", "B", "UP"]
+# zip() pairs model branches with their sampled values, which may be arrays of simulated draws.
+ignore = ["B905"]

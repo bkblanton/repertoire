@@ -1,10 +1,10 @@
 """Board labels, Lichess analysis links and chapter attribution cells."""
+
 import chess
 
 from .bundle import scope_by_id
 from .format import escape, line, percentage, plies
 from .markdown import SourceCell
-
 
 LICHESS_ANALYSIS = 'https://lichess.org/analysis/standard/'
 
@@ -22,6 +22,7 @@ def linked_line(route, position):
 
 class Chapters:
     """Compact clickable references preserve every source without giant cells."""
+
     def __init__(self, report, openings=None, boards=None):
         self.color = report['color']
         self.catalog = report['chapters']
@@ -32,7 +33,9 @@ class Chapters:
         self.scope = 'overall'
         self.compact = False
         self.source_scopes = {s['id']: s for s in self.openings.get('source_scopes', [])}
-        self.opening_anchors = {r['id']: f'{self.color}-opening-{i}' for i, r in enumerate(self.openings.get('openings', []), 1)}
+        self.opening_anchors = {
+            r['id']: f'{self.color}-opening-{i}' for i, r in enumerate(self.openings.get('openings', []), 1)
+        }
 
     def route(self, position, fallback=''):
         return self.boards.get(position, fallback)
@@ -70,6 +73,7 @@ class Chapters:
 
     def for_scope(self, scope):
         import copy
+
         result = copy.copy(self)
         result.scope = scope or 'overall'
         return result
@@ -77,8 +81,10 @@ class Chapters:
     def opening_source(self, row):
         if not self.openings:
             return 'unavailable'
+
         def canonical(position):
             return ' '.join(position.split()[:4]) if isinstance(position, str) else None
+
         position = canonical(row.get('position') or row.get('example_position'))
         move = row.get('move')
         parent = canonical(row.get('parent_position') or (row.get('position') if move else None))
@@ -91,10 +97,12 @@ class Chapters:
             position = ' '.join(board.fen(en_passant='legal').split()[:4])
         named = self.openings.get('positions', {}).get(position, {}).get('exact_name')
         if named:
-            source = dict(id=named, share=1.)
+            source = dict(id=named, share=1.0)
         else:
             scope = self.source_scopes.get(self.scope, {})
-            source = scope.get('entry_sources' if row.get('_opening_entry') else 'positions', {}).get(parent if parent and move else position)
+            source = scope.get('entry_sources' if row.get('_opening_entry') else 'positions', {}).get(
+                parent if parent and move else position
+            )
         if source is None:
             return 'unavailable'
         return self.opening_label(source)
@@ -138,12 +146,20 @@ class Chapters:
         ordered = sorted(ids, key=lambda cid: self.entries.get(cid, (float('inf'),))[0])
         groups = []
         for cid in ordered:
-            if groups and cid in self.entries and groups[-1][-1] in self.entries and self.entries[cid][0] == self.entries[groups[-1][-1]][0] + 1:
+            if (
+                groups
+                and cid in self.entries
+                and groups[-1][-1] in self.entries
+                and self.entries[cid][0] == self.entries[groups[-1][-1]][0] + 1
+            ):
                 groups[-1].append(cid)
             else:
                 groups.append([cid])
-        return prefix + ', '.join(self.label(g[0]) + ('-' + self.label(g[-1]) if len(g) >= 3 else
-            (', ' + self.label(g[-1]) if len(g) == 2 else '')) for g in groups)
+        return prefix + ', '.join(
+            self.label(g[0])
+            + ('-' + self.label(g[-1]) if len(g) >= 3 else (', ' + self.label(g[-1]) if len(g) == 2 else ''))
+            for g in groups
+        )
 
 
 def board_routes(bundle):

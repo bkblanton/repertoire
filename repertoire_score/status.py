@@ -1,4 +1,5 @@
 """Status values saved in score and analysis JSON. They serialize as their plain string values."""
+
 from enum import StrEnum
 
 

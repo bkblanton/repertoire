@@ -1,12 +1,13 @@
 """Generate one consolidated report and summary from saved JSON, offline."""
+
 import argparse
 import json
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from .report.generate import generate
-from .layout import report_directory
 
+from .layout import report_directory
+from .report.generate import generate
 
 _deferred = ContextVar('deferred_report_render', default=False)
 
@@ -23,7 +24,9 @@ def defer_report_outputs():
 
 def load_report(path):
     report = json.loads(Path(path).read_text(encoding='utf-8'))
-    if report.get('color') not in ('white', 'black') or not all(k in report for k in ('overall', 'chapters', 'manifest', 'events')):
+    if report.get('color') not in ('white', 'black') or not all(
+        k in report for k in ('overall', 'chapters', 'manifest', 'events')
+    ):
         raise ValueError(f'Not a repertoire result file: {path}')
     return report
 
@@ -69,12 +72,26 @@ def main():
     parser.add_argument('--summary', help='Summary (default: full report folder/summary.md)')
     parser.add_argument('--top', type=int, default=10, help='Rows per overall ranking')
     parser.add_argument('--chapter-top', type=int, default=5, help='Rows per chapter ranking (default: 5)')
-    parser.add_argument('--position-top', type=int, default=20, help='Rows per category in each color and chapter common-position ranking')
-    parser.add_argument('--require-complete', action='store_true', help='Require every companion analysis and current correlations')
+    parser.add_argument(
+        '--position-top',
+        type=int,
+        default=20,
+        help='Rows per category in each color and chapter common-position ranking',
+    )
+    parser.add_argument(
+        '--require-complete', action='store_true', help='Require every companion analysis and current correlations'
+    )
     args = parser.parse_args()
     try:
-        generate(args.reports, args.output, args.summary, require_complete=args.require_complete,
-                 top=args.top, chapter_top=args.chapter_top, position_top=args.position_top)
+        generate(
+            args.reports,
+            args.output,
+            args.summary,
+            require_complete=args.require_complete,
+            top=args.top,
+            chapter_top=args.chapter_top,
+            position_top=args.position_top,
+        )
     except ValueError as exc:
         parser.exit(1, f'Report generation failed: {exc}\n')
     output = Path(args.output) if args.output else report_directory(args.reports[0]) / 'report.md'

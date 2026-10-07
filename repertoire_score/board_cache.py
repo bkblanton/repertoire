@@ -4,7 +4,8 @@ Only position-dependent facts live here. Graph membership, move policies and
 Explorer evidence are applied by callers, so a transposition in a different
 repertoire cannot inherit another graph's continuations.
 """
-from functools import lru_cache
+
+from functools import cache, lru_cache
 from typing import NamedTuple
 
 import chess
@@ -20,7 +21,7 @@ def terminal_white(position):
     if board.is_checkmate():
         return float(board.turn != chess.WHITE)
     if board.is_stalemate() or board.is_insufficient_material():
-        return .5
+        return 0.5
     return None
 
 
@@ -66,13 +67,13 @@ def fen_number(fen):
     return int(fen.split()[5])
 
 
-@lru_cache(maxsize=None)
+@cache
 def children(position):
     """Legal UCI moves mapped to the canonical position each one reaches."""
     return dict(geometry(position).moves)
 
 
-@lru_cache(maxsize=None)
+@cache
 def san(position, uci):
     return chess.Board(position + ' 0 1').san(chess.Move.from_uci(uci))
 
@@ -88,7 +89,7 @@ def next_number(position, number):
 
 
 def route_line(position, number, moves):
-    """Numbered move text along `moves` from `position` at full-move `number`, and the position and number it reaches."""
+    """Numbered move text along `moves` from `position` at full-move `number`, with the position and number reached."""
     text = []
     for move in moves:
         text.append(move_text(position, number, move))

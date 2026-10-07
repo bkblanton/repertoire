@@ -1,11 +1,12 @@
 """Weighted correlation helpers shared by the correlation analyses and their report section."""
+
 import numpy as np
 
 
 def rank(x):
     _, inverse, counts = np.unique(x, return_inverse=True, return_counts=True)
     ends = np.cumsum(counts)
-    return ((ends-counts+1+ends)/2)[inverse]
+    return ((ends - counts + 1 + ends) / 2)[inverse]
 
 
 def correlation(x, y, weights=None):
@@ -13,9 +14,9 @@ def correlation(x, y, weights=None):
     w = np.ones(len(x)) if weights is None else np.asarray(weights, dtype=float)
     if len(x) < 2 or w.sum() <= 0:
         return float('nan')
-    dx, dy = x-np.average(x, weights=w), y-np.average(y, weights=w)
-    denominator = np.sqrt(np.sum(w*dx*dx)*np.sum(w*dy*dy))
-    return float(np.clip(np.sum(w*dx*dy)/denominator, -1, 1)) if denominator > 0 else float('nan')
+    dx, dy = x - np.average(x, weights=w), y - np.average(y, weights=w)
+    denominator = np.sqrt(np.sum(w * dx * dx) * np.sum(w * dy * dy))
+    return float(np.clip(np.sum(w * dx * dy) / denominator, -1, 1)) if denominator > 0 else float('nan')
 
 
 def connected_groups(position_sets):

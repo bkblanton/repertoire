@@ -1,21 +1,27 @@
 """Sequential, validated, authenticated Explorer access with persistent cache."""
+
 import hashlib
 import json
 import os
 import time
-from datetime import datetime, timezone
-from pathlib import Path
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import UTC, datetime
+from pathlib import Path
+
 import chess
 import httpx
 
 from .board_cache import children
 
 ENDPOINT = "https://explorer.lichess.org/lichess"
-DEFAULT_FILTERS = {"variant": "standard", "speeds": "blitz,rapid,classical",
-                   "ratings": "0,1000,1200,1400,1600,1800,2000,2200,2500",
-                   "since": "1952-01", "until": "3000-12"}
+DEFAULT_FILTERS = {
+    "variant": "standard",
+    "speeds": "blitz,rapid,classical",
+    "ratings": "0,1000,1200,1400,1600,1800,2000,2200,2500",
+    "since": "1952-01",
+    "until": "3000-12",
+}
 
 _cache_observer = ContextVar('explorer_cache_observer', default=None)
 
@@ -36,7 +42,9 @@ class CacheMiss(ValueError):
 
 
 def add_token_option(parser):
-    parser.add_argument('--token-file', help='File containing a Lichess API token; overrides LICHESS_TOKEN for this run')
+    parser.add_argument(
+        '--token-file', help='File containing a Lichess API token; overrides LICHESS_TOKEN for this run'
+    )
 
 
 def apply_token_file(parser, args):
@@ -79,7 +87,7 @@ def validate(data, position):
         seen.add(move)
         for i, v in enumerate(counts(row)):
             sums[i] += v
-    residual = [p-s for p, s in zip(parent, sums)]
+    residual = [p - s for p, s in zip(parent, sums)]
     if min(residual) < 0:
         raise ValueError(f"Inconsistent Explorer totals at {position}: {parent} < {sums}")
     return residual
@@ -99,10 +107,10 @@ class Explorer:
         self.last_request = 0
 
     def get(self, position):
-        query = dict(self.filters, fen=position+" 0 1", moves=len(children(position)), topGames=0, recentGames=0)
+        query = dict(self.filters, fen=position + " 0 1", moves=len(children(position)), topGames=0, recentGames=0)
         identity = {"endpoint": ENDPOINT, "query": query}
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-        path = self.cache / (digest+".json")
+        path = self.cache / (digest + ".json")
         observer = _cache_observer.get()
         if observer is not None:
             observer.add(path.resolve())
@@ -115,8 +123,8 @@ class Explorer:
             return entry["data"]
         if self.offline:
             raise CacheMiss(f"Offline cache miss: {position}")
-        for attempt in range(self.retries+1):
-            time.sleep(max(0, self.delay - (time.monotonic()-self.last_request)))
+        for attempt in range(self.retries + 1):
+            time.sleep(max(0, self.delay - (time.monotonic() - self.last_request)))
             self.last_request = time.monotonic()
             try:
                 response = self.client.get(ENDPOINT, params=query)
@@ -137,7 +145,7 @@ class Explorer:
                 raise RuntimeError(f"Explorer HTTP {response.status_code}; response is not statistical evidence")
             data = response.json()
             validate(data, position)
-            entry = {"identity": identity, "retrieved_at": datetime.now(timezone.utc).isoformat(), "data": data}
+            entry = {"identity": identity, "retrieved_at": datetime.now(UTC).isoformat(), "data": data}
             temporary = path.with_suffix(".tmp")
             temporary.write_text(json.dumps(entry), encoding="utf-8")
             temporary.replace(path)

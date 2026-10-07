@@ -1,4 +1,5 @@
 """Directed chapter reach after first entering another chapter."""
+
 from .status import Status
 
 
@@ -39,15 +40,20 @@ def chapter_transitions(model, order, sampled, chapters, destinations):
             score = source['score']
             reach = score.get('entry_probability')
             weights = score.get('first_entry_weights', {})
-            row = {'source_id': source['id'], 'source_name': source['name'],
-                   'destination_id': cid, 'destination_name': target['name'],
-                   'conditional_probability': None, 'joint_probability': None}
+            row = {
+                'source_id': source['id'],
+                'source_name': source['name'],
+                'destination_id': cid,
+                'destination_name': target['name'],
+                'conditional_probability': None,
+                'joint_probability': None,
+            }
             if reach is not None and reach > 0 and weights and all(w is not None for w in weights.values()):
                 low = sum(w * hits[k][0] for k, w in weights.items())
                 high = sum(w * hits[k][1] for k, w in weights.items())
                 row['conditional_bounds'] = [low, high]
                 if high == low:
-                    row.update(conditional_probability=low, joint_probability=reach*low, status=Status.RESOLVED)
+                    row.update(conditional_probability=low, joint_probability=reach * low, status=Status.RESOLVED)
                 else:
                     row['status'] = Status.UNRESOLVED_DESTINATION_REACH
             else:

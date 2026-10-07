@@ -1,8 +1,10 @@
 """Stopping-event ledger and starting-position reference saved with each score."""
+
 import chess
-from .model import score
+
 from .board_cache import after_fen, san
 from .explorer import counts
+from .model import score
 
 
 def starting_position_reference(data, color, provenance):
@@ -14,7 +16,8 @@ def starting_position_reference(data, color, provenance):
         "white_score": score(results, chess.WHITE),
         "black_score": score(results, chess.BLACK),
         "owner_score": score(results, color),
-        "basis": "Empirical standard starting-position score under the same Explorer filters, without forcing repertoire moves",
+        "basis": "Empirical standard starting-position score under the same Explorer "
+        "filters, without forcing repertoire moves",
         "provenance": provenance,
     }
 
@@ -34,20 +37,44 @@ def events(graph, model, raw_sample, posterior, raw_flow, post_flow, color, prio
         path = list(n.path)
         if b.move:
             path.append(san(k, b.move))
-        result.append({"parent_position": k, "position": after_fen(n.fen, b.move) if b.move else n.fen, "move": b.move,
-                       "representative_path_san": path, "chapters": sorted(n.chapters), "type": b.kind,
-                       "unresolved": unresolved, "score_status": "prior-only; no direct observations" if unresolved else "deterministic" if b.fixed_score is not None else "observed",
-                       "sample_count": sample, "counts_white_draw_black": b.counts,
-                       "probability": float(mass), "posterior_probability_mean": pmass,
-                       "raw_score": raw_score, "posterior_score_mean": score_mean,
-                       "posterior_score_interval_95": interval,
-                       "contribution": float(mass*raw_score) if raw_score is not None else None,
-                       "posterior_contribution_mean": pmass*score_mean,
-                       "uncertainty_priority": pmass*(interval[1]-interval[0]),
-                       "prior_fraction": 0 if b.fixed_score is not None else
-                       (prior_strength/len(model[k].branches) if model[k].mode == "opponent" else prior_strength)/
-                       (sample+(prior_strength/len(model[k].branches) if model[k].mode == "opponent" else prior_strength)),
-                       "evidence": "deterministic chess outcome" if b.fixed_score is not None else
-                       "parent move-result table" if model[k].mode == "opponent" else
-                       "no usable opponent distribution" if b.kind == "unresolved_distribution" else "position result counts"})
+        result.append(
+            {
+                "parent_position": k,
+                "position": after_fen(n.fen, b.move) if b.move else n.fen,
+                "move": b.move,
+                "representative_path_san": path,
+                "chapters": sorted(n.chapters),
+                "type": b.kind,
+                "unresolved": unresolved,
+                "score_status": "prior-only; no direct observations"
+                if unresolved
+                else "deterministic"
+                if b.fixed_score is not None
+                else "observed",
+                "sample_count": sample,
+                "counts_white_draw_black": b.counts,
+                "probability": float(mass),
+                "posterior_probability_mean": pmass,
+                "raw_score": raw_score,
+                "posterior_score_mean": score_mean,
+                "posterior_score_interval_95": interval,
+                "contribution": float(mass * raw_score) if raw_score is not None else None,
+                "posterior_contribution_mean": pmass * score_mean,
+                "uncertainty_priority": pmass * (interval[1] - interval[0]),
+                "prior_fraction": 0
+                if b.fixed_score is not None
+                else (prior_strength / len(model[k].branches) if model[k].mode == "opponent" else prior_strength)
+                / (
+                    sample
+                    + (prior_strength / len(model[k].branches) if model[k].mode == "opponent" else prior_strength)
+                ),
+                "evidence": "deterministic chess outcome"
+                if b.fixed_score is not None
+                else "parent move-result table"
+                if model[k].mode == "opponent"
+                else "no usable opponent distribution"
+                if b.kind == "unresolved_distribution"
+                else "position result counts",
+            }
+        )
     return result

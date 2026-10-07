@@ -3,10 +3,11 @@
 Each stage reads a saved score, checks that its source PGN and cached evidence still match, rebuilds the
 repertoire graph, and writes a companion JSON whose manifest ties it to that exact snapshot.
 """
+
 import argparse
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import SCHEMA_VERSION
@@ -69,8 +70,12 @@ class AnalysisContext:
     def matches(self, companion):
         """Whether a companion analysis was made from this exact score result."""
         m = companion.get('manifest', {})
-        return (companion.get('color') == self.saved['color'] and m.get('report_sha256') == self.report_sha256
-                and m.get('input_sha256') == self.manifest['input_sha256'] and m.get('filters') == self.manifest['filters'])
+        return (
+            companion.get('color') == self.saved['color']
+            and m.get('report_sha256') == self.report_sha256
+            and m.get('input_sha256') == self.manifest['input_sha256']
+            and m.get('filters') == self.manifest['filters']
+        )
 
     def require_source(self, during=None):
         if file_sha256(self.source) != self.manifest['input_sha256']:
@@ -102,27 +107,51 @@ class AnalysisContext:
 
     def scopes(self):
         """The overall repertoire and every chapter, each with its first-entry starting weights."""
-        result = [dict(id='overall', name='Overall repertoire', starts=self.roots, policy_basis='overall policy',
-                       chapter=None, entry_probability=1.0, overall_policy_entry_probability=1.0,
-                       score=self.saved['overall'])]
+        result = [
+            dict(
+                id='overall',
+                name='Overall repertoire',
+                starts=self.roots,
+                policy_basis='overall policy',
+                chapter=None,
+                entry_probability=1.0,
+                overall_policy_entry_probability=1.0,
+                score=self.saved['overall'],
+            )
+        ]
         for c in self.saved['chapters']:
             weights = c['score'].get('first_entry_weights', {})
             if not weights and len(c['entries']) == 1:
                 weights = {c['entries'][0]['position']: 1.0}
-            result.append(dict(id=c['id'], name=c['name'], starts={k: w for k, w in weights.items() if w},
-                               policy_basis=c.get('policy_basis', 'overall policy'), chapter=c['id'],
-                               entry_probability=c['score'].get('entry_probability'),
-                               overall_policy_entry_probability=c['score'].get('overall_policy_entry_probability'),
-                               score=c['score']))
+            result.append(
+                dict(
+                    id=c['id'],
+                    name=c['name'],
+                    starts={k: w for k, w in weights.items() if w},
+                    policy_basis=c.get('policy_basis', 'overall policy'),
+                    chapter=c['id'],
+                    entry_probability=c['score'].get('entry_probability'),
+                    overall_policy_entry_probability=c['score'].get('overall_policy_entry_probability'),
+                    score=c['score'],
+                )
+            )
         return result
 
     def companion_manifest(self, **fields) -> CompanionManifest:
         """Provenance shared by every companion: the score snapshot, its source and the cache reads."""
-        manifest = dict(created_at=datetime.now(timezone.utc).isoformat(), schema_version=SCHEMA_VERSION,
-                        report_path=str(self.path.resolve()), report_sha256=self.report_sha256,
-                        input_path=str(self.source), input_sha256=self.manifest['input_sha256'],
-                        filters=self.manifest['filters'], cache_only=True, network_requests=0,
-                        evidence=self.provenance, uncached_positions=self.missing)
+        manifest = dict(
+            created_at=datetime.now(UTC).isoformat(),
+            schema_version=SCHEMA_VERSION,
+            report_path=str(self.path.resolve()),
+            report_sha256=self.report_sha256,
+            input_path=str(self.source),
+            input_sha256=self.manifest['input_sha256'],
+            filters=self.manifest['filters'],
+            cache_only=True,
+            network_requests=0,
+            evidence=self.provenance,
+            uncached_positions=self.missing,
+        )
         manifest.update(fields)
         return manifest
 
@@ -152,4 +181,5 @@ def stage_main(family, analyze, description, configure=None, options=None):
     except (ValueError, FileNotFoundError) as exc:
         parser.exit(1, f'{family.title()} analysis failed: {exc}\n')
     from .render import update_report_outputs
+
     update_report_outputs(args.reports[-1])

@@ -1,10 +1,11 @@
 """Export the White and Black Lichess studies to local PGN files."""
+
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import time
+from pathlib import Path
 
 import httpx
 
@@ -61,8 +62,10 @@ def download(client, study, retries=3):
             time.sleep(60)
             continue
         if response.status_code in (401, 403, 404):
-            raise RuntimeError(f'Lichess HTTP {response.status_code} for {study}: the study must exist and the '
-                               'token needs the study:read scope for private studies')
+            raise RuntimeError(
+                f'Lichess HTTP {response.status_code} for {study}: the study must exist and the '
+                'token needs the study:read scope for private studies'
+            )
         if response.status_code != 200:
             raise RuntimeError(f'Lichess HTTP {response.status_code} for {study}')
         return response.text
