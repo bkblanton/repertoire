@@ -3,20 +3,14 @@
 Explorer averageRating describes the move maker. Never use our own move rows
 as opponent ratings, or average repeatedly over the visited decision points.
 """
-import argparse
 from collections import defaultdict
-from datetime import datetime, timezone
-import hashlib
-import json
 import math
 from pathlib import Path
 
 
-from .layout import data_json
-from . import SCHEMA_VERSION
 from .board_cache import STARTING_POSITION, children, turn
-from .explorer import Explorer, counts
-from .graph import parse
+from .context import DEFAULT_CACHE, AnalysisContext, file_sha256, stage_main
+from .explorer import counts
 from .preparation import Evaluator, chess_facts
 
 
@@ -263,45 +257,15 @@ def add_reply_differences(result, evidence):
     return result
 
 
-def analyze(path, cache='.cache/explorer'):
-    path = Path(path)
-    score_bytes = path.read_bytes(); saved = json.loads(score_bytes)
-    m = saved['manifest']; source = Path(m['input_path'])
-    if hashlib.sha256(source.read_bytes()).hexdigest() != m['input_sha256']:
-        raise ValueError('PGN changed since scoring; regenerate scores first')
-    supporting, hashes = {}, {}
-    for family in ('preparation', 'character', 'vulnerabilities'):
-        p = path.with_suffix(f'.{family}.json')
-        data_bytes = p.read_bytes(); data = json.loads(data_bytes)
-        if data['color'] != saved['color'] or any(data['manifest'].get(k) != expected for k, expected in (
-                ('report_sha256', hashlib.sha256(score_bytes).hexdigest()),
-                ('input_sha256', m['input_sha256']), ('filters', m['filters']))):
-            raise ValueError(f'{family} belongs to a different score snapshot')
-        supporting[family] = data; hashes[family] = hashlib.sha256(data_bytes).hexdigest()
-    graph = parse(source, m['configuration'].get('exclude', []))
-    color = saved['color'] == 'white'; evidence, missing = {}, []
-    explorer = Explorer(cache, m['filters'], offline=True)
-    try:
-        for k in graph.nodes:
-            try: evidence[k] = explorer.get(k)
-            except ValueError as exc:
-                if not str(exc).startswith('Offline cache miss:'): raise
-                missing.append(k)
-            if k in m['evidence'] and explorer.provenance.get(k) != m['evidence'][k]:
-                raise ValueError('Saved score evidence changed; regenerate scores first')
-        # Only read existing cached alternatives. A miss remains unavailable.
-        for scope in [supporting['vulnerabilities']['overall'], *supporting['vulnerabilities']['chapters']]:
-            for row in scope.get('all_signed_rows', []):
-                alt = row.get('alternative')
-                if row['kind'] != 'own' or not alt: continue
-                k = children(row['position'])[alt['move']]
-                if k in evidence or k in missing: continue
-                try: evidence[k] = explorer.get(k)
-                except ValueError as exc:
-                    if not str(exc).startswith('Offline cache miss:'): raise
-                    missing.append(k)
-    finally:
-        explorer.close()
+def analyze(path, cache=DEFAULT_CACHE):
+    analysis = AnalysisContext(path, ('preparation', 'character', 'vulnerabilities'))
+    graph, color, saved, m = analysis.graph, analysis.color, analysis.saved, analysis.manifest
+    supporting = analysis.companions
+    evidence = analysis.read_evidence(cache)
+    # Only read existing cached alternatives. A miss remains unavailable.
+    analysis.read_evidence(cache, [children(row['position'])[row['alternative']['move']]
+        for scope in [supporting['vulnerabilities']['overall'], *supporting['vulnerabilities']['chapters']]
+        for row in scope.get('all_signed_rows', []) if row['kind'] == 'own' and row.get('alternative')])
     facts = chess_facts(graph, color, evidence)
     policy = m['configuration'].get('policy', {}); roots = m['root_weights']
     prep_scopes = {s['id']: s for s in supporting['preparation']['scopes']}
@@ -359,15 +323,12 @@ def analyze(path, cache='.cache/explorer'):
             scope['pawn_groups'] = {k: mixture(parts, 'chapter pawn-structure stopping evidence') for k, parts in groups.items()}
         output.append(scope)
 
-    if hashlib.sha256(source.read_bytes()).hexdigest() != m['input_sha256'] or path.read_bytes() != score_bytes:
-        raise ValueError('Source or saved score changed during rating analysis')
-    return add_reply_differences(dict(color=saved['color'], scopes=output, manifest=dict(schema_version=SCHEMA_VERSION, 
-        created_at=datetime.now(timezone.utc).isoformat(), report_sha256=hashlib.sha256(score_bytes).hexdigest(),
-        input_sha256=m['input_sha256'], input_path=str(source), filters=m['filters'],
-        supporting_sha256=hashes, evidence=explorer.provenance,
-        cache_sha256={k: hashlib.sha256((Path(cache) / (p['cache_key'] + '.json')).read_bytes()).hexdigest()
-                      for k, p in explorer.provenance.items()},
-        cache_only=True, network_requests=0, uncached_positions=missing),
+    analysis.require_source('rating analysis')
+    if file_sha256(analysis.path) != analysis.report_sha256:
+        raise ValueError('Saved score changed during rating analysis')
+    return add_reply_differences(dict(color=saved['color'], scopes=output, manifest=analysis.companion_manifest(
+        supporting_sha256=analysis.companion_hashes,
+        cache_sha256={k: file_sha256(Path(cache) / (p['cache_key'] + '.json')) for k, p in analysis.provenance.items()}),
         validation=dict(scores_reproduced=True, first_entry_weights_reproduced=True,
                         stopping_rating_moments_reproduced=True, source_pgn_unchanged=True,
                         no_repertoire_rating_averages=True, starting_position_local_context_retained=True)), evidence)
@@ -423,20 +384,7 @@ def attach(bundle):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('reports', nargs='+')
-    parser.add_argument('--cache', default='.cache/explorer')
-    args = parser.parse_args()
-    try:
-        for value in args.reports:
-            path = Path(value)
-            result = analyze(path, args.cache)
-            path.with_suffix('.ratings.json').write_text(data_json(result), encoding='utf-8')
-            from .render import update_report_outputs
-            update_report_outputs(path)
-            print(f'{result["color"]}: opponent rating ledger generated; network requests: 0', flush=True)
-    except (ValueError, FileNotFoundError) as exc:
-        parser.exit(1, f'Rating analysis failed: {exc}\n')
+    stage_main('ratings', analyze, __doc__)
 
 
 if __name__ == '__main__':

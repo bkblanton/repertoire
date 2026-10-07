@@ -354,4 +354,4 @@ Keep hypothetical results separate from the actual score snapshots and current r
 | Study export fails with HTTP 401, 403 or 404 | Check the URL in `studies.json` and that the token has `study:read`; private studies are visible only to their owner and members. The previous export is kept. |
 | Unknown chapter ID or missing configured anchor | Compare the new PGN's inspection with the maintained config; removed or recreated chapters may have different IDs. Update intended subject definitions explicitly. |
 | Chapter defining position has less than 100% reach after entry | Inspect first-entry boards and routes: some games may enter through later transpositions and bypass that position. |
-| Cache is complete but a batch is slow | Inspect `reports/data/.build-state.json` stage timings and reused/built counts. Changes limited to `consolidated.py` or `render.py` should rebuild only the render stage. |
+| Cache is complete but a batch is slow | Inspect `reports/data/.build-state.json` stage timings and reused/built counts. Changes limited to `render.py` or the `report` package should rebuild only the render stage. |

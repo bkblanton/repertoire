@@ -5,8 +5,12 @@ import pytest
 from repertoire_score.graph import chapter_region
 from repertoire_score.insights import depth_distribution, first_entry_examples
 from repertoire_score.preparation import Evaluator, chess_facts
-from repertoire_score.consolidated import (Chapters, games_per_encounter,
-    generate, load, own_priorities, summary_own_priorities)
+from repertoire_score.report.links import Chapters
+from repertoire_score.report.format import games_per_encounter
+from repertoire_score.report.generate import generate
+from repertoire_score.report.bundle import load
+from repertoire_score.report.derive import own_priorities
+from repertoire_score.report.tables import summary_own_priorities
 from test_model import graph, data, position
 from test_preparation import sample
 

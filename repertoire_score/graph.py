@@ -3,11 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import chess
 import chess.pgn
-from .board_cache import children, terminal_white, turn
-
-
-def key(board):
-    return " ".join(board.fen(en_passant="legal").split()[:4])
+from .board_cache import canonical as key, children, terminal_white, turn
 
 
 @dataclass

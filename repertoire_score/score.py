@@ -10,6 +10,7 @@ import numpy as np
 from . import SCHEMA_VERSION
 from .graph import parse, conflicts, resolve, topology, infer_entries, key, chapter_region, region_entries, chapter_policy_overrides
 from .board_cache import STARTING_POSITION, owner_outcome, turn
+from .context import DEFAULT_CACHE
 from .explorer import Explorer, DEFAULT_FILTERS, add_token_option, apply_token_file
 from .model import prepare, empirical
 from .evaluate import backward, forward, summarize, chapter_score, KNOWN
@@ -251,7 +252,7 @@ def main():
     parser.add_argument("--color", required=True, choices=["white", "black"])
     parser.add_argument("--config")
     parser.add_argument("--output", default="reports/data/repertoire")
-    parser.add_argument("--cache", default=".cache/explorer")
+    parser.add_argument("--cache", default=DEFAULT_CACHE)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--prior", nargs=3, type=float, default=[0.5, 0.5, 0.5])

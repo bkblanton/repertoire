@@ -1,22 +1,18 @@
 """Cache-only gap priorities, branch-score spread, and move-comparison intervals."""
-import argparse
 from collections import defaultdict
 from datetime import datetime, timezone
-import hashlib
 import json
 import math
-from pathlib import Path
 
 import numpy as np
 
-from .layout import data_json
-from . import SCHEMA_VERSION
 from .evaluate import COMPLETED
 from .uncertainty import (METHOD as UNCERTAINTY_METHOD, Posterior, comparison_interval, dirichlet_variance,
                           row_moments)
 from .board_cache import children
-from .explorer import Explorer, counts, validate
-from .graph import parse, resolve, topology
+from .context import DEFAULT_CACHE, AnalysisContext, stage_main
+from .explorer import counts, validate
+from .graph import resolve, topology
 from .model import prepare
 from .openings import name_flow
 from .preparation import Evaluator, chess_facts
@@ -136,7 +132,7 @@ class LocalComparisons:
             after = posterior.values[branch.target][COMPLETED, 0]
             downstream = self.influence[branch.target]
             variance = sum((reach.get(m, 0.) - downstream.get(m, 0.)) ** 2 * posterior.table_variance(m)
-                           for m in set(reach) | set(downstream))
+                           for m in sorted(set(reach) | set(downstream)))
             component = self.leaf(branch.target)
         elif branch.fixed_score is not None:
             after, variance = branch.fixed_score, self.value_variance(k)
@@ -253,24 +249,9 @@ def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None)
     return value
 
 
-def analyze(path, cache='.cache/explorer'):
-    path = Path(path)
-    source_bytes = path.read_bytes()
-    saved = json.loads(source_bytes)
-    manifest = saved['manifest']
-    source = Path(manifest['input_path'])
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN differs from saved scores; regenerate scores first')
-    supporting, hashes = {}, {}
-    for family in ('preparation', 'character', 'vulnerabilities', 'openings'):
-        target = path.with_suffix(f'.{family}.json')
-        raw = target.read_bytes()
-        value = json.loads(raw)
-        if value['color'] != saved['color'] or any(value['manifest'].get(k) != expected for k, expected in (
-                ('report_sha256', hashlib.sha256(source_bytes).hexdigest()),
-                ('input_sha256', manifest['input_sha256']), ('filters', manifest['filters']))):
-            raise ValueError(f'{family} differs from saved score snapshot')
-        supporting[family], hashes[family] = value, hashlib.sha256(raw).hexdigest()
+def analyze(path, cache=DEFAULT_CACHE):
+    analysis = AnalysisContext(path, ('preparation', 'character', 'vulnerabilities', 'openings'))
+    saved, manifest, supporting = analysis.saved, analysis.manifest, analysis.companions
     char = {s['id']: s for s in supporting['character']['scopes']}
     prep = {s['id']: s for s in supporting['preparation']['scopes']}
     moves = supporting['vulnerabilities']
@@ -284,18 +265,12 @@ def analyze(path, cache='.cache/explorer'):
             gaps=gap_priorities(char[sid].get('gap_coverage')),
             branch_score_spread=branch_score_spread(prep[sid].get('stops', []), scope['score'].get('raw_empirical_score')),
             moves={})
-    graph = parse(source, manifest['configuration'].get('exclude', []))
-    color = saved['color'] == 'white'
-    default_transitions = resolve(graph, color, manifest['configuration'].get('policy', {}))
-    evidence = {}
-    explorer = Explorer(cache, manifest['filters'], offline=True)
-    try:
-        for k, original in dict(manifest['evidence'], **moves['manifest']['evidence']).items():
-            evidence[k] = explorer.get(k)
-            if explorer.provenance[k] != original:
-                raise ValueError('Cached evidence differs from saved analysis')
-    finally:
-        explorer.close()
+    graph, color = analysis.graph, analysis.color
+    default_transitions = resolve(graph, color, analysis.policy)
+    compared = moves['manifest']['evidence']
+    evidence = analysis.read_evidence(cache, list(dict(manifest['evidence'], **compared)), required=True)
+    if any(analysis.provenance[k] != original for k, original in compared.items()):
+        raise ValueError('Cached evidence changed since the vulnerability analysis; rebuild it first')
     chosen = defaultdict(set)
     for scope in scopes:
         for row in scope['moves'].get('all_signed_rows', []):
@@ -347,13 +322,9 @@ def analyze(path, cache='.cache/explorer'):
                                  continuation_gain_interval_pp=parts['continuation_gain'])
                 results[scope['id']]['moves'][row['id']] = entry
         del comparisons, model
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN changed during report insight analysis')
+    analysis.require_source('report insight analysis')
     result = dict(color=saved['color'], scopes=list(results.values()),
-        manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), schema_version=SCHEMA_VERSION,
-            report_path=str(path.resolve()), report_sha256=hashlib.sha256(source_bytes).hexdigest(),
-            input_path=str(source), input_sha256=manifest['input_sha256'], filters=manifest['filters'],
-            supporting_sha256=hashes, cache_only=True, network_requests=0,
+        manifest=analysis.companion_manifest(supporting_sha256=analysis.companion_hashes,
             prior=manifest['prior'], uncertainty_method=UNCERTAINTY_METHOD,
             interval_definition='Approximate prior-completed 95% local model intervals: exact posterior means and first-order variances from each cached Dirichlet table, combined through shared transposition values. Own move and parent database scores share one table, so their covariance is included. Policies and population are fixed; historical game overlap and selection effects are not modeled. Weighted rankings use empirical reach.',
             spread_definition='Weighted standard deviation of stopping-event expected scores. Total variance equals between-canonical-position variance plus within-position incoming-evidence-cohort variance. No cutoff, sparse filter, prior or tunable parameter.'),
@@ -363,16 +334,7 @@ def analyze(path, cache='.cache/explorer'):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('reports', nargs='+', type=Path)
-    parser.add_argument('--cache', default='.cache/explorer')
-    args = parser.parse_args()
-    for path in args.reports:
-        print(f'Generating {path.stem} report insights from cache', flush=True)
-        value = analyze(path, args.cache)
-        path.with_suffix('.insights.json').write_text(data_json(value), encoding='utf-8')
-    from .render import update_report_outputs
-    update_report_outputs(args.reports[-1])
+    stage_main('insights', analyze, __doc__)
 
 
 if __name__ == '__main__':

@@ -29,6 +29,10 @@ def observe_cache():
         _cache_observer.reset(token)
 
 
+class CacheMiss(ValueError):
+    """An offline read found no cached table; distinct from a table with zero games."""
+
+
 def add_token_option(parser):
     parser.add_argument('--token-file', help='File containing a Lichess API token; overrides LICHESS_TOKEN for this run')
 
@@ -108,7 +112,7 @@ class Explorer:
             self.provenance[position] = {"cache_key": digest, "retrieved_at": entry["retrieved_at"]}
             return entry["data"]
         if self.offline:
-            raise ValueError(f"Offline cache miss: {position}")
+            raise CacheMiss(f"Offline cache miss: {position}")
         for attempt in range(self.retries+1):
             time.sleep(max(0, self.delay - (time.monotonic()-self.last_request)))
             self.last_request = time.monotonic()

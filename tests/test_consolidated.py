@@ -6,12 +6,15 @@ import chess
 import pytest
 
 from repertoire_score.character import analyze as character
-from repertoire_score.consolidated import (Chapters, centipawn_delta, centipawn_equivalent, common_positions_for_scope, common_positions_section,
-    combined_overall, cp, cp_change, display, elo_equivalent, exit_points, exits_section, generate, headline_delta, line, load,
-    non_sparse_rows, page_names, per_thousand, position_contributions, position_tree, strengths_section, summary_report,
-    vulnerabilities_section)
-from repertoire_score.consolidated import spread_display
-from repertoire_score.consolidated import compressed_columns, report_navigation, table
+from repertoire_score.report.links import Chapters
+from repertoire_score.report.format import centipawn_delta, centipawn_equivalent, cp, cp_change, display, elo_equivalent, headline_delta, line, per_thousand
+from repertoire_score.report.sections import common_positions_for_scope, common_positions_section, exits_section, position_tree, strengths_section, vulnerabilities_section
+from repertoire_score.report.derive import combined_overall, exit_points, non_sparse_rows, position_contributions
+from repertoire_score.report.generate import generate, page_names
+from repertoire_score.report.bundle import load
+from repertoire_score.report.pages import summary_report
+from repertoire_score.report.format import spread_display
+from repertoire_score.report.markdown import compressed_columns, report_navigation, table
 from test_chapter_policies import run_fixture
 
 
@@ -91,7 +94,7 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
 
 
 def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
-    from repertoire_score.consolidated import gap_percentage
+    from repertoire_score.report.format import gap_percentage
     path, report = complete
     bundle = generate([path])[0]
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
@@ -115,7 +118,7 @@ def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
 
 
 def test_gap_display_keeps_unknown_reach_bounded():
-    from repertoire_score.consolidated import gap_percentage
+    from repertoire_score.report.format import gap_percentage
     assert gap_percentage(None) == 'unavailable'
     assert gap_percentage(dict(equivalent_gap_reach=0.)) == '0.00%'
     assert gap_percentage(dict(equivalent_gap_reach_bounds=[.1, .2])) == '10.00% to 20.00% (bounds)'
@@ -129,7 +132,7 @@ def test_recursive_sharpness_in_overall_and_every_chapter(complete):
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     assert '| Score spread |' in full and '| Score spread |' in summary
     assert '| Sharpness |' not in full + summary
-    assert '**Outcome volatility (formerly sharpness):**' in full
+    assert '**Outcome volatility:**' in full
     # Volatility barely varies between scopes, so it stays in spread breakdowns rather than headlines.
     assert 'Outcome volatility' not in summary and 'outcome volatility **' not in full
     pages = chapter_pages(path.parent, report)

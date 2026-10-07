@@ -1,7 +1,6 @@
 """Reach-weighted correlations between future prepared depth and future preparation gain."""
 import argparse
 from datetime import datetime, timezone
-import hashlib
 import json
 from pathlib import Path
 
@@ -10,16 +9,12 @@ import numpy as np
 from . import SCHEMA_VERSION
 from .stats import correlation, rank
 from .evaluate import KNOWN, UNKNOWN, backward
-from .explorer import Explorer
-from .graph import parse, resolve, topology
+from .context import DEFAULT_CACHE, AnalysisContext, file_sha256
+from .graph import resolve, topology
 from .model import empirical, prepare, score
 
 
 METRICS = ('reach_weighted_pearson', 'reach_weighted_spearman', 'slope_pp_per_move', 'pearson', 'spearman')
-
-
-def digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def weighted_rank(values, weights):
@@ -72,35 +67,17 @@ def reaches(model, order, sampled, roots, width=1):
 
 
 def analyze_color(path, cache):
-    path = Path(path)
-    move_path = path.with_suffix('.vulnerabilities.json')
-    hashes = dict(score=digest(path), vulnerabilities=digest(move_path))
-    saved = json.loads(path.read_bytes())
-    moves = json.loads(move_path.read_bytes())
-    manifest = saved['manifest']
-    source = Path(manifest['input_path'])
-    if digest(source) != manifest['input_sha256']:
-        raise ValueError('PGN changed since scoring; regenerate scores before position correlations')
-    if moves['color'] != saved['color'] or any(moves['manifest'].get(k) != expected for k, expected in (
-            ('report_sha256', hashes['score']), ('input_sha256', manifest['input_sha256']), ('filters', manifest['filters']))):
-        raise ValueError('Vulnerabilities do not match the saved score snapshot')
-    graph = parse(source, manifest['configuration'].get('exclude', []))
-    color = saved['color'] == 'white'
-    transitions = resolve(graph, color, manifest['configuration'].get('policy', {}))
-    roots = manifest['root_weights']
+    analysis = AnalysisContext(path, ('vulnerabilities',))
+    saved, manifest, moves = analysis.saved, analysis.manifest, analysis.companions['vulnerabilities']
+    graph, color, roots = analysis.graph, analysis.color, analysis.roots
+    transitions = resolve(graph, color, analysis.policy)
     order = topology(transitions, roots)
-    evidence = {}
-    explorer = Explorer(cache, manifest['filters'], offline=True)
-    try:
-        for position in manifest['evidence'].keys() & moves['manifest']['evidence'].keys():
-            if manifest['evidence'][position] != moves['manifest']['evidence'][position]:
-                raise ValueError('Scores and vulnerabilities use different cached evidence')
-        for position, original in dict(manifest['evidence'], **moves['manifest']['evidence']).items():
-            evidence[position] = explorer.get(position)
-            if explorer.provenance[position] != original:
-                raise ValueError('Cached evidence differs from saved scores or vulnerabilities')
-    finally:
-        explorer.close()
+    compared = moves['manifest']['evidence']
+    if any(manifest['evidence'][k] != compared[k] for k in manifest['evidence'].keys() & compared.keys()):
+        raise ValueError('Scores and vulnerabilities use different cached evidence')
+    evidence = analysis.read_evidence(cache, list(dict(manifest['evidence'], **compared)), required=True)
+    if any(analysis.provenance[k] != original for k, original in compared.items()):
+        raise ValueError('Cached evidence changed since the vulnerability analysis; rebuild it first')
     model = prepare(graph, transitions, order, color, evidence)
     raw = empirical(model, color)
     values = backward(model, order, raw, manifest['sparse_threshold'])
@@ -155,22 +132,21 @@ def analyze_color(path, cache):
     point = metrics(*arrays(eligible))
     nonzero = [r for r in eligible if r['depth'] > 0]
     sensitivity = dict(n=len(nonzero), **metrics(*arrays(nonzero)))
-    for name, filename in (('score', path), ('vulnerabilities', move_path)):
-        if digest(filename) != hashes[name]:
-            raise ValueError('Saved inputs changed during preparation correlation analysis')
-    if digest(source) != manifest['input_sha256']:
-        raise ValueError('PGN changed during preparation correlation analysis')
+    analysis.require_source('preparation correlation analysis')
+    if (file_sha256(analysis.path) != analysis.report_sha256
+            or file_sha256(analysis.path.with_suffix('.vulnerabilities.json')) != analysis.companion_hashes['vulnerabilities']):
+        raise ValueError('Saved inputs changed during preparation correlation analysis')
     return dict(n=len(eligible), encounter_weight=sum(r['reach'] for r in eligible), **point,
                 decisions=eligible, exclusions=exclusions,
                 position_depths={k: float(v[0]) for k, v in depth.items()},
                 sensitivity_without_zero_depth=sensitivity, validation=dict(root_score_reproduced=True,
                     root_depth_reproduced=float(root_depth), canonical_decisions_unique=True),
-                provenance=dict(report_path=str(path.resolve()), report_sha256=hashes['score'],
-                    vulnerabilities_sha256=hashes['vulnerabilities'], input_sha256=manifest['input_sha256'],
+                provenance=dict(report_path=str(analysis.path.resolve()), report_sha256=analysis.report_sha256,
+                    vulnerabilities_sha256=analysis.companion_hashes['vulnerabilities'], input_sha256=manifest['input_sha256'],
                     filters=manifest['filters'], prior=manifest['prior'], sparse_threshold=manifest['sparse_threshold']))
 
 
-def analyze(paths, output, cache='.cache/explorer'):
+def analyze(paths, output, cache=DEFAULT_CACHE):
     result = dict(schema_version=SCHEMA_VERSION, created_at=datetime.now(timezone.utc).isoformat(), network_requests=0,
                   results={}, provenance={})
     for path in paths:
@@ -189,7 +165,7 @@ def analyze(paths, output, cache='.cache/explorer'):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+')
-    parser.add_argument('--cache', default='.cache/explorer')
+    parser.add_argument('--cache', default=DEFAULT_CACHE)
     parser.add_argument('--output')
     args = parser.parse_args()
     output = args.output or Path(args.reports[0]).parent / 'prepared-depth-gain-correlation.json'

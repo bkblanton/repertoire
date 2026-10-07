@@ -176,14 +176,14 @@ def test_fetches_only_missing_own_parents_then_runs_fully_offline(tmp_path, monk
     content = json.loads(cached_path.read_text())
     content['retrieved_at'] = 'changed'
     cached_path.write_text(json.dumps(content))
-    with pytest.raises(ValueError, match='Cached evaluation evidence changed'):
+    with pytest.raises(ValueError, match='Cached evidence changed since scoring'):
         analyze(path, cache)
 
 
 def test_changed_source_rejected_before_loading_evidence(tmp_path):
     path, cache, _, _ = saved_fixture(tmp_path)
     (tmp_path/'fixture.pgn').write_text('1. d4 d5 *')
-    with pytest.raises(ValueError, match='PGN differs'):
+    with pytest.raises(ValueError, match='PGN changed since scoring'):
         analyze(path, cache)
 
 

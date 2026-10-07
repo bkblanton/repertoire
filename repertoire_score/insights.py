@@ -118,7 +118,7 @@ def first_entry_examples(evaluator, roots, region, expected_probability=None, ex
         if k in region:
             arrivals[k], witnesses[k] = mass[k], best[k]
             continue
-        stopped += mass[k] * sum(stop[1] for stop in evaluator.stops[k])
+        stopped += mass[k] * sum(stop.probability for stop in evaluator.stops[k])
         probability, root, path = best[k]
         for move, p, target in evaluator.edges[k]:
             mass[target] += mass[k] * p

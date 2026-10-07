@@ -1,17 +1,12 @@
 """Cache-only stopping outcomes and their repertoire score contributions."""
-import argparse
-from datetime import datetime, timezone
-import hashlib
 import json
-from pathlib import Path
+from typing import NamedTuple
 
 import chess
 import numpy as np
 
-from .layout import data_json
-from . import SCHEMA_VERSION
-from .explorer import Explorer, counts
-from .graph import parse
+from .context import DEFAULT_CACHE, AnalysisContext, stage_main
+from .explorer import counts
 from .model import score
 from .attribution import enrich
 from .insights import depth_distribution, first_entry_examples
@@ -20,6 +15,22 @@ from .board_cache import children, fen_number, geometry, move_text, owner_outcom
 
 class MissingEvidence(ValueError):
     pass
+
+
+class Edge(NamedTuple):
+    """A move that continues preparation: its probability and the canonical position it reaches."""
+    move: str
+    probability: float
+    target: str
+
+
+class Stop(NamedTuple):
+    """Where preparation ends at a position: the move (if any), its probability, kind and evidence."""
+    move: str | None
+    probability: float
+    kind: str
+    counts: list
+    fixed_score: float | None
 
 
 class Evaluator:
@@ -87,13 +98,13 @@ class Evaluator:
         edges, stops = [], []
         if terminal is not None:
             value = self.stopping([0,0,0], terminal)
-            stops.append((None, 1., 'theory_leaf', [0,0,0], terminal))
+            stops.append(Stop(None, 1., 'theory_leaf', [0,0,0], terminal))
         elif node.edges and turn == self.color:
             value = np.zeros(5)
             for move, p in self.own_choices(k).items():
                 target = node.edges[move]
                 value += p*self.value(target)
-                edges.append((move, p, target))
+                edges.append(Edge(move, p, target))
             value[2] += 1
         else:
             if k not in self.evidence:
@@ -102,7 +113,7 @@ class Evaluator:
             total = sum(counts(data))
             if turn == self.color or not total:
                 value = self.stopping(counts(data))
-                stops.append((None, 1., 'theory_leaf' if turn == self.color else 'unresolved_distribution', counts(data), None))
+                stops.append(Stop(None, 1., 'theory_leaf' if turn == self.color else 'unresolved_distribution', counts(data), None))
             else:
                 value, accounted = np.zeros(5), [0,0,0]
                 for row in data['moves']:
@@ -116,15 +127,15 @@ class Evaluator:
                     target = node.edges.get(move, target if target in self.graph.nodes else None)
                     if target:
                         value += p*self.value(target)
-                        edges.append((move, p, target))
+                        edges.append(Edge(move, p, target))
                     else:
                         value += p*self.stopping(sample, fixed)
-                        stops.append((move, p, 'deviation', sample, fixed))
+                        stops.append(Stop(move, p, 'deviation', sample, fixed))
                 residual = [a-b for a,b in zip(counts(data), accounted)]
                 if sum(residual):
                     p = sum(residual)/total
                     value += p*self.stopping(residual)
-                    stops.append((None, p, 'no_recorded_continuation', residual, None))
+                    stops.append(Stop(None, p, 'no_recorded_continuation', residual, None))
         self.active.remove(k)
         self.values[k], self.edges[k], self.stops[k] = value, edges, stops
         return value
@@ -142,7 +153,7 @@ class Evaluator:
         for k in reversed(self.values):
             for _,p,target in self.edges[k]:
                 mass[target] += mass[k]*p
-        stopped = sum(mass[k]*sum(s[1] for s in self.stops[k]) for k in mass)
+        stopped = sum(mass[k]*sum(s.probability for s in self.stops[k]) for k in mass)
         if not np.isclose(stopped, sum(starts.values()), atol=1e-10):
             raise AssertionError('Continuation evaluator probability conservation failed')
         return mass
@@ -203,49 +214,27 @@ def stopping_rows(evaluator, starts, baseline, lines):
                 sparse=fixed is None and sum(sample)<evaluator.sparse,
                 unresolved=s is None))
     root = evaluator.evaluate(starts)
-    assert np.isclose(sum(r['reach'] for r in rows), 1., atol=1e-10)
-    assert np.isclose(sum((r['contribution_pp'] or 0)/100 for r in rows), root[0], atol=1e-10)
-    if baseline is not None and root[1] == 0:
-        assert np.isclose(sum(r['baseline_contribution_pp'] for r in rows), 100*(root[0]-baseline), atol=1e-10)
+    if (not np.isclose(sum(r['reach'] for r in rows), 1., atol=1e-10)
+            or not np.isclose(sum((r['contribution_pp'] or 0)/100 for r in rows), root[0], atol=1e-10)):
+        raise AssertionError('Stopping rows do not conserve probability or reproduce the score')
+    if baseline is not None and root[1] == 0 and not np.isclose(
+            sum(r['baseline_contribution_pp'] for r in rows), 100*(root[0]-baseline), atol=1e-10):
+        raise AssertionError('Stopping rows do not reproduce the baseline difference')
     return rows
 
 
-def analyze(path, cache='.cache/explorer'):
-    path = Path(path)
-    saved = json.loads(path.read_text(encoding='utf-8'))
-    manifest = saved['manifest']; source = Path(manifest['input_path'])
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN changed since scoring; regenerate scores first')
-    graph = parse(source, manifest['configuration'].get('exclude', []))
-    color = saved['color'] == 'white'
-    explorer = Explorer(cache, manifest['filters'], offline=True)
-    evidence, missing = {}, []
-    try:
-        for k in graph.nodes:
-            try:
-                evidence[k] = explorer.get(k)
-            except ValueError as exc:
-                if not str(exc).startswith('Offline cache miss:'): raise
-                missing.append(k)
-            if k in manifest['evidence'] and explorer.provenance.get(k) != manifest['evidence'][k]:
-                raise ValueError('Saved score evidence changed; regenerate scores first')
-    finally:
-        explorer.close()
+def analyze(path, cache=DEFAULT_CACHE):
+    analysis = AnalysisContext(path)
+    graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
+    evidence = analysis.read_evidence(cache)
     facts = chess_facts(graph, color, evidence)
-    policy = manifest['configuration'].get('policy', {})
-    sparse = manifest['sparse_threshold']
-    scopes = [dict(id='overall', name='Overall repertoire', starts=manifest['root_weights'],
-                   baseline=saved.get('starting_position_reference', {}).get('owner_score'), chapter=None,
-                   expected=saved['overall'], policy_basis='overall policy')]
-    for chapter in saved['chapters']:
-        weights = chapter['score'].get('first_entry_weights', {})
-        if not weights and len(chapter['entries']) == 1:
-            weights = {chapter['entries'][0]['position']: 1.}
-        scopes.append(dict(id=chapter['id'], name=chapter['name'], starts={k:w for k,w in weights.items() if w},
-            baseline=chapter.get('entry_baseline', {}).get('raw_score'), chapter=chapter['id'],
-            expected=chapter['score'], policy_basis=chapter.get('policy_basis', 'overall policy')))
-    lines = position_lines(graph)
+    policy, sparse = analysis.policy, analysis.sparse_threshold
     chapters = {c['id']: c for c in saved['chapters']}
+    baselines = {c['id']: c.get('entry_baseline', {}).get('raw_score') for c in saved['chapters']}
+    baselines[None] = saved.get('starting_position_reference', {}).get('owner_score')
+    scopes = [dict(id=s['id'], name=s['name'], starts=s['starts'], baseline=baselines[s['chapter']], chapter=s['chapter'],
+                   expected=s['score'], policy_basis=s['policy_basis']) for s in analysis.scopes()]
+    lines = position_lines(graph)
     contexts = {}
     for scope in scopes:
         expected = scope.pop('expected')
@@ -261,30 +250,27 @@ def analyze(path, cache='.cache/explorer'):
             contexts[identity] = Evaluator(graph, color, evidence, facts, dict(policy, **local), sparse=sparse)
         evaluator = contexts[identity]
         value = evaluator.evaluate(scope['starts'])
-        assert np.isclose(value[0], expected['resolved_contribution'], atol=1e-10)
-        assert np.isclose(value[1], expected['unresolved_mass'], atol=1e-10)
-        if expected.get('prepared_depth', {}).get('expected_moves') is not None:
-            assert np.isclose(value[2], expected['prepared_depth']['expected_moves'], atol=1e-10)
+        depth = expected.get('prepared_depth', {}).get('expected_moves')
+        if (not np.isclose(value[0], expected['resolved_contribution'], atol=1e-10)
+                or not np.isclose(value[1], expected['unresolved_mass'], atol=1e-10)
+                or (depth is not None and not np.isclose(value[2], depth, atol=1e-10))):
+            raise AssertionError('Preparation analysis did not reproduce the saved scope score')
         scope['stops'] = stopping_rows(evaluator, scope['starts'], scope['baseline'], lines)
         scope['score'] = float(value[0]) if value[1] == 0 else None
         scope['prepared_depth'] = float(value[2]) if value[1] == 0 else None
         scope['status'] = 'resolved' if value[1] == 0 else 'unresolved evidence'
         scope['depth_distribution'] = depth_distribution(evaluator, scope['starts'])
         bounds = expected.get('prepared_depth', {}).get('conditional_bounds')
-        if bounds is not None:
-            assert np.allclose(scope['depth_distribution']['expected_bounds'], bounds, atol=1e-10)
+        if bounds is not None and not np.allclose(scope['depth_distribution']['expected_bounds'], bounds, atol=1e-10):
+            raise AssertionError('Depth distribution did not reproduce the saved depth bounds')
         if scope['chapter']:
             chapter = chapters[scope['chapter']]
             region = (chapter.get('region') or {}).get('positions') or [e['position'] for e in chapter['entries']]
             scope['entry_routes'] = first_entry_examples(evaluator, manifest['root_weights'], region,
                 chapter['score'].get('entry_probability'), chapter['score'].get('first_entry_weights') or None)
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('Source PGN changed during preparation analysis')
+    analysis.require_source('preparation analysis')
     result = dict(color=saved['color'], scopes=scopes,
-        manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), report_path=str(path.resolve()),
-            report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(), input_sha256=manifest['input_sha256'],
-            input_path=str(source), filters=manifest['filters'], evidence=explorer.provenance,
-            cache_only=True, network_requests=0, uncached_positions=missing, schema_version=SCHEMA_VERSION,
+        manifest=analysis.companion_manifest(
             depth_distribution_definition='Remaining own moves from the same scope entry mixture; survival probabilities and exact stopping depths retain transposed elapsed-depth histories. Missing reply distributions have finite structural bounds. Missing leaf scores do not affect depth.',
             entry_example_definition='Highest-probability single root-to-first-arrival path for each entry board. All routes contribute to entry weights; example probabilities are subsets, conditional on chapter entry.'),
         validation=dict(original_scores_reproduced=True, stopping_contributions_reproduced=True,
@@ -295,17 +281,8 @@ def analyze(path, cache='.cache/explorer'):
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('reports',nargs='+')
-    parser.add_argument('--cache',default='.cache/explorer')
-    args=parser.parse_args()
-    for source in args.reports:
-        path=Path(source); result=analyze(path,args.cache)
-        path.with_suffix('.preparation.json').write_text(data_json(result),encoding='utf-8')
-        print(f"Generated {result['color']} stopping contributions for {len(result['scopes'])} scopes",flush=True)
-    from .render import update_report_outputs
-    update_report_outputs(args.reports[-1])
+    stage_main('preparation', analyze, __doc__)
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     main()

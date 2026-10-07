@@ -22,14 +22,6 @@ class ModelNode:
     potential_targets: list[str] = field(default_factory=list)
 
 
-def outcome(board, color):
-    if board.is_checkmate():
-        return float(board.turn != color)
-    if board.is_stalemate() or board.is_insufficient_material():
-        return 0.5
-    return None
-
-
 def prepare(graph, transitions, order, color, evidence):
     model = {}
     for k in order:

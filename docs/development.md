@@ -17,15 +17,15 @@ Work from the repository root and preserve unrelated local changes. Use uv for P
 | Gain/drag comparisons, ratings, opening flows and source attribution | [vulnerabilities.py](../repertoire_score/vulnerabilities.py), [ratings.py](../repertoire_score/ratings.py), [openings.py](../repertoire_score/openings.py), [attribution.py](../repertoire_score/attribution.py) |
 | Saved gain intervals and spread/entry presentation data | [report_insights.py](../repertoire_score/report_insights.py) |
 | Correlations | [position_correlations.py](../repertoire_score/position_correlations.py), [rating_correlations.py](../repertoire_score/rating_correlations.py), with shared helpers in [stats.py](../repertoire_score/stats.py) |
-| Summary, full report, chapter and opening pages, exit points, Lichess links, cross-page link resolution and nested contents | [consolidated.py](../repertoire_score/consolidated.py), [render.py](../repertoire_score/render.py), [layout.py](../repertoire_score/layout.py). `report.py` supplies core score/event helpers and legacy rendering utilities. |
+| Summary, full report, chapter and opening pages, exit points, Lichess links, cross-page link resolution and nested contents | the [report](../repertoire_score/report) package: `format`, `markdown`, `bundle` (loading saved analyses), `links`, `derive`, `tables`, `sections`, `definitions`, `pages` and `generate`; [render.py](../repertoire_score/render.py) is its command line |
 | Lichess study export | [studies.py](../repertoire_score/studies.py) |
 | Incremental stage orchestration | [build.py](../repertoire_score/build.py) |
 
-Numerical analyses produce saved JSON; `consolidated.py` combines matching saved results and does not rerun estimates. Keep network access out of the renderer and cache-only metrics.
+Numerical analyses produce saved JSON; the `report` package combines matching saved results and does not rerun estimates. Keep network access out of the renderer and cache-only metrics.
 
 The complete build follows this order:
 
-`scores -> vulnerabilities -> preparation -> character -> ratings -> openings -> report insights -> both correlations -> consolidated rendering`
+`scores -> vulnerabilities -> preparation -> character -> ratings -> openings -> report insights -> both correlations -> rendering`
 
 Ratings depend on preparation, character and vulnerabilities. Report insights depend on preparation, character, vulnerabilities and openings. Companion manifests contain source-score hashes and, where applicable, supporting-analysis hashes and cache provenance. A changed companion may require rebuilding its dependents even when the headline score is unchanged. Strict rendering checks provenance; do not edit hashes or numerical JSON by hand to bypass a mismatch. Standalone commands can render an intermediate report with pending analyses; the batch defers rendering until all stages succeed.
 

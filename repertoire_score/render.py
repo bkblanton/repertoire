@@ -4,7 +4,7 @@ import json
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from .consolidated import generate
+from .report.generate import generate
 from .layout import report_directory
 
 

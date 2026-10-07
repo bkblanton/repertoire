@@ -234,7 +234,7 @@ class Posterior:
             for b, (p, _) in zip(self.model[k].branches, self.sample[k]):
                 if b.target is not None:
                     upstream[b.target] += upstream[k] * p
-        starts = {k: upstream[k] for k in entries if upstream[k] > 0}
+        starts = {k: upstream[k] for k in self.order if k in entries and upstream[k] > 0}
         probability = sum(starts.values())
         if probability <= 0:
             return None
@@ -253,7 +253,8 @@ class Posterior:
                 enters[k] = sum(p * enters.get(t, 0.) for p, t in pairs)
         downstream = self.combined_influence(starts)
         cells = {}
-        for m in set(downstream) | {k for k, w in upstream.items() if w and k in self.alpha and k not in entries}:
+        # Sorted, so sums are reproducible bit for bit regardless of set ordering.
+        for m in sorted(set(downstream) | {k for k, w in upstream.items() if w and k in self.alpha and k not in entries}):
             gradient = downstream.get(m, 0.) * self.cells(m)
             if m not in entries and upstream[m] and self.model[m].mode == 'opponent':
                 # Changing this table moves probability between entries and away from the chapter.
@@ -289,7 +290,7 @@ def paired_variance(a, a_gradient, b, b_gradient, a_scale=1., b_scale=1.):
     The scales allow a transformed difference, such as a logit (centipawn) change, by the delta method.
     """
     total = 0.
-    for m in set(a_gradient['cells']) | set(b_gradient['cells']):
+    for m in sorted(set(a_gradient['cells']) | set(b_gradient['cells'])):
         alpha = b.alpha[m] if m in b.alpha else a.alpha[m]
         if m in a.alpha and m in b.alpha and not np.array_equal(a.alpha[m], b.alpha[m]):
             raise ValueError('Paired scores use different evidence for the same position')

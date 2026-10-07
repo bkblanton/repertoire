@@ -8,7 +8,9 @@ import httpx
 import pytest
 
 from repertoire_score import character, openings, preparation, vulnerabilities
-from repertoire_score.consolidated import Chapters, gap_section, generate
+from repertoire_score.report.links import Chapters
+from repertoire_score.report.sections import gap_section
+from repertoire_score.report.generate import generate
 from repertoire_score.report_insights import (analyze, branch_score_spread,
     gap_priorities, move_decomposition)
 from test_chapter_policies import run_fixture
@@ -86,12 +88,12 @@ def test_cached_insights_preserve_scores_cache_and_source_and_reject_stale_input
     assert all(hashlib.sha256(p.read_bytes()).hexdigest() == digest for p, digest in preserved.items())
     assert source.read_bytes() == source_before
     source.write_bytes(source_before + b'\n')
-    with pytest.raises(ValueError, match='PGN differs from saved scores'):
+    with pytest.raises(ValueError, match='PGN changed since scoring'):
         analyze(path, cache)
     source.write_bytes(source_before)
     data = path.with_suffix('.preparation.json')
     d = json.loads(data.read_bytes()); d['manifest']['report_sha256'] = 'stale'; data.write_text(json.dumps(d))
-    with pytest.raises(ValueError, match='differs from saved score snapshot'):
+    with pytest.raises(ValueError, match='belongs to a different score snapshot'):
         analyze(path, cache)
 
 

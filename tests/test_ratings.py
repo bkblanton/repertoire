@@ -3,7 +3,8 @@ import json
 import chess
 import pytest
 
-from repertoire_score.consolidated import generate, load
+from repertoire_score.report.generate import generate
+from repertoire_score.report.bundle import load
 from repertoire_score.preparation import Evaluator, chess_facts
 from repertoire_score.ratings import (Context, analyze, first_entries, mixture, move_context,
                                       reply_rating, response_rating, unavailable,
@@ -37,7 +38,7 @@ def test_reply_mean_count_weights_missing_ratings_and_residual_games():
 
 
 def test_reply_rating_difference_uses_same_player_parent_mean_and_discloses_coverage():
-    from repertoire_score.consolidated import rating_difference
+    from repertoire_score.report.format import rating_difference
     table = rated(50, 0, 50, [('e7e5', 30, 0, 30, 1000), ('c7c5', 10, 0, 10, 2000),
                              ('e7e6', 10, 0, 10, None)])
     parent = response_rating(table)
@@ -88,9 +89,10 @@ def test_move_maker_rule_for_both_colors_and_no_child_queries(tmp_path, color, p
 
 
 def test_starting_board_local_context_keeps_opponent_response_average_in_the_report(tmp_path):
-    from repertoire_score.consolidated import character_section
+    from repertoire_score.report.sections import character_section
     from repertoire_score.ratings import attach
-    from repertoire_score.consolidated import Chapters, opponent_rating
+    from repertoire_score.report.links import Chapters
+    from repertoire_score.report.format import opponent_rating
     g = graph(tmp_path, '1. e4 c5 *')
     root, e4, leaf = [position(p) for p in ('', 'e4', 'e4 c5')]
     evidence = {root: rated(100, 0, 0, [('e2e4', 75, 0, 0, 1600), ('d2d4', 25, 0, 0, 2000)]),

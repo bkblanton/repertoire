@@ -1,18 +1,13 @@
 """Rank repertoire vulnerabilities using parent move tables and saved model evidence."""
-import argparse
-import hashlib
 import json
-from datetime import datetime, timezone
-from pathlib import Path
 
 import numpy as np
 
-from .layout import data_json
-from . import SCHEMA_VERSION
 from .evaluate import KNOWN, UNKNOWN, backward, can_enter, forward
 from .board_cache import fen_number, move_text, san
+from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .explorer import Explorer, add_token_option, apply_token_file, counts
-from .graph import parse, resolve, topology
+from .graph import resolve, topology
 from .model import empirical, prepare, score
 from .attribution import enrich
 
@@ -149,16 +144,10 @@ def rank_scope(local, reach, lines, entry_probability=1.0):
                 all_signed_rows=rows)
 
 
-def analyze(path, cache='.cache/explorer', fetch_missing=False):
-    path = Path(path)
-    saved = json.loads(path.read_text(encoding='utf-8'))
-    manifest = saved['manifest']
-    source = Path(manifest['input_path'])
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError(f'PGN differs from saved scores; reanalyze first: {source}')
-    color = saved['color'] == 'white'
-    graph = parse(source, manifest['configuration'].get('exclude', []))
-    transitions = resolve(graph, color, manifest['configuration'].get('policy', {}))
+def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
+    analysis = AnalysisContext(path)
+    graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
+    transitions = resolve(graph, color, analysis.policy)
     roots = manifest['root_weights']
     analysis_roots = [*roots, *[e['position'] for c in saved['chapters'] for e in c['entries']]]
     order = topology(transitions, analysis_roots)
@@ -167,39 +156,23 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
         overrides = chapter.get('policy_overrides', {})
         identity = json.dumps(overrides, sort_keys=True)
         if identity not in contexts:
-            ct = resolve(graph, color, dict(manifest['configuration'].get('policy', {}), **overrides))
+            ct = resolve(graph, color, dict(analysis.policy, **overrides))
             contexts[identity] = {'transitions': ct, 'order': topology(ct, analysis_roots)}
-    evidence = {}
     # Saved evaluation evidence must be cached and identical to the original run.
-    explorer = Explorer(cache, manifest['filters'], offline=True)
-    try:
-        for k, original in manifest['evidence'].items():
-            evidence[k] = explorer.get(k)
-            if explorer.provenance[k] != original:
-                raise ValueError(f'Cached evaluation evidence changed; reanalyze scores first: {k}')
-        for context in contexts.values():
-            context['model'] = prepare(graph, context['transitions'], context['order'], color, evidence)
-            context['sampled'] = empirical(context['model'], color)
-            context['values'] = backward(context['model'], context['order'], context['sampled'], manifest['sparse_threshold'])
-        model, sampled, values = (contexts['{}'][k] for k in ('model', 'sampled', 'values'))
-        overall = sum(w*values[k] for k, w in roots.items())
-        if not np.allclose(overall[[KNOWN, UNKNOWN], 0],
-                           [saved['overall']['resolved_contribution'], saved['overall']['unresolved_mass']],
-                           atol=1e-12, rtol=0):
-            raise AssertionError('Reconstructed model differs from saved scores')
-        missing = []
-        own_positions = sorted({k for context in contexts.values() for k,n in context['model'].items() if n.mode == 'own'})
-        for k in own_positions:
-            if k not in evidence:
-                try:
-                    evidence[k] = explorer.get(k)
-                except ValueError as exc:
-                    if not str(exc).startswith('Offline cache miss:'):
-                        raise
-                    missing.append(k)
-        provenance = dict(explorer.provenance)
-    finally:
-        explorer.close()
+    evidence = analysis.read_evidence(cache, list(manifest['evidence']), required=True)
+    for context in contexts.values():
+        context['model'] = prepare(graph, context['transitions'], context['order'], color, evidence)
+        context['sampled'] = empirical(context['model'], color)
+        context['values'] = backward(context['model'], context['order'], context['sampled'], manifest['sparse_threshold'])
+    model, sampled, values = (contexts['{}'][k] for k in ('model', 'sampled', 'values'))
+    overall = sum(w*values[k] for k, w in roots.items())
+    if not np.allclose(overall[[KNOWN, UNKNOWN], 0],
+                       [saved['overall']['resolved_contribution'], saved['overall']['unresolved_mass']],
+                       atol=1e-12, rtol=0):
+        raise AssertionError('Reconstructed model differs from saved scores')
+    own_positions = sorted({k for context in contexts.values() for k,n in context['model'].items() if n.mode == 'own'})
+    analysis.read_evidence(cache, own_positions)
+    missing = list(analysis.missing)
     if missing and not fetch_missing:
         raise ValueError(f'{len(missing)} own-parent tables missing; use --fetch-missing to cache parents only')
     if missing:
@@ -209,7 +182,8 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
                 evidence[k] = online.get(k)
                 if i % 10 == 0 or i == len(missing):
                     print(f'{saved["color"]}: cached {i}/{len(missing)} missing parent tables', flush=True)
-            provenance.update(online.provenance)
+            analysis.provenance.update(online.provenance)
+            analysis.missing.clear()
         finally:
             online.close()
     for context in contexts.values():
@@ -265,17 +239,15 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
             max_balance_error = max(max_balance_error, abs(float(balance)))
     if max_balance_error > 1e-10:
         raise AssertionError('Opponent signed deviations do not balance')
-    used = {k: provenance[k] for k in evidence}
+    used = {k: analysis.provenance[k] for k in evidence}
     baseline = saved.get('starting_position_reference', {}).get('owner_score')
     total_score = saved['overall']['raw_empirical_score']
     result = dict(color=saved['color'], overall_score=total_score, starting_baseline_score=baseline,
                 overall_delta_pp=None if baseline is None or total_score is None else 100*(total_score-baseline),
                 overall=overall_scope, chapters=chapters,
-                manifest=dict(created_at=datetime.now(timezone.utc).isoformat(), schema_version=SCHEMA_VERSION,
-                              report_path=str(path.resolve()), report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                              input_path=str(source), input_sha256=manifest['input_sha256'],
-                              filters=manifest['filters'], evidence=used, parent_tables_fetched=len(missing),
-                              candidate_child_queries=0, sparse_threshold=manifest['sparse_threshold']),
+                manifest=analysis.companion_manifest(evidence=used, cache_only=not missing, network_requests=len(missing),
+                              parent_tables_fetched=len(missing), candidate_child_queries=0,
+                              sparse_threshold=manifest['sparse_threshold']),
                 validation=dict(saved_scores_reproduced=True, chapter_scores_reproduced=True,
                                 probability_conservation=True, max_opponent_balance_error=max_balance_error,
                                 own_decision_positions=len(own_positions),
@@ -286,19 +258,17 @@ def analyze(path, cache='.cache/explorer', fetch_missing=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('reports', nargs='+', help='Saved score JSON files, with unchanged source PGNs')
-    parser.add_argument('--cache', default='.cache/explorer')
+    stage_main('vulnerabilities', analyze, __doc__, configure, options)
+
+
+def configure(parser):
     parser.add_argument('--fetch-missing', action='store_true', help='Fetch only missing own decision parent tables; default is cache-only')
     add_token_option(parser)
-    args = parser.parse_args()
+
+
+def options(parser, args):
     apply_token_file(parser, args)
-    for path in args.reports:
-        result = analyze(path, args.cache, args.fetch_missing)
-        Path(path).with_suffix('.vulnerabilities.json').write_text(data_json(result), encoding='utf-8')
-        print(f"Generated {result['color']} vulnerabilities: overall and {len(result['chapters'])} chapters", flush=True)
-    from .render import update_report_outputs
-    update_report_outputs(args.reports[-1])
+    return dict(fetch_missing=args.fetch_missing)
 
 
 if __name__ == '__main__':

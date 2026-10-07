@@ -9,7 +9,8 @@ from types import SimpleNamespace
 
 from . import score as scoring
 from . import character, openings, position_correlations, preparation, rating_correlations, ratings, report_insights, studies, vulnerabilities
-from .consolidated import generate, page_names
+from .report.generate import generate, page_names
+from .context import DEFAULT_CACHE
 from .explorer import add_token_option, apply_token_file, observe_cache
 from .layout import data_json, report_directory
 from .render import defer_report_outputs
@@ -62,10 +63,13 @@ def write_json(path, value):
 
 
 def code_inputs(presentation=False):
+    """Source files whose changes invalidate saved analyses, or with `presentation` also the rendered pages."""
     package = Path(__file__).parent
-    # Study export code never affects analyses or rendering.
-    files = [p for p in sorted(package.glob('*.py')) if p.name != 'studies.py'
-             and (presentation or p.name not in ('consolidated.py', 'render.py'))]
+    rendering = [package / 'render.py', *sorted((package / 'report').glob('*.py'))]
+    # Study export code and the command dispatcher never affect analyses or rendering.
+    files = [p for p in sorted(package.glob('*.py')) if p.name not in ('studies.py', 'cli.py', 'render.py')]
+    if presentation:
+        files += rendering
     # Changes to pinned dependencies invalidate numerical analyses as well.
     files += [p for p in (package.parent / 'uv.lock', package.parent / 'pyproject.toml') if p.exists()]
     return file_inputs(files)
@@ -120,7 +124,7 @@ class Builder:
 
 
 def build(white_pgn, black_pgn, *, white_config='configs/white.json', black_config='configs/black.json',
-          directory='reports/data', cache='.cache/explorer', offline=False, force=False):
+          directory='reports/data', cache=DEFAULT_CACHE, offline=False, force=False):
     started = time.perf_counter()
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -190,7 +194,7 @@ def main():
     parser.add_argument('--white-config', default='configs/white.json')
     parser.add_argument('--black-config', default='configs/black.json')
     parser.add_argument('--directory', default='reports/data')
-    parser.add_argument('--cache', default='.cache/explorer')
+    parser.add_argument('--cache', default=DEFAULT_CACHE)
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--force', action='store_true', help='Rebuild all analyses using existing cached evidence')
     add_token_option(parser)

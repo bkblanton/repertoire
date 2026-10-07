@@ -5,7 +5,10 @@ import chess
 import httpx
 import pytest
 
-from repertoire_score.consolidated import Chapters, opening_details_page, openings_section, table
+from repertoire_score.report.links import Chapters
+from repertoire_score.report.pages import opening_details_page
+from repertoire_score.report.sections import openings_section
+from repertoire_score.report.markdown import table
 from repertoire_score.openings import (analyze, classify, cohort, entered_reach, first_entries,
                                        chapter_sources, most_common_source, name_flow, named_regions, opening_identity)
 from repertoire_score.preparation import Evaluator, chess_facts
@@ -340,7 +343,7 @@ def test_opening_source_move_uses_parent_flow_and_named_child_resets(tmp_path):
 
 
 def test_source_cells_add_opening_column_without_duplicates():
-    from repertoire_score.consolidated import SourceCell
+    from repertoire_score.report.markdown import SourceCell
     source = SourceCell('[W1](#white-chapter-1)', 'Vienna (90.00%)')
     rendered = table(['Line', 'Chapter source', 'Reach'], [['e4', source, '10.00%']])
     assert rendered[0] == '| Line | Chapter source | Most common opening source | Reach |'

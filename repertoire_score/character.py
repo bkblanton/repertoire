@@ -1,21 +1,14 @@
 """Cache-only preparation reuse, reply predictability and boundary board profiles."""
-import argparse
 from collections import defaultdict
-from datetime import datetime, timezone
 from functools import lru_cache
-import hashlib
-import json
 import math
-from pathlib import Path
 
 import chess
 import numpy as np
 
-from .layout import data_json
-from . import SCHEMA_VERSION
 from .board_cache import STARTING_POSITION, children, fen_number, move_text, next_number, san, turn
-from .explorer import Explorer, counts
-from .graph import parse
+from .context import DEFAULT_CACHE, AnalysisContext, stage_main
+from .explorer import counts
 from .model import score
 from .preparation import Evaluator, chess_facts, position_lines, stopping_rows
 from .attribution import enrich
@@ -194,7 +187,7 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
         if mass <= 0: continue
         if evaluator.facts[k]['outcome'] is not None:
             kind = 'terminal'
-        elif any(s[2] == 'unresolved_distribution' for s in evaluator.stops[k]):
+        elif any(s.kind == 'unresolved_distribution' for s in evaluator.stops[k]):
             kind = 'unresolved_distribution'
         elif evaluator.facts[k]['turn'] == evaluator.color and not evaluator.graph.nodes[k].edges:
             kind = 'theory_leaf'
@@ -294,43 +287,15 @@ def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probabili
                                 unanswered_reach_matches_first_gaps=True))
 
 
-def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
-    path = Path(path)
-    source_bytes = path.read_bytes()
-    saved = json.loads(source_bytes)
-    manifest = saved['manifest']
-    source = Path(manifest['input_path'])
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN changed since scoring; regenerate scores first')
-    graph = parse(source, manifest['configuration'].get('exclude', []))
-    color = saved['color'] == 'white'
-    evidence, missing = {}, []
-    explorer = Explorer(cache,manifest['filters'],offline=True)
-    try:
-        for k in graph.nodes:
-            try: evidence[k] = explorer.get(k)
-            except ValueError as exc:
-                if not str(exc).startswith('Offline cache miss:'): raise
-                missing.append(k)
-            if k in manifest['evidence'] and explorer.provenance.get(k) != manifest['evidence'][k]:
-                raise ValueError('Saved score evidence changed; regenerate scores first')
-    finally:
-        explorer.close()
+def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
+    analysis = AnalysisContext(path)
+    graph, color, manifest = analysis.graph, analysis.color, analysis.manifest
+    evidence = analysis.read_evidence(cache)
     facts = chess_facts(graph,color,evidence)
     lines = position_lines(graph)
-    scopes = [dict(id='overall', name='Overall repertoire', starts=manifest['root_weights'],
-                   policy_basis='overall policy', chapter=None, entry_probability=1.0,
-                   overall_policy_entry_probability=1.0, expected=saved['overall'])]
-    for c in saved['chapters']:
-        weights = c['score'].get('first_entry_weights', {})
-        if not weights and len(c['entries']) == 1: weights = {c['entries'][0]['position']:1.0}
-        scopes.append(dict(id=c['id'],name=c['name'],starts={k:w for k,w in weights.items() if w},
-                           policy_basis=c.get('policy_basis','overall policy'),chapter=c['id'],
-                           entry_probability=c['score'].get('entry_probability'),
-                           overall_policy_entry_probability=c['score'].get('overall_policy_entry_probability'),
-                           expected=c['score']))
+    scopes = analysis.scopes()
     for scope in scopes:
-        expected = scope.pop('expected')
+        expected = scope.pop('score')
         if not scope['starts']:
             scope['status'] = 'unavailable: unresolved entry weights'
             continue
@@ -346,13 +311,9 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
         if depth is not None and not math.isclose(depth,scope['reuse']['expected_encounters_per_game'],abs_tol=1e-10):
             raise AssertionError('Character report did not reproduce saved prepared depth')
         scope['status'] = 'partial: unknown opponent distribution' if scope['unresolved_opponent_distribution_mass'] else 'resolved'
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN changed during character analysis')
-    result = dict(color=saved['color'],scopes=scopes,manifest=dict(created_at=datetime.now(timezone.utc).isoformat(),
-                report_path=str(path.resolve()),report_sha256=hashlib.sha256(source_bytes).hexdigest(),
-                input_path=str(source),input_sha256=manifest['input_sha256'],filters=manifest['filters'],
-                cache_only=True,network_requests=0,evidence=explorer.provenance,uncached_positions=missing,
-                games=list(games),source_pgn_unchanged=True, schema_version=SCHEMA_VERSION,
+    analysis.require_source('character analysis')
+    result = dict(color=analysis.saved['color'],scopes=scopes,manifest=analysis.companion_manifest(
+                games=list(games),source_pgn_unchanged=True,
                 outcome_definition='Owner-relative WDL propagated through the exact score policy and stopping rules, including transpositions, cached parent-row deviations and weighted first entries. Missing outcomes remain unresolved.',
                 sharpness_definition='400 * (W + D/4 - (W + D/2)**2), normalized outcome variance on a 0-100 scale. Mix WDL before calculating sharpness; no priors or new API requests.',
                 gap_definition='First unanswered own-turn board under the selected policy, including cached opponent replies after prepared endpoints and all exact transpositions. Aggregate first-exit mass by board before sqrt(sum(p**2)); unknown distributions remain bounded.',
@@ -362,18 +323,14 @@ def analyze(path, cache='.cache/explorer', games=DEFAULT_GAMES):
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('reports',nargs='+',type=Path)
-    parser.add_argument('--cache',default='.cache/explorer')
-    parser.add_argument('--games',nargs='+',type=int,default=list(DEFAULT_GAMES))
-    args=parser.parse_args()
-    if any(n <= 0 for n in args.games): parser.error('Games must be positive')
-    for path in args.reports:
-        result=analyze(path,args.cache,sorted(set(args.games)))
-        path.with_suffix('.character.json').write_text(data_json(result),encoding='utf-8')
-        print(f"{result['color']}: character report generated for {len(result['scopes'])} scopes; no network requests",flush=True)
-    from .render import update_report_outputs
-    update_report_outputs(args.reports[-1])
+    def configure(parser):
+        parser.add_argument('--games',nargs='+',type=int,default=list(DEFAULT_GAMES))
+
+    def options(parser, args):
+        if any(n <= 0 for n in args.games): parser.error('Games must be positive')
+        return dict(games=sorted(set(args.games)))
+
+    stage_main('character', analyze, __doc__, configure, options)
 
 
 if __name__ == '__main__':

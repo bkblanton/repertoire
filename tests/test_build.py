@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import chess
 import httpx
@@ -193,3 +194,12 @@ def test_presentation_change_only_renders_and_missing_analysis_rebuilds_dependan
     recovered = run()
     assert {s['step'] for s in recovered['steps'] if s['status'] == 'built'} == {
         'black.character', 'black.ratings', 'black.insights', 'rating-correlations', 'render'}
+
+
+def test_rendering_code_invalidates_only_the_render_step():
+    analysis, presentation = build.code_inputs(), build.code_inputs(presentation=True)
+    report_files = {p for p in presentation if Path(p).parent.name == 'report'}
+    assert any(p.endswith('pages.py') for p in report_files)
+    assert not report_files & set(analysis)
+    assert any(p.endswith('render.py') for p in presentation) and not any(p.endswith('render.py') for p in analysis)
+    assert any(p.endswith('uncertainty.py') for p in analysis)

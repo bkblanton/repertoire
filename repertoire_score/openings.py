@@ -1,20 +1,13 @@
 """Cached opening names, transposition inheritance, and first-entry cohorts."""
-import argparse
 from collections import defaultdict, deque
-from datetime import datetime, timezone
-import hashlib
-import json
 import math
-from pathlib import Path
 
 import numpy as np
 
-from .layout import data_json
-from . import SCHEMA_VERSION
 from .board_cache import STARTING_POSITION, children, fen_number, move_text, next_number
-from .explorer import Explorer, counts
+from .context import DEFAULT_CACHE, AnalysisContext, stage_main
+from .explorer import counts
 from .gaps import distribution as gap_distribution
-from .graph import parse
 from .model import score
 from .preparation import Evaluator, chess_facts
 from .ratings import (comparison_fields, comparison_mixture, first_entries as rating_entries,
@@ -358,30 +351,10 @@ def cohort(evaluator, entries, total, wdl):
                         gap_probability_conserved=True, canonical_gaps_merged_before_squaring=True))
 
 
-def analyze(path, cache='.cache/explorer'):
-    path = Path(path)
-    source_bytes = path.read_bytes()
-    saved = json.loads(source_bytes)
-    manifest = saved['manifest']
-    source = Path(manifest['input_path'])
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN changed since scoring; regenerate scores first')
-    graph = parse(source, manifest['configuration'].get('exclude', []))
-    color = saved['color'] == 'white'
-    explorer = Explorer(cache, manifest['filters'], offline=True)
-    evidence, missing = {}, []
-    try:
-        for k in graph.nodes:
-            try:
-                evidence[k] = explorer.get(k)
-            except ValueError as exc:
-                if not str(exc).startswith('Offline cache miss:'):
-                    raise
-                missing.append(k)
-            if k in manifest['evidence'] and explorer.provenance.get(k) != manifest['evidence'][k]:
-                raise ValueError('Saved score evidence changed; regenerate scores first')
-    finally:
-        explorer.close()
+def analyze(path, cache=DEFAULT_CACHE):
+    analysis = AnalysisContext(path)
+    graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
+    evidence = analysis.read_evidence(cache)
     facts = chess_facts(graph, color, evidence)
     evaluator = Evaluator(graph, color, evidence, facts, manifest['configuration'].get('policy', {}),
                           sparse=manifest['sparse_threshold'])
@@ -435,19 +408,14 @@ def analyze(path, cache='.cache/explorer'):
                          **cohort(evaluator, entries, total, wdl)))
     _, classified_reach, _ = first_entries(evaluator, roots, set(exact))
     sources = chapter_sources(graph, saved, evidence, facts, exact, flows)
-    if hashlib.sha256(source.read_bytes()).hexdigest() != manifest['input_sha256']:
-        raise ValueError('PGN changed during opening analysis')
+    analysis.require_source('opening analysis')
     return dict(color=saved['color'], openings=sorted(rows, key=lambda r: (-r['reach'], r['name'], r['eco'])),
         catalog=sorted(catalog.values(), key=lambda r: (r['name'], r['eco'])),
         positions=positions, source_scopes=sources,
         coverage=dict(ever_classified_probability=classified_reach, unreachable_opening_ids=sorted(unreachable),
                       named_repertoire_positions=len(exact), inherited_positions=sum(bool(p['current_ids']) and not p['exact_name'] for p in positions.values()),
                       multi_name_positions=sum(len(p['current_ids']) > 1 for p in positions.values())),
-        manifest=dict(created_at=datetime.now(timezone.utc).isoformat(),
-            report_path=str(path.resolve()), report_sha256=hashlib.sha256(source_bytes).hexdigest(),
-            input_path=str(source), input_sha256=manifest['input_sha256'], filters=manifest['filters'],
-            schema_version=SCHEMA_VERSION, cache_only=True, network_requests=0, evidence=explorer.provenance,
-            uncached_positions=missing, source_pgn_unchanged=True, policy_basis='overall selected repertoire policy',
+        manifest=analysis.companion_manifest(source_pgn_unchanged=True, policy_basis='overall selected repertoire policy',
             naming_rule='Exact cached names replace the current name on every arriving route. Unnamed boards preserve each incoming name and its probability share under the selected policy. Structural potential labels never add probability. Unprepared replies inherit parent name flows without child queries.',
             parent_rule='Only existing cached names that match at colon or comma boundaries are broader parents. Earlier unrelated labels are not parents.',
             reach_rule='First arrival at a cached exact name or a known more specific named descendant. Inheritance preserves existing route probability and never introduces another opening. Each modeled game counts once per opening; rows overlap. Per-board origin contributions retain the mass that previously entered each opening, even after a later name reset.',
@@ -459,16 +427,7 @@ def analyze(path, cache='.cache/explorer'):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('reports', nargs='+', type=Path)
-    parser.add_argument('--cache', default='.cache/explorer')
-    args = parser.parse_args()
-    for path in args.reports:
-        result = analyze(path, args.cache)
-        path.with_suffix('.openings.json').write_text(data_json(result), encoding='utf-8')
-        print(f"{result['color']}: {len(result['openings'])} reached openings; network requests: 0", flush=True)
-    from .render import update_report_outputs
-    update_report_outputs(args.reports[-1])
+    stage_main('openings', analyze, __doc__)
 
 
 if __name__ == '__main__':

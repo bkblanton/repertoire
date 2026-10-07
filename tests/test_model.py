@@ -214,7 +214,7 @@ def test_unlisted_opponent_move_reenters_known_theory(tmp_path):
 
 def test_cli_fixture_end_to_end(tmp_path,monkeypatch):
     from repertoire_score import score as cli
-    from repertoire_score.consolidated import headline_delta
+    from repertoire_score.report.format import headline_delta
     white_row = f'| White | 80.00% | 70.00% | {headline_delta(.7, .8)} |'
     black_row = f'| Black | 20.00% | 30.00% | {headline_delta(.3, .2)} |'
     graph(tmp_path, '1. e4 e5 *')  # writes the fixture PGN
