@@ -348,11 +348,13 @@ def full_report(
         text += section(f'## {color.title()} repertoire', color)
         text += section(f'### {color.title()} chapters ({len(r["chapters"])})', f'{color}-chapters')
         text += [
-            'Chapter reach is the chance of first reaching any position in a '
-            'chapter through any move order; the other values are conditional on '
+            'Chapter reach is the chance of reaching one of a chapter\'s entry '
+            'positions through any move order; the other values are conditional on '
             'that entry. '
             'Each chapter name opens its own page with positions, gaps and entry routes. '
-            f'Chapters overlap, so their values are not additive. {about("entry")}.',
+            'Chapters overlap only where one chapter\'s line transposes onto another\'s '
+            'entry position, and some games reach no chapter, so reaches and scores are '
+            f'not additive. {about("entry")}.',
             '',
             *chapter_table(r, refs),
         ]
@@ -542,7 +544,8 @@ def _summary_report(bundles):
             f'chapter{"" if len(r["chapters"]) == 1 else "s"})</summary>',
             '',
             'Chapter scores and gap reach are conditional on first entry through '
-            'any move order; overlapping chapters are not additive. '
+            'any move order. Chapters overlap where one transposes onto another\'s '
+            'entry position, and some games reach no chapter, so they are not additive. '
             f'{about("entry")}.',
             '',
             *chapter_table(r, refs),

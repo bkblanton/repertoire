@@ -137,7 +137,7 @@ def test_equivalent_gap_reach_in_overall_and_chapter_reports(complete):
             )
         assert f"weighted gap reach contribution **{gap_percentage(metrics, weighted=True)}**" in page
         assert '## Equivalent gap reach' in page
-    assert 'Chapters overlap, so their values are not additive' in full
+    assert 'so reaches and scores are not additive' in full
 
 
 def test_gap_display_keeps_unknown_reach_bounded():
