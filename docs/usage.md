@@ -1,33 +1,19 @@
 # Usage
 
-Run commands from the repository root. The program reads Lichess studies but never edits them, and it never changes PGN files you supply. For metric definitions, see [metrics.md](metrics.md).
+Run every command from the repository root. Repertoire reads your Lichess studies but never edits them, and it never changes PGN files you give it. For what the numbers in the reports mean, see [Reports and metrics](metrics.md).
 
 ## Contents
 
 - [Setup](#setup)
 - [Commands](#commands)
-- [Generate both reports](#generate-both-reports)
+- [Building the reports](#building-the-reports)
 - [Long runs](#long-runs)
-- [Analyze other PGN files](#analyze-other-pgn-files)
-- [Work offline](#work-offline)
-- [Inspect or score one repertoire](#inspect-or-score-one-repertoire)
-- [Display options](#display-options)
-- [Updating results](#updating-results)
-- [Files and cache](#files-and-cache)
+- [Analyzing other PGN files](#analyzing-other-pgn-files)
+- [Keeping results up to date](#keeping-results-up-to-date)
 - [Configuration](#configuration)
-  - [Explorer filters](#explorer-filters)
-  - [Move selection](#move-selection)
-  - [Chapter entries and transpositions](#chapter-entries-and-transpositions)
-  - [Other options](#other-options)
-- [Analysis commands](#analysis-commands)
-  - [Preparation and entry routes](#preparation-and-entry-routes)
-  - [Repertoire character](#repertoire character)
-  - [Strengths and vulnerabilities](#strengths-and-vulnerabilities)
-  - [Rating contexts](#rating-contexts)
-  - [Opening names and reach](#opening-names-and-reach)
-  - [Correlations](#correlations)
-  - [Report insights and attribution](#report-insights-and-attribution)
 - [Comparing alternative preparation](#comparing-alternative-preparation)
+- [Running single stages](#running-single-stages)
+- [Files](#files)
 - [Troubleshooting](#troubleshooting)
 
 ## Setup
@@ -36,32 +22,25 @@ Run commands from the repository root. The program reads Lichess studies but nev
 uv sync --locked
 ```
 
-If Windows restricts uv's default folders, set these in PowerShell before running the setup command:
-
-```powershell
-$env:UV_CACHE_DIR = Join-Path $PWD '.uv-cache'
-$env:UV_PYTHON_INSTALL_DIR = Join-Path $PWD '.uv-python'
-```
-
-You can select an existing compatible interpreter with `uv sync --python C:/path/to/python.exe`. After setup, `uv run --no-sync` uses the installed environment without another dependency synchronization.
+You need a [Lichess personal API token](https://lichess.org/account/oauth/token) for anything that contacts Lichess. Give it the `study:read` scope to export private studies. Pass it with `--token-file path/to/token.txt` or set the `LICHESS_TOKEN` environment variable. A file named `lichess_token.txt` in the repository root is ignored by Git. The token is never written to reports, exports or the cache.
 
 ## Commands
 
-Everything runs through one command, `repertoire <command>`. `uv run repertoire --help` lists the commands and `uv run repertoire <command> --help` shows each one's options. Most people only need `build`; the others run single stages and are described under [Analysis commands](#analysis-commands).
+Everything runs through `uv run repertoire <command>`. Add `--help` to any command to list its options. Most of the time you only need `build`.
 
-| Command | Purpose |
+| Command | What it does |
 | --- | --- |
 | `build` | Export the studies, fetch the Explorer tables, score both colors and write every report. |
 | `export` | Export the studies without building. |
 | `fetch` | Fetch the Explorer tables both repertoires need, without building. |
-| `score` | Inspect or score one repertoire PGN. |
+| `compare` | Compare a candidate study or PGN with your repertoire. See [Comparing alternative preparation](#comparing-alternative-preparation). |
 | `report` | Render the Markdown reports from saved results, offline. |
-| `compare` | Compare a candidate study or PGN with your repertoire, alternative by alternative. See [Comparing alternative preparation](#comparing-alternative-preparation). |
-| `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. |
+| `score` | Inspect or score one repertoire PGN. |
+| `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. See [Running single stages](#running-single-stages). |
 
-## Generate both reports
+## Building the reports
 
-The studies to analyze are listed in `studies.json` in the repository root:
+List your studies in `studies.json` in the repository root:
 
 ```json
 {
@@ -70,25 +49,43 @@ The studies to analyze are listed in `studies.json` in the repository root:
 }
 ```
 
-A study URL, a chapter URL (the whole study is exported) or a bare 8-character study ID all work. One command exports both studies and rebuilds every report:
+A study URL, a chapter URL (the whole study is exported) or a bare 8-character study ID all work. Then run:
 
 ```sh
 uv run repertoire build --token-file path/to/lichess_token.txt
 ```
 
-Create a personal token at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token). It needs the `study:read` scope to export private studies; the same token authenticates Explorer requests. Instead of `--token-file`, you can set the `LICHESS_TOKEN` environment variable. The program never writes the token to reports, exports or cache files.
+The build runs in three steps:
 
-The export step writes `studies/white.pgn` and `studies/black.pgn` with all chapters, variations and comments. Each download is validated by parsing it before the previous export is replaced, and a file is left untouched when only its `Date` headers changed, so an unchanged study reuses every saved stage.
+1. **Export.** Both studies are downloaded to `studies/white.pgn` and `studies/black.pgn`, with every chapter, variation and comment. A download replaces the previous export only after it parses cleanly, and a file whose only change is its `Date` headers is left alone, so an unchanged study reuses every saved result.
+2. **Fetch.** Every Opening Explorer table either repertoire needs is fetched in one pass, with a count and time estimate up front. Tables already in the cache are reused.
+3. **Analyze.** Everything after the fetch runs offline: both colors are scored, the supporting analyses run, and the reports are written.
 
-The build then fetches every Explorer table both repertoires need, in one pass with a count and time estimate up front. Every later stage runs offline: it scores both colors, generates the supporting analyses, and writes `reports/report.md`, `reports/summary.md`, and the chapter and opening pages under `reports/chapters/` and `reports/openings/`. Existing Explorer responses are reused; new or extended lines require only the missing tables. A first run can take hours; see [Long runs](#long-runs).
+The reports are:
 
-`uv run repertoire export` exports the studies without building, and `uv run repertoire fetch` fetches the Explorer tables for the last export (or for two PGN paths) without building; `fetch --dry-run` and `build --dry-run` print the count and estimate and stop. `repertoire build --no-export` builds from the last export without contacting the study API. `--sources` and `--studies` select a different study list and export folder.
+| File | Contents |
+| --- | --- |
+| `reports/summary.md` | The headline scores and what to work on next. Start here. |
+| `reports/report.md` | The full report for both colors, with a glossary. |
+| `reports/chapters/` | One page per chapter: `W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, .... |
+| `reports/openings/` | Opening-by-opening evidence for each color. |
+
+Useful options:
+
+- `--dry-run` exports the studies, prints the number of tables to fetch and a minimum time, then stops.
+- `--offline` builds from the last export and the cache, with no token and no network access. A table missing from the cache stops the build with a message; it is never treated as a position with no games.
+- `--no-export` builds from the last export but still fetches missing tables.
+- `--force` reruns every stage. It uses the cached tables and does not refresh Lichess statistics.
+- `--sources` and `--studies` choose a different study list and export folder.
+- `--white-config` and `--black-config` choose different [configuration](#configuration) files.
+
+`uv run repertoire export` runs only the export step, and `uv run repertoire fetch` only the fetch step.
 
 ## Long runs
 
-Every position in a repertoire needs its own Opening Explorer table, and the build fetches them all before it analyzes anything. Requests are made one at a time, about one a second, and Lichess answers sustained use with HTTP 429, which pauses the run for a minute at a time. A first run on a large repertoire therefore takes hours; some 60 chapters across both colors need about 2,000 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
+Every position in a repertoire needs its own Opening Explorer table, and the build fetches them all before it analyzes anything. Requests go out one at a time, about one per second. Lichess answers sustained use with HTTP 429, which pauses the run for a minute at a time, so a first run on a large repertoire takes hours: some 60 chapters across both colors need about 2,000 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
 
-Check the size of a run before starting it. `--dry-run` needs no token for `fetch`, while `build --dry-run` exports the studies first so the count reflects the latest version:
+Check the size of a run before you start it:
 
 ```sh
 uv run repertoire build --dry-run --token-file path/to/lichess_token.txt
@@ -98,7 +95,9 @@ uv run repertoire build --dry-run --token-file path/to/lichess_token.txt
 white and black: 1980 Explorer tables: 412 cached, 1568 to fetch (at least 26m)
 ```
 
-"At least" is the time at one request a second with no rate limiting; expect real runs to be slower. While fetching, a progress line is printed about every 15 seconds. Its estimate comes from the recent rate, including rate-limit pauses, so it settles after the first few minutes:
+"At least" assumes one request per second and no rate limiting, so real runs are slower. `fetch --dry-run` gives the same count for the last export without needing a token.
+
+While fetching, a progress line is printed about every 15 seconds. Its estimate uses the recent rate, including rate-limit pauses, so it settles after the first few minutes:
 
 ```text
 white and black: 87/1568 fetched, ~1h 50m left
@@ -108,276 +107,101 @@ Explorer: rate-limited (HTTP 429); waiting 60s (87/1568 fetched)
 The run looks after itself:
 
 - **Rate limits** are waited out for as long as they last.
-- **Server errors and dropped connections** are retried with waits growing to a minute. A table that still fails after 30 minutes stops the run with an error.
-- **Ctrl+C**, a closed terminal or a stopped run loses nothing already fetched. Each table is saved as soon as it arrives, and each build stage is checkpointed when it finishes. Run the same command again to continue; it reports how many tables remain.
+- **Server errors and dropped connections** are retried, with waits growing to a minute. A table that still fails after 30 minutes stops the run with an error.
+- **Stopping** with Ctrl+C or by closing the terminal loses nothing already fetched. Each table is saved as soon as it arrives, and each build stage is saved when it finishes. Run the same command again to continue.
 
-Keep the computer awake for an unattended run, because sleep drops the connection. On Windows, set the sleep timeout to Never in power settings for the duration. On macOS, prefix the command with `caffeinate -i`, and on Linux with `systemd-inhibit`.
+Keep the computer awake during an unattended run, because sleep drops the connection. On Windows, set the sleep timeout to Never in the power settings. On macOS, prefix the command with `caffeinate -i`; on Linux, with `systemd-inhibit`.
 
-To separate the slow part from the rest, fetch first and build later without network access:
+To do the slow part separately, for example overnight, fetch first and build later without network access:
 
 ```sh
 uv run repertoire fetch --token-file path/to/lichess_token.txt
 uv run repertoire build --offline
 ```
 
-## Analyze other PGN files
+## Analyzing other PGN files
 
-Pass two PGN paths to analyze files you already have instead of the configured studies; nothing is downloaded:
+Pass two PGN paths, White then Black, to analyze files you already have. Nothing is downloaded from your studies:
 
 ```sh
 uv run repertoire build path/to/white.pgn path/to/black.pgn --token-file path/to/lichess_token.txt
-uv run repertoire build path/to/white.pgn path/to/black.pgn --offline
 ```
 
-Both or neither path must be given. Supported inputs:
+Give both paths or neither. Supported inputs:
 
-- **Multi-chapter study exports**, such as a study downloaded from the Lichess UI. Each PGN game is a chapter; `ChapterURL` headers supply the chapter IDs used by the configuration files.
-- **A plain PGN** with one or more games and no study headers. Chapters are numbered `1`, `2`, ... in file order, and the variations are the repertoire.
-- **A PGN with an entry point**: a game with `SetUp`/`FEN` headers starts from that position. If the position is reachable from other chapters, it joins the merged repertoire there. A disconnected custom-FEN chapter is scored conditionally on reaching its root, unless `root_weights` assigns the roots weights (see [Other options](#other-options)). `entries` in a configuration file can also place a chapter's entry at a later position.
+- **A study export**, such as a study downloaded from the Lichess website. Each game is a chapter, and the `ChapterURL` headers supply the chapter IDs used in configuration files.
+- **A plain PGN** with one or more games. Chapters are numbered `1`, `2`, ... in file order, and every variation is part of the repertoire.
+- **A PGN that starts from a position**, using `SetUp` and `FEN` headers. If that position is reachable from other chapters, the chapter joins the repertoire there. Otherwise it is scored on the condition that its starting position is reached, unless [`root_weights`](#other-options) gives the starting positions weights.
 
-The configuration files are keyed by the chapter IDs of the configured studies. With a different PGN, pass a matching configuration via `--white-config`/`--black-config`, or start without overrides; `repertoire score inspect` lists the chapter IDs and entry candidates. Analyzing a different PGN replaces the saved results in `reports/data/` and the generated reports, so pass `--directory` to keep separate results.
+Configuration files are keyed by chapter ID, so a different PGN needs its own configuration (or none). `uv run repertoire score inspect path/to/white.pgn --color white` lists a PGN's chapter IDs. Results for a different PGN replace the saved results and reports; pass `--directory` to keep them separate.
 
-## Work offline
+## Keeping results up to date
 
-If all required positions are already cached:
+| What changed | What to run |
+| --- | --- |
+| Your Lichess studies | `uv run repertoire build --token-file ...` |
+| Your configuration files | `uv run repertoire build --offline`, or with `--token-file` if new tables are needed. |
+| Display limits, such as rows per table | `uv run repertoire report reports/data/white.json reports/data/black.json --require-complete` |
+| Lichess statistics themselves | Refresh with `score run --refresh` (below), then `uv run repertoire build --offline`. |
 
-```sh
-uv run repertoire build --offline
-```
+The build is incremental. It checks the PGN contents, configuration, settings, program and dependency versions, the cache files each stage used, and each stage's inputs, and reruns only the stages whose inputs changed. Unrelated additions to the cache do not invalidate anything.
 
-Offline mode needs no token and makes no requests, so it builds from the last study exports in `studies/`. A required cache miss stops the build with a diagnostic; it is not treated as a position with zero games.
-
-## Inspect or score one repertoire
-
-Inspection shows chapter IDs, move conflicts and each chapter's automatic entries without querying Lichess:
-
-```sh
-uv run repertoire score inspect studies/white.pgn --color white --config configs/white.json --output reports/data/inspection
-```
-
-To score only White using cached evidence:
-
-```sh
-uv run repertoire score run studies/white.pgn --color white --config configs/white.json --output reports/data/white --offline
-```
-
-For Black, use `studies/black.pgn`, `--color black`, `configs/black.json` and the `reports/data/black` output prefix. A score-only run can leave additional report sections pending; use the complete build when regenerating all reports.
-
-## Display options
-
-All Markdown generation is automated. To render matching saved results without recalculating scores or fetching data:
-
-```sh
-uv run repertoire report reports/data/white.json reports/data/black.json --require-complete
-```
-
-`--output` and `--summary` select destinations; chapter and opening pages go in `chapters/` and `openings/` beside the full report, and pages for chapters or colors that are no longer rendered are removed. `--top` (default 10) controls overall rankings, `--chapter-top` (default 5) controls chapter rankings (chapter exit tables show at least 10 rows), and `--position-top` (default 20) controls the prepared-position and unprepared-reply tables for each color and chapter. The summary keeps five rows in its exit and review tables and twelve positions in its tree. Filtering happens before the display limit; complete rankings remain in JSON.
-
-Unprepared positions use their cached parent-move outcomes and counts, or cached position outcomes for recorded endpoints. Transposed arrivals are combined using modeled reach. Pooled parent counts can overlap and are marked with a dagger (†). All reached canonical boards and exact FENs remain available in the character JSON.
-
-## Updating results
-
-Choose the workflow that matches what changed. Rebuilding from updated PGNs, rendering existing results, and refreshing database evidence are separate operations.
-
-| What changed | What to run | What it reads |
-| --- | --- | --- |
-| The Lichess studies | `uv run repertoire build --token-file ...` | Fresh study exports, configuration and cached evidence; fetches missing required tables. |
-| Move choices or chapter subjects in the configs | `uv run repertoire build --offline`, or `--token-file` instead of `--offline` if tables are missing. | The last study exports, configuration and cached evidence. |
-| Report wording, layout or display limits | `uv run repertoire report reports/data/white.json reports/data/black.json --require-complete` after editing the generator. | Saved JSON only; no Explorer cache reads, score recalculation or requests. |
-| Numerical analysis code | The incremental build, offline when possible. | Changed stages and their dependencies; unchanged results are reused. |
-| Lichess statistics themselves | An explicit score run with `--refresh`, then the complete build. | New responses replace the requested cache entries. |
-| A hypothetical chapter | A separate comparison from a matched entry position. | Matching cached tables, plus any missing required evidence. See [comparisons](#comparing-alternative-preparation). |
-
-The incremental build runs in one Python process and checks PGN contents, configuration, numerical settings, program and dependency versions, relevant cache files, supporting analyses and output contents. Unrelated cache additions do not invalidate results. Successful stages are reused after an interrupted build. Timings and checkpoints are saved in `reports/data/.build-state.json`.
-
-Use `repertoire build --force` to rebuild every stage using the cache. Cached responses do not expire automatically, and **force does not refresh Lichess statistics**. The batch has no refresh flag. For fresh White evidence, for example:
+Cached tables never expire, and neither `build` nor `--force` refreshes them. To refetch the tables for one color:
 
 ```sh
 uv run repertoire score run studies/white.pgn --color white --config configs/white.json --output reports/data/white --refresh --token-file path/to/lichess_token.txt
 uv run repertoire build --offline
 ```
 
-To refresh Black too, run the corresponding Black score command before rebuilding.
-
-Saved results describe a particular PGN and evidence snapshot. A request for current results requires exporting the studies again, which the default build does. Rendering an older result is supported, but its saved-snapshot notice must remain visible.
-
-Companion report hashes, input hashes, colors, and filters must match. Stale analyses cause the explicit rendering command to fail rather than silently mix snapshots. `--require-complete` also requires all companion analysis families and matching future preparation gain correlations. Without it, missing analyses are clearly marked pending. A changed or missing source PGN produces a prominent saved-snapshot notice; rendering an archived result does not pretend it describes the current study. Historical improvements and hypothetical comparisons remain separate because they use different policies or snapshots.
-
-Standalone scoring and analysis commands refresh the reports automatically. During that process, stale companions are omitted and marked pending. The complete build renders once, after all stages succeed, and requires matching analyses. The output registry in `reports/data/.report-index.json` records the latest score filenames; standard `white.json` and `black.json` are discovered on the first run.
-
-## Files and cache
-
-| Location | Purpose |
-| --- | --- |
-| `studies.json` | The White and Black Lichess study URLs exported by the default build. |
-| `studies/` | The latest study exports, `white.pgn` and `black.pgn`. |
-| `configs/white.json`, `configs/black.json` | Policy overrides and any entry overrides, keyed by Lichess chapter ID; created empty when missing. Preserve explicit choices when importing newer PGNs. |
-| `.cache/explorer/` | Persistent raw Explorer responses, keyed by endpoint, canonical board and query filters. Each file wraps `identity`, `retrieved_at`, and `data`; score manifests identify the relevant cache keys. |
-| `reports/data/` | Score snapshots, companion JSON, correlation results, `.build-state.json` checkpoints and `.report-index.json` output registration. |
-| `reports/report.md`, `reports/summary.md` | The current generated full report and summary. |
-| `reports/chapters/`, `reports/openings/` | Generated chapter pages (`W1.md`, `B1.md`, ...) and per-color opening evidence pages, linked from the report and summary. |
-| `comparisons.json` | Saved comparisons that `repertoire build` and `repertoire compare` rerun: name, color, sources and optional entry. |
-| `studies/candidates/` | Exports of candidate studies and copies of candidate PGNs from outside the repository, kept so comparisons can be regenerated. |
-| `reports/comparisons/` | Comparison pages and adopt PGNs from `repertoire compare`, and the opponent-rating comparison. Comparison data is in `reports/data/comparisons/`. |
-
-Everything in this table is ignored by Git: the files that describe your repertoire stay on your computer, and the Explorer cache and analysis JSON can grow very large. A fresh checkout has none of them; create `studies.json` and run the build. Keep your own backup of `studies.json`, `configs/` and `comparisons.json` if you want their history. Clearing the cache is not a routine repair.
-
-Saved score JSON contains the complete event ledger, scores, sensitivity results, sample counts, policy diagnostics and a manifest. Check `manifest.input_path`, `input_sha256`, `configuration`, `filters` and `evidence` before reusing a snapshot. Cache files record `identity`, `retrieved_at` and `data`; manifests identify the relevant keys and timestamps.
-
-Inspection creates `.inspection.json` diagnostics. Custom score output prefixes are supported; a prefix inside a `data` directory renders the two Markdown reports in its parent. Comparisons and focused position reports remain separate because they may describe different policies or snapshots.
-
-Treat credentials as secrets: keep token files out of Git and never print their contents or include them in artifacts. Change the Python generators rather than hand-editing generated Markdown.
+Every saved analysis records hashes of the PGN, the cached evidence and the analyses it depends on. Analyses from different snapshots are never combined: a stale one is rebuilt by `build`, or shown as pending by the other commands. If a source PGN has changed since it was scored, the reports say that they describe the earlier version.
 
 ## Configuration
 
-Color settings go in `configs/white.json` and `configs/black.json`. `build` and `fetch` use them by default and create them with no overrides when they are missing; `--white-config` and `--black-config` select other files. They define move overrides, any entry overrides and Explorer filters.
-
-### Explorer filters
-
-All ratings are selected explicitly: 0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500. Speeds are blitz, rapid and classical, with the full supported date range. The API covers indexed rated games, not every game ever played on Lichess. These defaults follow the [official Explorer endpoint specification](https://github.com/lichess-org/api/blob/master/doc/specs/tags/openingexplorer/lichess.yaml).
-
-Configuration is a JSON object:
+Each color has a configuration file, `configs/white.json` and `configs/black.json`. They are created with no overrides the first time you run `build` or `fetch`, and are needed only for exceptions. A configuration file is a JSON object with these optional keys:
 
 ```json
 {
-  "policy": {"canonical four-field FEN": "e2e4"},
-  "entries": {
-    "chapter-id": [{"path": ["e4", "e5", "Nc3", "Nf6", "g3", "Nc6"]}]
-  },
+  "policy": {"<canonical FEN>": "e2e4"},
+  "entries": {"<chapter-id>": [{"path": ["e4", "e5", "Nc3", "Nf6", "g3", "Nc6"]}]},
   "filters": {"ratings": "0,1000,1200,1400,1600,1800,2000,2200,2500", "speeds": "blitz,rapid,classical", "since": "1952-01", "until": "3000-12"},
-  "exclude": []
+  "exclude": [],
+  "root_weights": {}
 }
 ```
 
+Chapter IDs come from the study's chapter URLs; `uv run repertoire score inspect studies/white.pgn --color white` lists them with each chapter's automatic entries. Unknown chapter IDs, and positions outside the repertoire, fail validation.
+
+### Explorer filters
+
+By default the Explorer is queried for every rating band (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200 and 2500), for blitz, rapid and classical games, over the full date range. These follow the [Opening Explorer API specification](https://github.com/lichess-org/api/blob/master/doc/specs/tags/openingexplorer/lichess.yaml). The Explorer covers rated games in its index, not every game played on Lichess. Override any of them with `filters`.
+
 ### Move selection
 
-Policy keys are canonical positions: piece placement, turn, castling and legal en passant, without counters. Values are one UCI move or a move-to-weight map summing to one. Without an explicit override:
+When your repertoire has more than one move in a position, Repertoire chooses one:
 
-- **Competing chapters are decided by score.** Where chapters record different first moves at the same position, each alternative is scored with the best choices after it and the highest-scoring one is played. Put an alternative line in its own chapter, rebuild, and the reports show whether it improves the repertoire: the full report and the summary list every competing position with each alternative's score, its difference from the move played and that difference in points per 1,000 games. The order of the chapters no longer matters there; an exact tie keeps the earlier chapter.
-- **Otherwise the first recorded move is played:** the PGN main variation before side variations within a chapter. Side variations of your own moves inside one chapter do not compete; move one into its own chapter to have it scored.
+- **Competing chapters are decided by score.** Where chapters record different first moves in the same position, each move is scored with the best choices after it, and the highest-scoring one is played. To test an idea, put the alternative in its own chapter and rebuild: the summary and full report list every competing position with each alternative's score and its difference from the move played. An exact tie keeps the earlier chapter.
+- **Otherwise the first recorded move is played:** the PGN main line before side variations. Side variations of your own moves within one chapter do not compete; move one into its own chapter to have it scored.
 
-An explicit policy override always wins and is never compared. The winners are saved in the score JSON (`manifest.selected_alternatives`, with every option's score under `alternatives`), and every later stage replays them. Picking the best of several sampled scores favors moves that scored well by chance, so treat a small winning margin with care. Conflicting alternatives are never averaged or assigned simultaneous probability one. All PGN variations remain available as repertoire content; annotations are not instructions and do not remove lines.
+`policy` overrides both rules. Its keys are canonical FENs: piece placement, side to move, castling rights and a legal en passant square, without the move counters. Its values are a UCI move, or a map of UCI moves to weights that sum to one. An override is never compared with the alternatives.
 
-Every chapter remains in the chapter report, including alternatives excluded from the overall policy. For each chapter comparison, its first recorded own moves take precedence and the overall policy applies elsewhere. This retains compatible preparation split across multiple chapters. Score, baseline, expected prepared depth, entry probability, transitions from that chapter, and vulnerabilities all use that same comparison policy. Alternative rows are labeled; a separate overall-policy reach shows how often the selected overall repertoire reaches the chapter's entries. Reaching a shared entry does not imply that the alternative own move was selected. Reordering chapters changes the overall choice only where no competing chapters decide by score. Saved JSON records the exact policy overrides.
+Picking the best of several estimated scores favors moves that scored well by chance, so treat a small winning margin with care. Every PGN variation stays part of the repertoire; comments and annotations are not read as instructions.
 
-### Chapter entries and transpositions
+Every chapter still gets its own page and row, including chapters whose moves lost to an alternative. A chapter is always scored with its own first moves, and with the overall repertoire everywhere else, so each alternative can be judged on its own terms.
 
-A chapter is reached at its **entries**. By default they are found automatically: walking the chapter's lines from its root, an entry is the first position that no other chapter continues from. At your own turns the walk follows the chapter's first recorded move, as its comparison policy does. A chapter that ends a line at a position another chapter continues from hands that line over: the position is not shared, and it becomes the other chapter's entry. A line ending on a position no other chapter reaches makes that position an entry. If other chapters continue from every position of a chapter (an exact duplicate, for example), its first own-turn mainline position is used.
+### Chapter entries
 
-In a full repertoire this places each chapter where its preparation diverges from the others. A chapter covering one branch of another chapter's opening, such as a 3...Nc6 chapter inside a 3.g3 chapter, gets that branch; the broader chapter keeps the branches it prepares itself. Replies nobody prepares at a position several chapters continue from belong to none of them; they still count in the overall score. `repertoire score inspect` prints every chapter's automatic entries, and the score JSON records each chapter's entries and how they were chosen (`entry_status`).
+A chapter is reached at its **entries**. By default they are found automatically: walking each of the chapter's lines from its start, following its own first moves, an entry is the first position that no other chapter continues from.
 
-Entry probability means **chapter reach probability**: the chance of reaching one of the chapter's entry positions, by any move order, before the model stops, counting each modeled game once. A transposition onto an entry board counts. A transposition onto a later position the chapter shares with others does not: that game belongs to whichever chapter's entry it passed. For example, a chapter that reaches the Vienna through 1...Nf6 2.Nc3 e5 is reached only at 1...Nf6, and Vienna games do not count toward it. After entry, scoring follows the complete merged repertoire, including other chapters' continuations. Chapters still overlap where one chapter's line passes through another's entry, so reach and scores are not additive.
+In a full repertoire this places each chapter where it starts to differ from the others. A chapter covering one branch of another chapter's opening, such as a 3...Nc6 chapter inside a 3.g3 chapter, takes that branch, and the broader chapter keeps the rest. A line that ends where another chapter continues hands that position over. If other chapters continue from every position in a chapter, as with an exact duplicate, its first own-turn main-line position is used.
 
-`entries` overrides the automatic entries for a chapter: it maps the chapter ID to exact positions, as canonical FEN strings or path objects containing SAN/UCI moves and an optional `root_fen`. Use it for exceptions, such as a study whose chapter covers only one subtree of an opening (a lone chapter's automatic entry is its root), or to give alternatives the same entry, such as `1.e4 e6` for both Advance and Tarrasch French chapters. Match the configuration's chapter IDs against the current PGN rather than relying on older chapter names; unknown IDs and positions outside the repertoire fail validation.
-
-Full reports also include directed **chapter transition probabilities**: conditional on first entering a source chapter, how often does the model reach the destination at or after that point? Shared or simultaneous entry counts. The JSON retains all ordered chapter pairs, including zeros and undefined results. This is different from an unordered intersection, because the destination may have been visited only before the source. Overlapping chapter frequencies and transition rows are not additive. The model does not follow deviations through unknown positions to possible later re-entry.
+`entries` overrides the automatic entries. It maps a chapter ID to a list of positions, each a canonical FEN or a `path` of SAN or UCI moves with an optional `root_fen`. Use it when a chapter covers only part of an opening (a chapter that shares no moves with any other chapter is entered at its start), or to give alternatives the same entry, such as `1.e4 e6` for both an Advance and a Tarrasch French chapter. See [Chapter reach and entries](metrics.md#chapter-reach-and-entries) for how entries affect the reports.
 
 ### Other options
 
-`exclude` can contain chapter IDs or strings of the form `chapter-id:canonical-position:uci` to omit a branch and its descendants from that chapter. `root_weights` may map canonical root positions to weights summing to one. Disconnected custom-FEN chapters do not receive absolute reach probabilities without a connecting route or explicit root weights. Reachable cycles fail with a position sequence for diagnosis.
+- `exclude` leaves lines out of the repertoire. An entry is a chapter ID, to drop the whole chapter, or a `chapter-id:canonical-FEN:uci` string, to drop one move and everything after it from that chapter.
+- `root_weights` maps the starting positions of custom-FEN chapters to weights that sum to one, so chapters with no connecting route get absolute reach probabilities.
 
-## Analysis commands
-
-The complete build runs these analyses in dependency order. The commands below are useful when updating one analysis or investigating a result. Unless noted otherwise, they use saved scores and existing cache entries, without a token or Lichess requests. Cache-only analyses that reconstruct the repertoire require the source PGN and evidence to match the saved snapshot.
-
-### Preparation and entry routes
-
-After scoring and vulnerability generation, run:
-
-```sh
-uv run repertoire preparation reports/data/white.json reports/data/black.json
-```
-
-This command is cache-only. It writes `.preparation.json` beside each score result and refreshes the consolidated report and summary. It also runs automatically in `repertoire build`. Missing candidate evidence is reported, never fetched silently or treated as a zero score.
-
-The same analysis saves actual **first-entry route examples** under each chapter's comparison policy. It stops every root-to-entry path when it first reaches any of the chapter's entries, merges all arriving probability at the exact board, and keeps the most likely single route as an example. Entry-position weights include every first-arrival route; the separately displayed example weight covers just that route. Both are conditional on reaching the chapter. Examples are validated as legal and cannot pass an earlier chapter entry. These explanations preserve the existing transposition-inclusive chapter scores and reach; ordinary position-table lines remain representative board labels.
-
-### Repertoire character
-
-```sh
-uv run repertoire character reports/data/white.json reports/data/black.json
-```
-
-This cache-only command writes `data/white.character.json` and `data/black.character.json`, then refreshes the consolidated report and summary. It also runs automatically in `repertoire build`. No token or API requests are needed. Source PGN hashes and cached scoring evidence must match the saved scores. Overall and chapter scores and expected prepared depths are independently reproduced before writing these metrics. Chapter scopes retain weighted first-entry mixtures and chapter-local policy, including unselected alternatives.
-
-### Strengths and vulnerabilities
-
-Generate overall and chapter rankings from saved scores and cached parent-position tables:
-
-```sh
-uv run repertoire vulnerabilities reports/data/white.json reports/data/black.json
-```
-
-This defaults to **cache-only** and requires no token. If own decision positions were not needed by an earlier score run, add `--fetch-missing` with `--token-file` or `LICHESS_TOKEN`. Only missing own-parent tables are fetched, once per canonical position and filter set. Every candidate reply or alternative is read from its parent's cached move rows. Candidate child endpoints are never requested for screening. Existing score evidence must match the saved report's cache keys and retrieval timestamps; a changed PGN or refreshed evaluation cache requires regenerating scores first.
-
-Outputs are `data/white.vulnerabilities.json` and `data/black.vulnerabilities.json`. The consolidated report has separate tables for unprepared opponent replies, prepared opponent replies, and selected own moves. Opponent replies rank by weighted drag; own moves rank by the direct deficit against the parent database score. Each category is filtered before its display limit. Set displayed ranking lengths with `repertoire report --top` and `--chapter-top`; JSON always retains all rankings and signed comparisons. `repertoire build` generates this analysis after scoring both colors; its fetch step has already cached the parent tables unless `--offline` is set. Rendering alone does not recalculate vulnerabilities.
-
-The metrics behind these rankings are defined under [Strengths and vulnerabilities](metrics.md#strengths-and-vulnerabilities).
-
-### Rating contexts
-
-```sh
-uv run repertoire ratings reports/data/white.json reports/data/black.json
-uv run repertoire report reports/data/white.json reports/data/black.json --require-complete
-```
-
-Run ratings after the vulnerability, preparation and character commands. It reads only existing Explorer cache entries, writes `data/white.ratings.json` and `data/black.ratings.json`, and refreshes the same consolidated report and summary. The runner includes this step automatically. Source, score, supporting-analysis and cache hashes identify the evidence. Refresh ratings whenever a supporting analysis changes; strict assembly rejects stale ledgers.
-
-### Opening names and reach
-
-```sh
-uv run repertoire openings reports/data/white.json reports/data/black.json
-```
-
-This cache-only command creates `data/white.openings.json` and `data/black.openings.json` and refreshes the consolidated report and summary. It never requests unprepared child positions. Names and ECO codes come from the bundled [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) dataset in `repertoire/data/chess-openings`, the same list the Explorer uses for its `opening` field, so naming a repertoire board needs no Explorer table. A named canonical board gives every arrival its exact current name. At an unnamed board, each route retains its last name and probability. For example, a shared unnamed board reached with 1% probability through Alekhine and 20% through Vienna carries those separate masses, rather than counting its entire 21% reach for both openings. Unclassified routes remain unclassified. Structural potential labels from all recorded variations are saved separately and cannot introduce probability from unused alternatives.
-
-Broader family membership recognizes only other listed names in the repertoire matching at colon or comma boundaries, for example Sicilian Defense and Sicilian Defense: Accelerated Dragon. A transition between unrelated names, such as Smith-Morra and Open Sicilian, does not create a parent relation. Unnamed positions with no known name upstream remain unclassified. The saved catalog also identifies names that cannot be reached under the selected policy.
-
-Each color has a full-report opening table containing every reached category. The summary uses opening sources on individual position rows, without a separate opening table. Identical opening names across multiple ECO codes share one category, retaining all listed codes and each board's exact listed label in JSON. Reach is first arrival at an exact listed name or a known more specific named variation. Inheritance cannot introduce a new opening: a route already passed the name's entry. Named transpositions and later named variations still count as entries, including routes bypassing earlier family roots. Multiple entries and returns count once per category. Different categories overlap and their reach cannot be summed. All opening comparisons use the overall selected policy rather than each chapter's alternative policy.
-
-At every reached board, JSON stores current-name probability masses and conditional shares, with unclassified mass kept separately. It also stores the joint reach contributed by games that previously entered each opening, and the contribution divided by total board reach. These historical origin shares remain available after a later exact name changes the current classification. Opening details show the most common positions reached through that opening, alongside total board reach and its share of arrivals. Histories can include several opening categories, so origin shares overlap; current-name shares plus unclassified share form a normalized partition.
-
-Line tables with chapter sources also show the **most common opening source**, followed by its share of arrivals. The winner is the last listed name carried by the largest incoming probability, rather than an overlapping historical opening family. An exact listed name replaces earlier labels; unclassified arrivals compete as a separate source. Position rows combine all transposed routes, while move comparisons use only arrivals through their specific parent move. Chapter tables follow that chapter's comparison policy, including alternatives; entry rows use only first arrivals. Equal shares use alphabetical order with named sources before unclassified ones. The opening companion saves these scope-specific sources without querying any additional positions.
-
-Opening repertoire scores, recursive WDL sharpness, entry baselines, deltas, remaining prepared own moves, and equivalent gap reach use the same normalized first-entry weights. Gap distributions are merged by canonical board before taking the square root of the sum of squared probabilities. Unprepared entry boards use the parent response's results and depth zero. Missing outcome or baseline evidence stays unresolved. Scores and deltas include CP equivalents. Expandable details show exact or inherited names, real first-entry examples, combined entry weights, reach, game counts, and evidence sources. A displayed route can represent only part of its board's first-entry mass. Pooled parent counts may contain overlapping historical games and are marked with a dagger. Opening groups have no aggregate opponent rating, preserving the rule that ratings apply only at chapter or line level. The original overall and chapter score files are unchanged.
-
-### Correlations
-
-Both report correlations are reach-weighted. They examine different relationships: future preparation depth versus continuation gain, and opponent rating versus score within the same parent position.
-
-Measure the association between future prepared depth and future preparation gain, weighted by decision reach:
-
-```sh
-uv run repertoire correlations reports/data/white.json reports/data/black.json
-```
-
-This writes `prepared-depth-gain-correlation.json` beside the scores and refreshes the consolidated report. Each canonical selected own move is one observation under the overall policy. Its depth is the expected number of prepared own moves after that move, excluding the selected move itself. Its gain is the recursive continuation score minus the selected move's database score from the cached parent table. Weight is the probability of playing that decision, merged across all transpositions. The main table shows reach-weighted linear and rank correlations and the weighted gain slope. Unweighted results and a positive-depth-only check are available in expandable details.
-
-These are point estimates from the observed counts, without intervals. The result describes association, not the causal gain from adding preparation. Sparse, unreachable and unresolved decisions are excluded.
-
-No Lichess requests or token are needed. The PGN files are read only to reconstruct dependencies and must still match the saved input hashes. Correlations run automatically in `repertoire build` or through this separate command. Presentation-only `repertoire report` combines the matching saved correlations without recalculating them.
-
-To analyze the association between opponent rating and score using saved evidence:
-
-```sh
-uv run repertoire rating-correlations reports/data/white.json reports/data/black.json
-```
-
-This writes `reports/comparisons/opponent-rating-score.md` and ignored supporting JSON in `reports/data/`. It compares replies within canonical parent boards, using reach weights, recursive prepared scores and cached unprepared reply scores. It also compares chapter scores and baseline deltas with chapter stopping-evidence opponent ratings, grouping chapters that prepare shared boards. Both are point estimates without intervals. Sparse replies are excluded, and a 1,000-game sensitivity check is included. These are descriptive cohort associations, not causal rating effects or predictions at a target rating. No Lichess requests are made.
-
-### Report insights and attribution
-
-To add report insights to matching saved analyses without fetching data or changing existing scores:
-
-```sh
-uv run repertoire insights reports/data/white.json reports/data/black.json
-```
-
-This writes `white.insights.json` and `black.insights.json` and refreshes the two Markdown reports. It requires matching preparation, character, vulnerability, and opening analyses, and verifies the source PGN and cached evidence. Supporting hashes prevent old insight calculations from being combined with newer analyses.
-
-All report tables containing individual lines include linked chapter attribution. A recorded move lists its exact position/move providers, including every shared source. A position lists the chapters containing that canonical board. An unprepared reply is labeled unprepared and lists its parent chapters as context; an unrecorded move that transposes into preparation lists the destination chapters. Representative routes may combine chapters.
-
-Every analysis command adds this attribution automatically.
+A repertoire whose moves can return to an earlier position fails with the positions in the cycle.
 
 ## Comparing alternative preparation
 
@@ -388,24 +212,30 @@ uv run repertoire compare path/to/vienna-gambit.pgn --color white
 uv run repertoire compare https://lichess.org/study/<candidate-study-id> --token-file path/to/lichess_token.txt
 ```
 
-Inputs are any number of PGN files and Lichess study or chapter URLs, in priority order. A study URL exports the whole study and a chapter URL only that chapter. Exports are checked by parsing, saved to `studies/candidates/<name>.pgn` and left untouched when only their dates changed; `--no-export` reuses the saved copy. Study exports carry each chapter's orientation, so `--color` is only needed when it is missing, as in a PGN downloaded from the Lichess website.
+Inputs are any number of PGN files and Lichess study or chapter URLs, in priority order. A study URL exports the whole study and a chapter URL only that chapter. Exports are saved to `studies/candidates/`; `--no-export` reuses the saved copy. `--color` is needed only when the input has no `Orientation` header, as with a PGN downloaded from the Lichess website.
 
-The comparison follows each candidate chapter along its own first moves until it plays a different move from your repertoire, or adds a move where you have none. That position is a **decision point**. Its options are your move and each distinct candidate move there:
+### How candidates are compared
 
-- Several chapters choosing the same move share one option. If they later disagree with each other, that position becomes a nested decision point inside the option.
+Each candidate chapter is followed along its own first moves until it plays a different move from your repertoire, or adds a move where you have none. That position is a **decision point**, and its options are your move and each distinct candidate move:
+
+- Chapters choosing the same move share one option. If they later disagree, that position becomes a decision point inside the option.
 - Chapters choosing different moves, such as an Advance and a Schlechter chapter against your Tarrasch, compete at one decision point.
 
-An adopted option places its candidate lines before your chapters: they decide every position they record, and your own preparation continues wherever they end or transpose into it. The report scores three scenarios:
+Adopting an option places its candidate lines ahead of your chapters: they decide every position they record, and your own preparation continues wherever they end or transpose into it. Three scenarios are scored:
 
 - **Your repertoire**, reproduced exactly from its saved score.
-- **Improving alternatives only:** at every decision point, the option with the highest repertoire score, which may be your own move.
-- **All alternatives:** every decision point switches to the candidate; where candidate chapters compete, the higher-scoring candidate move is used.
+- **Improving alternatives only:** at each decision point, the option with the highest score, which may be your own move.
+- **All alternatives:** every decision point switches to the candidate. Where candidate chapters compete, the higher-scoring one is used.
 
-Each scenario is scored for the whole color and after the **entry**, the last position every decision point shares (`1.e4 e5 2.Nc3` for a Vienna study). Pass `--entry "1.e4 e5 2.Nc3"` or a FEN to choose another position. Decision points whose lines transpose into each other are chosen together over every combination; the others are chosen one at a time and their gains add up, which the report checks.
+Each scenario is scored for the whole color and from the **entry**, the last position all decision points share (`1.e4 e5 2.Nc3` for a Vienna study). Choose another with `--entry "1.e4 e5 2.Nc3"` or a FEN. Decision points whose lines transpose into each other are chosen together over every combination; the others are chosen one at a time.
 
-The page `reports/comparisons/<name>.md` leads with the verdict and the three scenarios, then one row per option at each decision point with its score, its change at the position and for the whole color, and a paired 95% interval. Caveats follow when they matter: candidate scores drawn from much weaker or stronger opponents, alternatives that interact through transpositions, and competing candidate chapters. A preparation table compares how much you would need to know and how often games leave preparation. Each decision point then has its own section with the database score of every move, how much the preparation adds, the main replies, and where each option's preparation ends most often. `reports/comparisons/<name>.adopt.pgn` holds the candidate lines of the improving choice, ready to import into your study; where they compete with your chapters, the build plays the higher-scoring move.
+### The comparison page
 
-Missing Explorer tables are fetched with the usual count, estimate and progress (`--dry-run` stops after the count); `--offline` reports them instead. Name the output with `--name` and the page with `--title`.
+`reports/comparisons/<name>.md` leads with the verdict and the three scenarios, then lists each option at each decision point with its score, its change at that position and for the whole color, and a paired 95% interval. It warns when candidate scores come from much weaker or stronger opponents, when alternatives interact through transpositions, and when candidate chapters compete. Each decision point then has its own section: the database score of every move, how much the preparation adds, the main replies, and where each option's preparation most often ends.
+
+`reports/comparisons/<name>.adopt.pgn` holds the candidate lines of the improving choice, ready to import into your study.
+
+Missing tables are fetched with the usual count and progress; `--dry-run` stops after the count, and `--offline` lists them instead. `--name` sets the output name and `--title` the page title.
 
 ### Saved comparisons
 
@@ -423,20 +253,83 @@ uv run repertoire compare https://lichess.org/study/<candidate-study-id> --color
 }
 ```
 
-`repertoire build` then exports the saved candidate studies with your own, fetches their tables in the same single pass, and reruns each comparison when your score or the candidate changes. A failing comparison is reported and skipped; it never blocks the main reports. The summary lists every saved comparison with its verdict and changes, and marks one made from an older score as out of date. `uv run repertoire compare` without inputs reruns every saved comparison. A PGN file outside the repository is copied into `studies/candidates/` when saved, so the registry never names a local folder.
+`build` then exports saved candidate studies along with your own, fetches their tables in the same pass, and reruns each comparison when your score or the candidate changes. A failing comparison is reported and skipped without blocking the main reports. The summary lists every saved comparison with its verdict and marks any made from an older score. `uv run repertoire compare` with no inputs reruns every saved comparison. A saved PGN from outside the repository is copied into `studies/candidates/`.
+
+## Running single stages
+
+`build` runs every stage in order and is the normal way to update results. The stage commands are useful for investigating one analysis.
+
+### Inspecting and scoring one color
+
+```sh
+uv run repertoire score inspect studies/white.pgn --color white
+uv run repertoire score run studies/white.pgn --color white --config configs/white.json --output reports/data/white --offline
+```
+
+`score inspect` prints chapter IDs, own-move conflicts and each chapter's automatic entries, without contacting Lichess. `score run` scores one color, fetching missing tables unless `--offline` is given. Other options:
+
+- `--prior W D L` sets the win, draw and loss prior (default 0.5 each). See [Uncertainty](metrics.md#uncertainty).
+- `--sparse-threshold` sets the game count below which evidence is flagged sparse (default 30).
+- `--refresh` refetches every table the score needs.
+- `--tolerance` records in the JSON whether the 95% interval is narrower than this many percentage points (default 1).
+
+A score run alone leaves the other analyses pending. Run `build` to complete them.
+
+### Analysis stages
+
+These read saved scores and the cache and refresh the reports when they finish. They need no token and make no requests, and they check that the source PGNs and cached evidence still match the saved scores. Pass the saved scores, for example `uv run repertoire preparation reports/data/white.json reports/data/black.json`.
+
+| Command | Writes (in `reports/data/`) | Notes |
+| --- | --- | --- |
+| `vulnerabilities` | `<color>.vulnerabilities.json` | `--fetch-missing` fetches own-move parent tables that are not cached. |
+| `preparation` | `<color>.preparation.json` | Stopping outcomes, prepared-depth distributions and entry routes. |
+| `character` | `<color>.character.json` | `--games` sets the reuse curve (default 10 50 100 500). |
+| `ratings` | `<color>.ratings.json` | Needs vulnerabilities, preparation and character. |
+| `openings` | `<color>.openings.json` | |
+| `insights` | `<color>.insights.json` | Needs preparation, character, vulnerabilities and openings. |
+| `correlations` | `prepared-depth-gain-correlation.json` | Needs vulnerabilities. |
+| `rating-correlations` | `opponent-rating-score-correlation.json` | Needs ratings and vulnerabilities. Also writes `reports/comparisons/opponent-rating-score.md`. |
+
+### Rendering the reports
+
+```sh
+uv run repertoire report reports/data/white.json reports/data/black.json --require-complete
+```
+
+`report` renders saved results without recalculating or fetching anything. `--require-complete` fails if any analysis is missing or stale, instead of marking it pending. Display limits:
+
+- `--top` (default 10): rows in overall rankings.
+- `--chapter-top` (default 5): rows in chapter rankings. Chapter exit tables always show at least 10.
+- `--position-top` (default 20): rows in the prepared-position and unprepared-reply tables for each color and chapter.
+
+Rows are filtered before the limit is applied, and the JSON keeps every row. `--output` and `--summary` choose where the reports go.
+
+## Files
+
+| Location | Contents |
+| --- | --- |
+| `studies.json` | The White and Black study URLs. |
+| `studies/` | The latest study exports, and candidate studies in `studies/candidates/`. |
+| `configs/` | Your [configuration](#configuration) files. |
+| `comparisons.json` | [Saved comparisons](#saved-comparisons). |
+| `.cache/explorer/` | Every fetched Explorer table, keyed by position, endpoint and filters, with its retrieval time. |
+| `reports/` | The generated reports, chapter and opening pages, and comparison pages. |
+| `reports/data/` | Saved scores and analyses as JSON, and the build's progress in `.build-state.json`. |
+
+All of these are ignored by Git, so your repertoire stays on your computer. Back up `studies.json`, `configs/` and `comparisons.json` yourself if you want their history. Deleting the cache means fetching every table again.
+
+Saved scores include the full model: every stopping event, score, sensitivity result, sample count and policy decision, plus a `manifest` recording the input file, its hash, the configuration, the filters and the cache entries used. A failed score run writes its error to `<output>.error.json`.
 
 ## Troubleshooting
 
-| Symptom | What to check |
+| Symptom | What to do |
 | --- | --- |
-| `Offline cache miss` or missing parent comparison evidence | Cache path, filters and required board; an authenticated run can collect missing required tables. Keep missing data unresolved instead of inventing results. |
-| Companion belongs to a different snapshot, supporting hashes changed, or a file was written by a different program version | Rebuild with `repertoire build`; it reruns only the affected analyses and their dependents. |
-| Scoring or a build stage fails | Read the CLI diagnostic and any `.error.json`. Completed checkpoints and cache remain available; rerun after resolving the error. Existing Markdown can still describe the previous snapshot. |
-| A fetch repeatedly prints `rate-limited (HTTP 429); waiting 60s` | Normal for long runs: progress resumes after each pause and the estimate includes them. Avoid running other Opening Explorer clients with the same token or network at the same time. See [Long runs](#long-runs). |
-| The running estimate is far above the dry run's "at least" figure | Expected: the dry run assumes no rate limiting, and the running estimate uses the observed rate. |
-| `still unavailable after 30 minutes of retries` | The connection or Lichess was down for half an hour, or the computer slept. Check the connection, then rerun the same command; fetched tables are kept. |
-| A run was stopped with Ctrl+C or a closed terminal | Rerun the same command. Fetched tables and finished build stages are kept, and the fetch reports how many tables remain. |
-| Study export fails with HTTP 401, 403 or 404 | Check the URL in `studies.json` and that the token has `study:read`; private studies are visible only to their owner and members. The previous export is kept. |
-| Unknown chapter ID or configured entry not in the repertoire | Compare the new PGN's inspection with the maintained config; removed or recreated chapters may have different IDs. Update or remove the `entries` override. |
-| `chapter_regions is no longer supported` | Delete `chapter_regions` from the configuration. Entries are automatic; add `entries` only for chapters whose automatic entries are wrong. |
-| Cache is complete but a batch is slow | Inspect `reports/data/.build-state.json` stage timings and reused/built counts. Changes limited to `render.py` or the `report` package should rebuild only the render stage. |
+| `rate-limited (HTTP 429); waiting 60s` again and again | Normal on long runs; the run resumes after each pause. Avoid running other Opening Explorer clients on the same token or network at the same time. |
+| The running estimate is far above the dry run's "at least" | Expected: the dry run assumes no rate limiting. |
+| `still unavailable after 30 minutes of retries` | Lichess or your connection was down, or the computer slept. Rerun the same command; fetched tables are kept. |
+| A run was stopped | Rerun the same command. Fetched tables and finished stages are kept. |
+| Study export fails with HTTP 401, 403 or 404 | Check the URL in `studies.json`, and that the token has `study:read`. Private studies are visible only to their owner and members. The previous export is kept. |
+| `Offline cache miss` | Run without `--offline`, with a token, to fetch the missing tables. |
+| An analysis belongs to a different snapshot or program version | Run `build`; it reruns only the affected stages. |
+| Unknown chapter ID, or a configured entry not in the repertoire | Chapters that were deleted and recreated get new IDs. Compare `score inspect` output with your configuration and update it. |
+| A stage fails | Read the message and any `.error.json` file, fix the cause and rerun. Fetched tables and finished stages are kept; the previous reports stay in place. |

@@ -1,154 +1,209 @@
 # Reports and metrics
 
-How to read the generated reports, how the repertoire score is calculated, and what each metric means. All scores favor the repertoire owner.
+How to read the reports, how the score is calculated, and what each metric means. The full report ends with a glossary that defines every column briefly; this page gives the detail.
+
+A few rules hold throughout:
+
+- **Scores favor you**, the repertoire owner, for both colors: a win is 1, a draw 0.5 and a loss 0.
+- **Positions are exact boards.** Every move order that reaches the same position (same pieces, side to move, castling rights and en passant square) is combined into one row.
+- **Overlapping numbers do not add up.** Positions along the same game, chapters that share lines, opening categories and highlighted gains all overlap, so their reach and contributions must not be summed.
+- **Missing evidence stays missing.** A position with no games, or a table that could not be fetched, is reported as unresolved, never as a zero score.
+- **The numbers describe, they do not explain.** A higher score means a higher modeled score from database games, not proof that a move causes better results.
 
 ## Contents
 
 - [Reading the reports](#reading-the-reports)
 - [How the score is calculated](#how-the-score-is-calculated)
   - [Uncertainty](#uncertainty)
+  - [Missing and sparse evidence](#missing-and-sparse-evidence)
 - [Metric reference](#metric-reference)
-  - [Scores, baselines and conversions](#scores-baselines-and-conversions)
+  - [Scores and baselines](#scores-and-baselines)
+  - [Chapter reach and entries](#chapter-reach-and-entries)
   - [Prepared depth](#prepared-depth)
-  - [Equivalent gap reach](#equivalent-gap-reach)
   - [Where preparation ends](#where-preparation-ends)
+  - [Gaps](#gaps)
   - [Score spread and outcome volatility](#score-spread-and-outcome-volatility)
   - [Reuse, reply variety and position profiles](#reuse-reply-variety-and-position-profiles)
+  - [Opening names](#opening-names)
   - [Opponent ratings](#opponent-ratings)
+  - [Correlations](#correlations)
 - [Strengths and vulnerabilities](#strengths-and-vulnerabilities)
-  - [Gain and drag](#gain-and-drag)
-  - [Position contributions and stopping outcomes](#position-contributions-and-stopping-outcomes)
-  - [Sparse evidence and ranking limits](#sparse-evidence-and-ranking-limits)
 
 ## Reading the reports
 
-Start with the summary, `reports/summary.md`. After the headline scores, each color leads with what to work on:
+### The summary
 
-- **Where preparation ends** groups every unprepared reply by the last prepared position before it, so one study task is one row. *Games leaving prep here* is the share of all games with that color whose preparation ends at that position; *share of games at this position* separates a chapter that simply stops (100%) from rare sidelines at a busy position. Unlike other rankings, these rows do not overlap.
-- **Own moves to review** ranks selected moves by move reach times drag against the parent database score.
+Start with `reports/summary.md`. After the headline scores, each color leads with what to work on:
 
-Collapsed sections follow: the most common positions as a nested tree, chapter comparisons, costly unprepared replies, strongest moves, and preparation and variability. Evidence and definitions appear at the end. Changed-source and missing-analysis notices stay visible above the scores. The summary uses one decimal place and compact game counts.
+- **Where preparation ends** groups every unprepared reply by the last prepared position before it, so one row is one study task. *Games leaving prep here* is the share of all games with that color whose preparation ends at that position. *Share of games at this position* separates a chapter that simply stops (100%) from rare sidelines at a busy position. Unlike other rankings, these rows do not overlap.
+- **Own moves to review** ranks your moves by how often they are played times how far they fall below the database score of their position.
 
-Where your chapters record different first moves at the same position, the full report and summary list each competing alternative with its score; the repertoire plays the highest-scoring one (see [Move selection](usage.md#move-selection)). Saved comparisons of candidate studies are listed at the end of the summary, each with its own page in `reports/comparisons/` (see [Comparing alternative preparation](usage.md#comparing-alternative-preparation)).
+Collapsed sections follow: the most common positions as a tree, chapter comparisons, costly unprepared replies, your strongest moves, and preparation and variability. Where chapters compete in the same position, each alternative is listed with its score (see [Move selection](usage.md#move-selection)). Saved [comparisons](usage.md#comparing-alternative-preparation) are listed at the end. Notices about changed studies or missing analyses appear above the scores.
 
-The full report, `reports/report.md`, is the index for detailed analysis: per-color chapter tables, exit points, positions, openings, vulnerabilities, strengths, gap priorities, depth distributions, correlations, and a glossary (`Definitions and evidence`) with one anchor per metric. Tables state their main caveat in a sentence and link to the glossary entry instead of repeating it. Each chapter has its own page in `reports/chapters/` (W1, W2, ... and B1, B2, ...) with its exit points, positions, vulnerabilities, strengths, gaps, depth, entry positions and routes, plus links to the previous and next chapter and to the Lichess study chapter. Per-opening entry evidence is in `reports/openings/white.md` and `reports/openings/black.md`.
+### The full report, chapter and opening pages
 
-| Column | How to read it |
+`reports/report.md` holds the detail for both colors: chapter tables, exit points, positions, openings, vulnerabilities, strengths, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
+
+Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...) with its exit points, positions, vulnerabilities, strengths, gaps, depth, entry positions and routes, and links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
+
+### Columns
+
+| Column | Meaning |
 | --- | --- |
-| Repertoire score | Expected points from the repertoire owner's perspective: a win is 1, a draw is 0.5, a loss is 0. |
-| Baseline / delta | Ordinary database score at the start or chapter entry, and the repertoire score minus that reference. |
-| Position reach | Probability of encountering a canonical position before preparation stops, including transpositions. Chapter pages use games after chapter entry. |
-| Move reach | Probability of reaching the parent position and then playing that move. It can be lower than the reach of the resulting position when other routes transpose into it. |
-| Games leaving prep here | Probability that preparation ends right after that prepared position, combining all of its unprepared replies. |
-| Gap reach | Probability of first reaching a position without a prepared reply. It equals that unanswered position's reach. |
-| Score spread | How much continuation scores vary across the branches, including later replies. Unprepared replies end preparation, so their tables omit it. |
-| Per 1,000 games | Reach-weighted drag, gain, or contribution expressed as score points per 1,000 games with that color (or entering the chapter). |
-| Games | Games observed at that position or in the cached parent move row; this is not the sample size of the entire continuation score. |
-| Opponent rating | A local or chapter-level description of the database cohort, not a rating adjustment to the score. |
-| Chapter / opening source | Where the preparation was recorded and the most common opening label carried into the position. The share appears only when other labels also contribute. |
+| Repertoire score | Your expected score when you play the repertoire's moves. |
+| Baseline / delta | The ordinary database score at the start or at the chapter's entries, and the repertoire score minus it. |
+| Position reach | Probability of reaching a position, by any move order, before preparation ends. On chapter pages, among games that enter the chapter. |
+| Move reach | Probability of reaching the parent position and then playing that move. It can be lower than the reach of the resulting position when other move orders also lead there. |
+| Games leaving prep here | Probability that preparation ends right after this prepared position, over all of its unprepared replies. |
+| Gap reach | Probability of first reaching a position where you have no prepared move. |
+| Score spread | How much the scores of the continuations vary, including later replies. Omitted for unprepared replies, where preparation has ended. |
+| Per 1,000 games | A reach-weighted gain, drag or contribution, in score points per 1,000 games with that color (or entering the chapter). |
+| Games | Games in the database at that position or in the parent table's row for that move. Not the sample size of the whole continuation. |
+| Opponent rating | The average rating of the opponents at that point. It describes the database games and never adjusts a score. |
+| Chapter / opening source | The chapters that contain the position, and the most common opening name on the way to it. |
 
-A displayed line is a legal example route to the position, not an exclusive historical sequence. Each exact board uses one representative overall-policy route as its label in every table; move rows add their move to the parent board's label. Line links open the Lichess analysis board at the position where the repertoire owner decides: after the opponent's reply, or before our move. Positions immediately before a guaranteed prepared reply are collapsed into the position after that reply; unanswered positions remain visible. Position rows and chapters can overlap along a game, so their reach and contributions must not be added.
+### Lines, links and units
 
-Tables show percentages only; centipawn equivalents appear beside headline deltas (overview rows and chapter headlines). Differences such as `+5.00%` mean five percentage points, not a relative percentage increase. Columns that are identical in every row, such as all-zero depth endings, are omitted. The [metric reference](#metric-reference) explains the formulas and uncertainty.
+A line shown in a table is one legal route to the position, not the only way games get there. Each position uses the same representative route as its label in every table, and a move row adds its move to its parent's label. Line links open the Lichess analysis board where you are to move: after the opponent's reply, or before your move. A position followed by a move you always play is merged into the position after that move.
+
+Tables show percentages. A difference such as `+5.00%` means five percentage points, not a relative change. Centipawn equivalents appear only beside headline deltas. Columns that are the same in every row are left out. A dagger (†) marks pooled game counts that may count the same historical games more than once.
 
 ## How the score is calculated
 
-Our selected moves have probability one, or configured mixture weights. Opponent moves use their share of all games at that parent, including deviations. This includes cached replies after the last recorded PGN move: replies that immediately reach a known repertoire board resume preparation. An unanswered own-turn leaf uses position results; an unprepared opponent reply uses its parent move-row results without fetching the child. Scores, position reach, prepared depth, chapter entries, and opening sources follow the same transitions. Legal unobserved moves remain in the posterior model. Valid residual results form a separate no-recorded-continuation bucket.
+Your selected moves are played every time (or with the weights in your configuration). Each opponent reply gets its share of all games at that position in the Explorer, including replies you have not prepared. The model then follows every reply:
+
+- **A prepared reply** continues the repertoire. This includes replies after the last move of a line that transpose straight into another prepared position.
+- **An unprepared reply** ends preparation. It is scored with that move's results in the parent position's table, so its own table is never fetched.
+- **A position where you have no move** ends preparation and is scored with that position's results.
+- **Checkmate, stalemate and insufficient material** are scored exactly.
+
+The repertoire score is the probability-weighted average of these end scores. The same rules drive position reach, prepared depth, chapter entries and opening sources. Games in a table that match no listed move form a separate *no recorded continuation* outcome. The [model description](design.md) gives the formulas.
 
 ### Uncertainty
 
-The repertoire score itself is exact: one pass over every position using the cached reply frequencies. The uncertainty around it asks how much that score could move because each cached table is a finite sample of games. It is calculated, not simulated, and needs no seed.
+The repertoire score is computed exactly from the cached tables. Its uncertainty asks how much the score could move because each table is a finite sample of games. It is calculated, not simulated, so it needs no random seed.
 
-Each cached position gets a Dirichlet posterior over its joint move-by-result table: the observed counts plus a prior. The default prior is (0.5, 0.5, 0.5) in owner win/draw/loss order; at opponent nodes its total strength is divided across all legal moves and any observed residual bucket. Because every score is a sum over paths of products of probabilities from different positions, and a path visits each position at most once:
+Each position's table gets a Dirichlet posterior over its moves and results: the observed counts plus a prior. The default prior is 0.5 wins, 0.5 draws and 0.5 losses; at opponent positions that strength is spread across every legal move and any games with no listed move. A score is a sum over paths of products of probabilities from different positions, so:
 
 - **Posterior means are exact.** They come from one pass with each table replaced by its posterior mean.
-- **Variances are first-order.** Each table contributes its own posterior variance, weighted by the square of its influence on the score (reach, or for chapter scores, its effect on both the entry weights and the continuation). Interactions between two tables are omitted; they shrink with the product of both sample sizes and matter only for very sparse positions. A transposed position contributes once, through all its routes.
-- **95% intervals** match a Beta distribution to a score's mean and variance (a normal distribution once both Beta parameters exceed 1,000). Local gains, drags and paired differences use a normal interval.
+- **Variances are first-order.** Each table contributes its variance, weighted by the square of its influence on the score. Interactions between pairs of tables are left out; they matter only for very sparse positions. A position reached by several move orders contributes once.
+- **95% intervals** fit a Beta distribution to each score's mean and variance. Gains, drags and paired differences use a normal interval.
 
-Change the prior with `--prior W D L`. Reports include sensitivity to symmetric priors of 0.1 and 2 per result category. `--sparse-threshold` defaults to 30 observations. `--tolerance` defaults to a 1 percentage point interval-width target; it is a reporting flag, not a pruning threshold.
+Change the prior with `score run --prior W D L`. Reports also show the score under priors of 0.1 and 2 per result. The main tables show the raw score; the posterior mean is kept in the JSON. Intervals do not account for the same game counting in several positions' tables, for selection bias, or for differences between the database population and you.
 
-Zero-data stopping scores are unresolved in empirical results. A zero-data opponent distribution stops unresolved at that position, without uniform play or parent-score fallback. Reports give conditional bounds [resolved contribution, resolved contribution + unresolved mass]. Sparse sensitivity assigns all flagged stopping events any score from zero to one. These are conditional sensitivity bounds, not credible intervals.
+### Missing and sparse evidence
 
-The approximate 95% interval and posterior statistics retained in JSON use explicit prior completion for unresolved scores. They must be read alongside unresolved mass and conservative bounds. They do not account for all dependence from games appearing in multiple position aggregates, selection bias, or population mismatch. Posterior unresolved mass includes prior probability assigned to legal but unobserved moves and may exceed empirical unresolved mass. Main tables label the raw empirical estimate as **Repertoire score** and omit the posterior mean.
+- **Unresolved evidence.** A position with no games, or with no usable reply table, is unresolved. Reports give bounds, from the resolved contribution alone to the resolved contribution plus all unresolved probability. These are bounds given the rest of the model, not confidence intervals.
+- **Sparse evidence.** A position with fewer than 30 games (set with `--sparse-threshold`) is flagged sparse. Sparse positions still count in the score, and a sensitivity range shows how far the score could move if each sparse outcome scored anywhere from 0 to 1.
 
 ## Metric reference
 
-All scores favor the repertoire owner, for both White and Black. Whole-repertoire metrics start at the repertoire root; chapter metrics use that chapter's normalized first-entry mixture and comparison policy.
+Whole-repertoire metrics start from the starting position. Chapter metrics start from the chapter's entries, weighted by how often each is reached first, and use the chapter's own moves where it records them.
 
-### Scores, baselines and conversions
+### Scores and baselines
 
-Each color's section includes only that color's standard starting-position baseline. The overview and summary show both colors and their respective deltas, in percentage points. Both also include a combined row with 50% weight for White and 50% for Black, provided both use matching Explorer filters and standard starting positions. The row averages scores, starting baselines and prepared depths; chapter counts are summed across colors. Each overview row includes an **Elo equivalent**: `400 * log10(score / (1 - score)) - 400 * log10(baseline / (1 - baseline))`. This translates the modeled score edge to an Elo scale; it is not a measured rating gain. One-color reports omit the combined row. The reference uses ordinary database play under the same Explorer filters before forcing repertoire moves, with counts and retrieval provenance recorded in JSON. It does not alter the repertoire calculation. JSON retains both color references for compatibility.
+The **baseline** is the ordinary database score before forcing any of your moves, under the same Explorer filters: at the starting position for a whole color, or at the chapter's entries, weighted by how often each is reached first. The **delta** is the repertoire score minus the baseline, in percentage points. A missing entry baseline stays unresolved.
 
-Headline deltas (overview rows and chapter headlines) also show a whole-number **centipawn equivalent (CP)**; every other table shows percentages only, so three units for one quantity do not crowd the tables. Use `C(p) = ln(p / (1 - p)) / 0.00368208`, the inverse [Lichess score curve](https://lichess.org/page/accuracy). For example, Black's 52.50% score is about +27 cp from Black's perspective. **CP delta** is `C(after) - C(before)`, or score CP minus entry/starting-baseline CP. Negative changes indicate a worse score. Scores include half a point for draws. These are human-results conversions rather than engine evaluations. Convert weighted mixtures after averaging their scores, and score intervals by converting both endpoints. Reach, frequency, and contribution percentages are not expected scores. Missing scores remain unresolved and conversion at 0% or 100% is unavailable.
+The overview and summary show both colors and a **combined** row that weights White and Black equally. It averages scores, baselines and depths and adds up chapter counts. It appears only when both colors use the same filters and the standard starting position.
 
-Each chapter also includes an empirical entry baseline and the repertoire score minus that baseline in percentage points. Reports display score deltas, gains, drag, and weighted contributions with `%` in the value rather than `pp` in the heading. For example, 55% minus 50% displays as `+5.00%`, a five percentage point difference rather than a relative change. JSON retains the existing percentage-point units and field names. Multiple entries use their normalized first-entry probabilities, matching the chapter's empirical repertoire calculation. Database sample counts are not used as mixture weights. JSON retains the component weights, scores, counts and provenance; the table shows one weighted baseline per chapter. Missing entry evidence remains unresolved. A positive difference means higher modeled score, not demonstrated causal improvement or statistical significance.
+Each overview row also shows an **Elo equivalent**, `400 * log10(score / (1 - score)) - 400 * log10(baseline / (1 - baseline))`. It translates the score edge to the Elo scale; it is not a measured rating gain.
+
+Headline deltas also show a **centipawn equivalent (CP)**, using `C(p) = ln(p / (1 - p)) / 0.00368208`, the inverse of the [Lichess score curve](https://lichess.org/page/accuracy). For example, a 52.50% score for Black is about +27 cp from Black's side. CP delta is `C(score) - C(baseline)`. These convert human results, not engine evaluations. Mixtures are converted after averaging their scores, and CP is unavailable at 0% or 100%.
+
+### Chapter reach and entries
+
+A chapter is reached at its [entries](usage.md#chapter-entries): by default, the first positions on its lines that no other chapter continues from.
+
+**Entry probability** is the chance of reaching one of a chapter's entries, by any move order, before preparation ends, counting each game once. A transposition onto an entry counts. A transposition onto a later position that the chapter shares with others does not: that game belongs to the chapter whose entry it passed. For example, a chapter that reaches the Vienna through 1...Nf6 2.Nc3 e5 is entered only at 1...Nf6, and Vienna games do not count toward it.
+
+A **chapter score** is the expected score among games that enter the chapter. After entry the whole repertoire applies, including other chapters' continuations, but the chapter's own moves are used wherever it records them. Its baseline, depth, transitions and vulnerabilities use the same entries and moves. For a chapter whose moves lost to an alternative, these numbers describe what would happen if you played it; a separate reach shows how often the repertoire you actually play reaches its entries.
+
+Chapters still overlap where one chapter's line passes through another's entry, so chapter reach and scores do not add up to the whole.
+
+**Chapter transitions** (full report) answer: among games that first enter one chapter, how often do they reach another at or after that point? Entering both at once counts. Transitions are directed: A to B differs from B to A. The model does not follow games through unknown positions to a later return.
+
+**Entry routes** (chapter pages) show the most likely single route to each entry. An entry's weight includes every route that reaches it first; the route shown may carry only part of that weight.
 
 ### Prepared depth
 
-**Expected prepared depth** is the expected number of remaining repertoire-owner moves before leaving theory or reaching a theory leaf or terminal outcome. Each selected own move contributes one; opponent moves contribute no unit themselves and weight subsequent prepared moves by their empirical frequencies. An available own move at the starting position is included, but previous moves and entry itself earn no bonus. There is no cutoff, discount, or tunable coverage parameter. Overall depth starts at the repertoire root; chapter depth uses the same first-entry mixture as its score and baseline and follows the complete merged repertoire thereafter.
+**Expected prepared depth** is the expected number of your own prepared moves still to come before preparation ends. Each of your moves counts one; opponent moves count nothing themselves but weight what follows by how often they are played. An available move at the start counts; earlier moves and the entry itself do not. There is no cutoff or discount. Chapter depth starts from the chapter's entries and follows the whole repertoire from there.
 
-The evaluator computes depth backward through the DAG: an own-move node has depth `1 + weighted child depth`, an opponent node has depth `sum(reply probability * child depth)`, and a deviation or leaf has depth zero. Shared prefixes, duplicate lines, and transpositions do not create additional per-game moves. Deeper or broader preparation earns credit according to its probability of being used. Missing leaf outcome counts do not affect depth; missing opponent distributions preserve lower/upper bounds using the finite remaining repertoire, and missing first-entry weights leave chapter depth unresolved. Bounds are conditional on the resolved frequencies, not confidence intervals. JSON stores `prepared_depth` under `overall` and each chapter's `score`; wherever depth is displayed, its unit is own moves. 
+Depth is computed backward: a position where you move has depth `1 + depth after your move`, an opponent position has `sum(reply probability * depth after reply)`, and an unprepared reply or end of a line has depth zero. Positions reached by several move orders are counted once. Missing results do not affect depth; a missing reply table gives lower and upper bounds.
 
-`repertoire preparation` automatically saves a **prepared-depth distribution** for each color and chapter. It propagates probability over both canonical board and elapsed own-move count, so paths that transpose into a shared board retain their different remaining-depth histories. The full report shows cumulative probabilities of preparing at least each depth and exact-depth endings at prepared endpoints, unprepared replies, and other stops. The survival probabilities from depth 1 sum to expected prepared depth. The summary links the full distribution and reports its median. Zero-data leaf outcomes do not obscure depth; missing opponent distributions retain finite structural bounds and are labeled unresolved. There is no depth cutoff or discount parameter.
-
-### Equivalent gap reach
-
-**Equivalent gap reach** summarizes recurring first unprepared positions: `R = sqrt(sum(p_i ** 2))`, where `p_i` is the probability of first reaching canonical board `i` with no prepared own reply. Combine all exact transpositions into one gap before squaring. `R ** 2` is the probability that two independent modeled games first encounter the same gap; `R` is the reach of one gap with the same repeat probability. Lower values indicate less concentrated or less likely gaps. Probabilities use the full scope, without conditioning on reaching a gap, omitting sparse rows, or imposing a depth cutoff.
-
-The cache-only character analysis follows selected own moves and cached opponent reply frequencies. After a prepared endpoint, it uses that endpoint's cached reply table to identify the first unanswered positions. A reply that transposes into a prepared board continues through the merged repertoire. It never fetches unprepared child tables. An unanswered board's position reach equals its first-gap probability, combining all transposed arrivals; every overall and chapter scope validates this equality. Terminal games produce no gap. Missing or zero response tables, unnamed residuals, and closed canonical cycles retain unresolved probability, with conservative bounds rather than a falsely exact value. The standalone gap calculation can solve cyclic components with exits as absorbing Markov chains; full repertoire scoring still rejects reachable cycles.
-
-Both consolidated files show each color's equivalent gap reach. Chapter tables include **Equivalent gap reach after entry** and **Weighted gap reach contribution**, calculated as chapter entry probability times the conditional value. The conditional distribution uses the same normalized first-entry mixture and comparison policy as the chapter score. These weighted values are on the full-repertoire probability scale, but are not additive: chapters and gap boards can overlap, and equivalent gap reach is nonlinear. Character JSON retains every canonical gap probability, resolved/terminal/unresolved mass, bounds, and conservation checks under `gap_coverage`.
-
-**Gap priorities** show each canonical first gap's share of repeat-gap probability, `p_i ** 2 / sum(p_j ** 2)`. Transposed arrivals are combined before squaring, and displayed rankings retain the full distribution as their denominator. These shares explain which gaps dominate equivalent gap reach. Unknown gap mass is labeled separately.
+The **prepared-depth distribution** in the full report shows the probability of playing at least each number of prepared moves, and where games end at each depth: at a prepared endpoint, an unprepared reply or another stop. Paths that transpose into the same position keep their own move counts. The "at least" probabilities from depth 1 sum to the expected depth. The summary shows the median.
 
 ### Where preparation ends
 
-**Exit points** group the saved stopping ledger by the last prepared board before each stop: the board where the opponent chose an unprepared reply (including database results with no individual move row), or an own-turn board with no recorded move. **Games leaving prep here** is the summed first-gap probability of those stops, and **share of games at this position** divides it by the board's own reach. Each modeled game stops once, so exit rows partition the stopping mass and, unlike position rows, do not overlap; finished games and missing opponent data are excluded. The database score is the reach-weighted mean of the cached parent-row results of those replies. Exit tables appear in the summary, each color's section of the full report, and every chapter page; they need no new queries. A board where many games leave through many rare replies, such as a chapter that ends one move early, appears as one row instead of being split across reply rows of about 1% each.
+**Exit points** group every place a game leaves preparation by the last prepared position before it: the position where the opponent chose an unprepared reply, or a position where you have no move. **Games leaving prep here** is the total probability of those exits, and **share of games at this position** divides it by the position's reach. Each game leaves preparation once, so exit rows do not overlap. Finished games and missing opponent data are left out. The database score is the reach-weighted average of the unprepared replies' results.
+
+A position where many games leave through many rare replies, such as a chapter that ends one move early, appears as one row instead of dozens of 1% reply rows.
+
+### Gaps
+
+A **gap** is the first position a game reaches where you have no prepared move.
+
+**Equivalent gap reach** summarizes how concentrated your gaps are: `R = sqrt(sum(p_i ** 2))`, where `p_i` is the probability of first reaching gap `i`. `R ** 2` is the probability that two independent games hit the same first gap, and `R` is the reach of a single gap with that same repeat probability. Lower values mean gaps that are rarer or more spread out. Chapter tables show it among games entering the chapter, and a **weighted gap reach contribution**, the entry probability times that value. These do not add up across chapters.
+
+**Gap priorities** rank each gap by its share of the repeat probability, `p_i ** 2 / sum(p_j ** 2)`, showing which gaps dominate. Unknown gap probability, from missing reply tables or table rows with no listed move, is shown separately.
 
 ### Score spread and outcome volatility
 
-**Branch score spread** is the primary variability metric in score tables. It is computed recursively: `B(s) = sum(p * (B(child) + (score(child) - score(s))**2))`, displayed as `100 * sqrt(B(s))` in percentage points. Known stopping scores have B=0, and forced own moves inherit their continuation. Exact transpositions reuse one continuation. Entry and combined-color mixtures include differences between their mean scores; standard deviations are never averaged. The result matches the complete stopping-event variance. **Reply** beneath a position's spread gives its immediate opponent-reply spread using recursive continuation scores. It is unavailable at own turns, stopping boundaries, or incomplete named reply tables. Sparse evidence stays included; unresolved outcomes remain unavailable. **Prep ends** indicates the model boundary, rather than a certain game result. The full report retains the stopping-board and arrival-cohort breakdown and shows the branch share of total outcome variance.
+**Score spread** measures how much the scores of the continuations from a position differ. It is computed backward, `B(s) = sum(p * (B(child) + (score(child) - score(s)) ** 2))`, and shown as `100 * sqrt(B(s))` in percentage points. Known end scores have no spread, and your forced moves inherit the spread after them. **Reply** spread, shown beneath, covers only the opponent's next reply. **Prep ends** marks where the model stops, not a game result.
 
-**Outcome volatility:** the existing recursive WDL metric remains on a 0%-100% scale, calculated as `400 * (W + D/4 - (W + D/2)**2)`. It includes both branch-score variance and game-result variation within stopping outcomes. Use the same selected moves, empirical replies, stopping rules and canonical transpositions as repertoire score. Mix WDL before calculating volatility, including first entries and the 50/50 color mixture. Prepared continuations use recursive WDL; unprepared replies use their cached parent rows, and terminal results are exact. Missing results remain unresolved. It is 100% for equal wins and losses, 10% for 5% wins / 90% draws / 5% losses, and zero for a certain result. Mostly decisive database games keep it near 90% to 95% for every chapter, so it does not appear in headlines; the branch spread breakdowns retain it. JSON stores it as `outcomes.sharpness`, with the underlying WDL.
-
-Score tables show branch score spread; outcome volatility appears only in detailed breakdowns. The two metrics answer different questions: spread describes differences between continuation scores, while volatility also includes variation in final game results within each stopping outcome.
+**Outcome volatility** also includes the spread of results within each end position: `400 * (W + D/4 - (W + D/2) ** 2)` on a 0% to 100% scale, using the expected win and draw rates. It is 100% for equal wins and losses, 10% for 5% wins, 90% draws and 5% losses, and zero for a certain result. Because most database games are decisive, it sits near 90% to 95% in every chapter, so it appears only in detailed breakdowns. It is stored as `outcomes.sharpness` in the JSON.
 
 ### Reuse, reply variety and position profiles
 
-**Expected reuse:** for a distinct own position/move decision with modeled encounter probability `p`, `N*p` is its expected encounters in N independent games and `1-(1-p)^N` is its probability of being seen at least once. Summing these yields total encounters and distinct decisions encountered; their difference gives repeat encounters. Exact transpositions and duplicate chapter providers share one decision. The curve defaults to 10, 50, 100 and 500 games; customize it with `--games`. Chapter curves count games entering that chapter, not all games. The denominator includes only selected decisions with positive empirical reach. Exposure is not memory retention.
+**Expected reuse.** A move of yours that is played with probability `p` per game is expected `N * p` times in `N` games, and seen at least once with probability `1 - (1 - p) ** N`. Summing over your moves gives total encounters and the number of distinct moves seen; the difference is repeat encounters. The curve uses 10, 50, 100 and 500 games by default (`character --games`). Chapter curves count games entering the chapter. This measures exposure, not memory.
 
-**Reply predictability:** entropy over observed named opponent replies at each active decision, with effective replies `2^H`. The scope summary exponentiates the mean entropy weighted by position reach and the recorded continuation fraction. Unrecorded continuation mass is reported as missing coverage, never invented as another chess move. The accumulated information in bits per game is shown separately from the average per decision. Zero observations produce unavailable predictability. Sparse samples are flagged using the existing scoring threshold without excluding them. Leaves are not queried for further replies.
+**Reply predictability** is the entropy of the opponent's replies at each of their positions, shown as effective replies, `2 ** H`. The summary averages the entropy by reach. Games with no listed move count as missing coverage, never as another move.
 
-**Position profiles:** aggregate board features at the boundary of preparation, using prepared leaf boards and the board after each unprepared opponent reply. Show queens, current king wings, bishop pairs, isolated/doubled/passed pawns, isolated d-pawns and exact pawn skeleton frequencies. Effective skeleton count is `2^H` over the weighted skeleton distribution. JSON also includes material, pawn and rook counts and profiles conditional on stopping type. Current king files are not treated as proof of castling history. Unresolved opponent distributions stop at their known board and are flagged; downstream reuse is unknown. These describe preparation boundaries rather than eventual middlegames or personal outcomes.
+**Position profiles** describe the positions where preparation ends, including after an unprepared reply: queens on the board, king wings, bishop pairs, isolated, doubled and passed pawns, isolated d-pawns and pawn structures, with an effective number of pawn structures. King wings are current files, not castling history. Profiles describe where preparation ends, not the middlegames that follow.
 
-The consolidated report includes chapter comparison tables and per-chapter details. Its `--top` and `--chapter-top` options control displayed ranking lengths; JSON preserves every row. Descriptive empirical estimates have no sampling confidence intervals. The three measures do not assign a combined quality score or an arbitrary depth discount.
+### Opening names
+
+Names and ECO codes come from the bundled [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) dataset, the same list the Explorer uses, so naming a position needs no extra request. At a named position every arrival takes its name. At an unnamed position, each route keeps the last name it passed and its own probability. For example, an unnamed position reached with 1% probability through the Alekhine and 20% through the Vienna counts 1% for each opening respectively, not 21% for both.
+
+The full report has an opening table for each color with every opening reached. Openings with the same name under several ECO codes share one row. An opening's **reach** is first arrival at that name or a more specific variation of it, where a variation's name extends the opening's at a colon or comma (Sicilian Defense: Accelerated Dragon is part of Sicilian Defense). Openings overlap, so their reach does not add up. Opening scores, baselines, deltas, depth and gap reach use the same first-arrival weights. Opening tables use the repertoire you actually play, not chapter alternatives.
+
+The **opening source** column shows the last name carried by the largest share of arrivals, followed by that share when other names also contribute. Position rows combine every route; move rows count only arrivals through that move; chapter tables follow the chapter's own moves.
 
 ### Opponent ratings
 
-Explorer `averageRating` is the move maker's rating. At our turn, use the previous opponent move's parent-table row. At the opponent's turn, weight the current response rows by game counts, including the Black repertoire's starting-board row where White is to move. The White starting-board row has no preceding opponent move and is labeled n/a. These are local position contexts; neither creates a whole-repertoire rating average. Transposed arrivals use modeled reach rather than database counts. Specific opponent vulnerabilities use the reply row; our selected moves and cached alternatives use the resulting board's opponent response rows. Unprepared child tables are never fetched.
+The Explorer's average rating describes the player who made the move. At your turn, the opponent rating comes from their previous move's row in the parent table. At their turn, it is the game-weighted average over their replies. White's starting position has no previous opponent move and shows n/a.
 
-Chapter score-evidence averages weight ratings once at the stopping outcomes. Entry-baseline context instead uses the chapter's first-entry mixture, including the incoming edges under its comparison policy. Local line ratings describe the exact position or move context. Chapter pawn groups can combine stopping evidence; whole-repertoire groups show only the individual example's rating. Missing ratings and residual outcome buckets remain unavailable, and partial coverage is disclosed. These descriptive ratings do not modify scores or rankings. There is no White, Black, combined-study or whole-study baseline rating average.
+Chapter ratings are averaged over the positions where preparation ends in that chapter. **Rating Δ vs parent** on reply rows is the reply's average rating minus the average over all replies at that position.
 
-Opponent reply rows also show **Rating Δ vs parent**: the reply's move-maker average minus the parent's game-weighted opponent response average. Transposed replies combine these paired differences by modeled arrival reach. Missing comparisons remain unavailable; a current-position response average without a specific opponent reply to compare is marked n/a. Partial parent-rating and paired-arrival coverage are disclosed. This describes the reply cohort and does not change any score or ranking.
+Ratings describe the database games at that point. They never change a score or a ranking, and there is no repertoire-wide average.
+
+### Correlations
+
+The full report includes two reach-weighted correlations. Both are point estimates without intervals, exclude sparse and unresolved data, and describe association, not cause.
+
+**Prepared depth and gain.** Each of your moves is one observation, weighted by how often it is played. Its depth is the expected number of prepared moves after it, and its gain is the repertoire score after it minus that move's database score. The report shows weighted linear and rank correlations and the weighted slope of gain on depth, with unweighted results and a check that excludes zero depth in collapsed details.
+
+**Opponent rating and score.** `reports/comparisons/opponent-rating-score.md` compares replies within the same parent position, and chapter scores and deltas with their chapters' opponent ratings, grouping chapters that share positions. It repeats the reply comparison using only replies with at least 1,000 games. It describes the database cohorts, not what would happen against a particular rating.
 
 ## Strengths and vulnerabilities
 
 ### Gain and drag
 
-**Opponent reply drag** is `repertoire value before reply - value after reply`, in percentage points. **Weighted drag** multiplies that local drop by `parent reach * reply probability` and determines opponent rankings. Prepared replies use the full merged continuation; deviations use the parent move row's empirical score. **Our move drag** is `ordinary parent database score - repertoire continuation score after our move`, expressed in percentage points without multiplying by reach. The strengths section ranks the opposite difference, `repertoire continuation score - parent database score`. Weighted drag, weighted gain and position contributions are displayed as score points per 1,000 games (ten times the reach-weighted percentage points), so a weighted drag of `0.0317%` reads as `0.32`. Our move's historical popularity is never applied. The benchmarks differ, so the two rankings remain separate. Historical same-table alternatives remain in JSON as separate screening information with their sample sizes; they compare database outcomes and are not substituted for prepared continuation scores. They are not evaluated replacement policies or recommendations, and the maximum observed score can exaggerate sampling noise.
+- **Opponent reply drag** is the score before the reply minus the score after it. **Weighted drag** multiplies it by the reply's reach (parent reach times reply probability) and ranks the opponent replies that cost you most. Prepared replies use the score of your continuation; unprepared replies use the reply's database score.
+- **Own move drag** is the database score of the parent position minus your score after your move. It measures how your move and the preparation after it compare with what players do there in general. The strengths section ranks the reverse, your gain.
+- **Gain** splits into the **move gain**, your move's database score minus the position's, and the **preparation gain**, your score after the move minus the move's database score. The two add up to the total.
 
-**Own-move gains** are split into the selected move's database score minus its parent's database score, and its prepared continuation score minus the selected move's database score. Both components sum to total gain. The selected move's database evidence comes from the cached parent row. Local gain and drag intervals use the same exact means and first-order variances, combining every table a comparison depends on through shared transposition values; the parent and selected database scores share one table, so their covariance is included. They are approximate prior-completed model intervals, excluding game overlap and population selection effects. Headline intervals and sparse-evidence sensitivity remain distinct.
+Weighted values are shown in score points per 1,000 games, so a weighted drag of `0.0317%` reads as `0.32`. The summary ranks your moves by reach times gain or drag; the full report ranks them by the gain or drag itself. Intervals on gains and drags combine every table the comparison depends on. **Avg games per encounter** is `1 / reach`: how many games with that color (or entering the chapter) pass before a position comes up once on average.
 
-Reach sums incoming mass across exact-position transpositions. Each position/move is counted once per ranking. Chapter rankings use the same normalized first-entry mixture and comparison policy as chapter scoring. Opponent weighted drag and all reported chapter reach are conditional on chapter entry. Own drag is a direct score subtraction at its parent. JSON also retains reach-weighted own comparisons and comparisons weighted again by chapter entry probability. For alternative chapters it is counterfactual, not an impact on the selected overall repertoire. A move that enters the chapter belongs to the overall or upstream ranking. Representative lines are legal route labels, not exclusive historical sequence probabilities. Reports retain the owner's overall baseline and delta, and each chapter's weighted entry baseline, score, delta and expected prepared depth for context.
+The JSON also lists the database scores of the other moves in each of your positions. They are screening information, not recommendations: the best of several observed scores tends to be high by chance.
 
-The summary's own-move highlights rank by **move reach times local continuation gain or drag**, after the existing sparse filter. Full-report own-move rankings retain their local comparisons. Every highlighted gain includes the later prepared continuation, so these weighted comparisons overlap and must not be added. Line tables also show **Avg games per encounter**, `1 / reach`, for independent modeled games. In chapter tables this means games that enter the chapter; in overall tables it means games with that color. Zero reach is never encountered under the policy, rather than a finite waiting interval.
+Chapter rankings are among games that enter the chapter. For a chapter whose moves lost to an alternative, they describe the alternative, not the repertoire you play.
 
-### Position contributions and stopping outcomes
+### Position contributions
 
-The strengths section appears overall and per chapter. It shows our largest positive continuation-score differences against the parent database score, followed by **all reached prepared positions and unprepared opponent replies** ranked by contribution: reach times score. Prepared positions use their full repertoire continuation score; unprepared replies use cached parent-row outcomes or recorded endpoint outcomes. Exact boards combine all transposed arrivals. Boards immediately before guaranteed own replies and the standard starting board are omitted, as in the common-positions section. Intermediate positions count, so White's `1.e4` carries the entire repertoire score. These contributions overlap along a game and must not be summed; they show score carried through a position, rather than incremental improvement. Chapter reach and contributions are conditional on entry. Sparse and unresolved positions are filtered before display limits. Pooled parent counts may overlap and are marked with a dagger. No scoring or new Explorer queries are needed to render this ranking from the saved character data.
+The strengths section also ranks every reached prepared position and unprepared reply by **contribution**, reach times score. Prepared positions use your score after them; unprepared replies use their database score. Positions on the way to others count too, so after `1.e4` the whole White score passes through one row. Contributions overlap along a game and show where the score flows, not where it improves.
 
-The preparation JSON retains a separate stopping-outcome ledger and baseline-relative contributions for analysis. Each modeled game stops once, so its complete stopping contributions still reproduce the resolved score without repeatedly counting intermediate positions.
+The preparation analysis also keeps a ledger of where each game ends. Each game ends once, so those contributions add up to the score.
 
-### Sparse evidence and ranking limits
+### Sparse evidence and limits
 
-Positive drag highlights below-reference branches. Negative signed changes are preserved in JSON. Nested lines and overlapping chapters must not be summed, and these screening measures do not decompose the overall baseline delta or estimate causal improvement. No-data comparisons remain unresolved rather than becoming zero scores. Strengths and vulnerability tables, and their summary highlights, omit rows flagged sparse in their local, parent, or immediate endpoint evidence. Filtering happens before each display limit. Position contributions exclude missing or sparse local counts; merged unprepared positions are omitted if any parent-row arrival is sparse, even when pooled counts exceed the threshold. JSON retains all rows, and the score and probability models still include all evidence under the existing sparse threshold (normally 30 games). Opponent move counts describe reply frequency; prepared values can depend on different downstream samples. Residual non-move stopping buckets are validated but not ranked as chess moves. Validation reproduces saved overall and chapter scores, checks probability conservation, and checks that signed opponent deviations, including residuals, balance around their parent means.
+Strength and vulnerability tables, and their summary highlights, leave out rows flagged sparse in the position, its parent or the position right after. A merged unprepared position is left out if any of its arrivals is sparse. Rows are filtered before display limits are applied, and the JSON keeps every row, including negative drags. Sparse evidence still counts fully in the score. Game counts in the parent table's row describe how often a reply is played; a prepared continuation's score can rest on different, deeper samples.

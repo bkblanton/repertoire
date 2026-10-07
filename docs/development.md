@@ -1,88 +1,103 @@
 # Development
 
-How the code is organized and tested.
+How the code is organized, the conventions it follows, and how it is tested. The statistical model is described in [Model](design.md).
 
-Work from the repository root and preserve unrelated local changes. Use uv for Python commands and keep prose free of em dashes. Report presentation belongs in the generators; numerical results belong in analysis JSON. The renderer must not query Lichess or rerun estimates.
-
-## Implementation map
-
-| Responsibility | Files |
-| --- | --- |
-| PGN parsing, canonical boards, selected moves and automatic chapter entries | [graph.py](../repertoire/graph.py), [board_cache.py](../repertoire/board_cache.py) |
-| Authenticated evidence, validation and persistent cache | [explorer.py](../repertoire/explorer.py) |
-| The `repertoire` command, scoring orchestration, evidence model and calculated uncertainty | [cli.py](../repertoire/cli.py), [score.py](../repertoire/score.py), [model.py](../repertoire/model.py), [uncertainty.py](../repertoire/uncertainty.py) |
-| Backward values, forward probability, entry baselines, depth and chapter transitions | [evaluate.py](../repertoire/evaluate.py), [baseline.py](../repertoire/baseline.py), [depth.py](../repertoire/depth.py), [transitions.py](../repertoire/transitions.py) |
-| Cache-only empirical traversal, stopping ledger, depth distribution and entry-route examples | [preparation.py](../repertoire/preparation.py), [routes.py](../repertoire/routes.py) |
-| Position reach, first gaps, reuse, reply variety, WDL and recursive branch spread | [character.py](../repertoire/character.py), [gaps.py](../repertoire/gaps.py), [sharpness.py](../repertoire/sharpness.py), [spread.py](../repertoire/spread.py) |
-| Gain/drag comparisons, ratings, opening flows and source attribution | [vulnerabilities.py](../repertoire/vulnerabilities.py), [ratings.py](../repertoire/ratings.py), [openings.py](../repertoire/openings.py), [attribution.py](../repertoire/attribution.py) |
-| Saved gain intervals and spread/entry presentation data | [report_insights.py](../repertoire/report_insights.py) |
-| Correlations | [position_correlations.py](../repertoire/position_correlations.py), [rating_correlations.py](../repertoire/rating_correlations.py), with shared helpers in [stats.py](../repertoire/stats.py) |
-| Summary, full report, chapter and opening pages, exit points, Lichess links, cross-page link resolution and nested contents | the [report](../repertoire/report) package: `format`, `markdown`, `bundle` (loading saved analyses), `links`, `derive`, `tables`, `sections`, `definitions`, `pages` and `generate`; [render.py](../repertoire/render.py) is its command line |
-| Lichess study export | [studies.py](../repertoire/studies.py) |
-| Candidate comparisons: decision points, hypothetical repertoires, linked-decision search and the `compare` command; its page is `report/comparison.py` | [alternatives.py](../repertoire/alternatives.py), [compare.py](../repertoire/compare.py) |
-| Fetching every Explorer table a build needs, before any stage runs | [fetch.py](../repertoire/fetch.py) |
-| Incremental stage orchestration | [build.py](../repertoire/build.py) |
-| Shared loading, evidence reads and companion manifests for the cache-only stages | [context.py](../repertoire/context.py) |
-| Saved JSON format and status values | [schema.py](../repertoire/schema.py) (TypedDicts), [status.py](../repertoire/status.py) |
-
-Numerical analyses produce saved JSON; the `report` package combines matching saved results and does not rerun estimates. Keep network access out of the renderer and cache-only metrics.
-
-The complete build follows this order:
-
-`export -> fetch -> scores -> vulnerabilities -> preparation -> character -> ratings -> openings -> report insights -> both correlations -> saved comparisons -> rendering`
-
-Ratings depend on preparation, character and vulnerabilities. Report insights depend on preparation, character, vulnerabilities and openings. Companion manifests contain source-score hashes and, where applicable, supporting-analysis hashes and cache provenance. A changed companion may require rebuilding its dependents even when the headline score is unchanged. Strict rendering checks provenance; do not edit hashes or numerical JSON by hand to bypass a mismatch. Standalone commands can render an intermediate report with pending analyses; the batch defers rendering until all stages succeed.
-
-## Model and report conventions
-
-- Canonical board identity includes pieces, turn, castling rights and legal en passant, excluding move counters. Merge exact transpositions; displayed move sequences are representative routes, not exclusive historical line frequencies.
-- One evaluation engine. [model.py](../repertoire/model.py) `prepare_node` builds each position's branches (every legal reply in sorted UCI order, then the residual) and is the only place evidence becomes probabilities. [evaluate.py](../repertoire/evaluate.py) traverses those nodes: `fold` computes values from the leaves up (`backward` for score vectors, `sharpness.recursive_wdl` and `spread.recursive_spread` are folds), `forward` for stopping events and first entries, `reaches` for incoming probability and `best_routes` for representative lines (exact ties go to the earlier root, then earlier moves, so labels do not depend on traversal order). `preparation.Evaluator` is a lazy view over the same nodes for the cache-only stages; its `reaches` and `routes` call the engine. Get chapter evaluators from `preparation.Evaluators`, which hands out one per distinct comparison policy, so chapters that share a policy compile each position once. Add new traversals there rather than copying a propagation loop into an analysis module. The engine API is annotated with the aliases in `model.py` (`Model`, `Sampled`, `Evidence`) and `evaluate.py` (`Weights`, `Route`).
-- Get move text, resulting positions, side to move and terminal results from the cached helpers in [board_cache.py](../repertoire/board_cache.py) (`children`, `san`, `move_text`, `route_line`, `turn`, `owner_outcome`) instead of building a `chess.Board` inside loops; boards are the main cost in every stage. Saved analysis JSON is written compactly with `layout.data_json`.
-- Overall own-move conflicts use explicit overrides; where chapters record different first moves, `evaluate.select_alternatives` plays the highest-scoring one (backward induction); otherwise the first PGN variation and earlier chapter order. The score stage saves the winners and `context.selected_policy` hands them to every later stage, so never resolve the overall policy from the configuration alone. Each chapter comparison prefers its own first moves and retains compatible merged continuations. Keep every alternative chapter visible and distinguish its conditional comparison from the selected overall policy.
-- Comparisons build each hypothetical repertoire from PGN games (`graph.parse_games`): adopted candidate lines first, then your chapters, with decision points fixed and every other competing position decided by score, exactly as in the build. The current scenario must reproduce the saved score.
-- Our selected moves do not inherit their database popularity. Opponent frequencies retain deviations and valid residual mass. Expand cached replies even after the last recorded PGN move; immediate transpositions into known preparation continue. Unknown continuations stop rather than searching for later re-entry.
-- Unprepared replies use the cached parent move row's score, counts and rating. Prepared scores use recursive continuation values. Comparison reports screen replies from those parent rows without requesting candidate child positions.
-- Chapter reach is first arrival at one of its entry positions, across all routes; later shared positions do not count. Score, entry baseline, depth and chapter metrics use the same normalized first-entry mixture and policy. Overlapping positions, chapters, opening categories and gain comparisons are not additive.
-- Missing or zero evidence remains unresolved; API failure is not successful zero-data evidence. Sparse filtering applies to strengths and vulnerabilities, not to probability conservation or the repertoire score. Reuse shared samples at canonical transpositions.
-- Scores and CP favor the repertoire owner for both colors. Main tables use empirical **Repertoire score**; outcome volatility retains the `sharpness` JSON field while score tables use recursive branch spread. CP appears only beside headline deltas. Opponent ratings describe chapters or lines, never a repertoire-wide average or a score adjustment.
-- The summary leads each color with five exit points and five own moves to review, plus opening names alongside lines. The position tree, chapter comparisons, costly replies, strongest moves and preparation metrics are expandable. Separate opening rankings, repeat-gap-share tables and position-contribution tables remain in the full report; chapter detail lives on chapter pages.
-- Pages link to each other with in-page anchors and `@page` placeholders that `generate` resolves to relative paths, so a section can move between pages without broken links. Caveats belong in the glossary (`def-*` anchors); tables link to them rather than repeating paragraphs.
-
-The evaluator has no network dependency. `routes.py` implements traversal-derived metrics (depth distributions and first-entry route examples); `report_insights.py`, the `insights` stage, prepares saved gain intervals and spread/entry presentation data. Keep these responsibilities distinct.
-
-## Testing
-
-Sanity checks enforce conservation at every evaluated node and reproduce the root value from weighted stopping contributions. Tests cover forced moves, beneficial and harmful deviations relative to an explicit leaf baseline, duplicate chapters, shared leaves, transpositions, own-move conflicts, sparse and missing evidence, residual buckets, inconsistent responses, first-entry weighting, cycles and color reversal.
+## Setup and checks
 
 ```sh
-uv run --no-sync pytest -q
-uv run --no-sync ruff check
-uv run --no-sync ruff format --check
+uv sync --locked
+uv run pytest -q
+uv run ruff check
+uv run ruff format --check
 ```
 
-`ruff format` (without `--check`) applies the formatting; it keeps each string's existing quote style. GitHub Actions runs all three on Ubuntu and Windows for every push to `main` and every pull request. Shared test helpers (small PGN graphs, Explorer tables, cached runs) live in `tests/helpers.py`, and pytest fixtures in `tests/conftest.py`. Tests use synthetic data and cache fixtures; a live token is not required. On Windows, if pytest cannot write to the default temp folder:
+`uv run ruff format` applies the formatting; it keeps each string's existing quote style. GitHub Actions runs all three checks on Ubuntu and Windows for every push to `main` and every pull request. Tests use synthetic PGNs and Explorer tables, so they need no token or network access.
 
-```powershell
-$env:TMP = Join-Path $PWD '.cache/tmp'
-$env:TEMP = $env:TMP
-New-Item -ItemType Directory -Path $env:TMP -Force | Out-Null
-```
+`.git-blame-ignore-revs` lists the commit that reformatted the code base. GitHub skips it in blame views; locally, run `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
 
-For a focused change, choose the relevant checks:
+## Code map
 
-| Change | Useful test command |
+All code is in the `repertoire` package.
+
+| Area | Modules |
 | --- | --- |
-| Presentation and summary | `uv run --no-sync pytest tests/test_consolidated.py tests/test_report_insights.py -q` |
-| Traversal, reach, chapters, depth or uncertainty | `uv run --no-sync pytest tests/test_model.py tests/test_uncertainty.py tests/test_endpoint_traversal.py tests/test_entries.py tests/test_chapter_policies.py tests/test_depth.py tests/test_gaps.py -q` |
-| Explorer or incremental reuse | `uv run --no-sync pytest tests/test_explorer.py tests/test_build.py -q` |
-| Broad numerical or dependency changes | `uv run --no-sync pytest -q` |
+| Command line | `cli.py` dispatches each `repertoire` command to its module's `main`. |
+| Build | `build.py` runs the stages incrementally; `fetch.py` fetches every table a build needs before any stage runs; `studies.py` exports Lichess studies. |
+| PGN and positions | `graph.py` parses PGNs into the merged position graph and finds automatic chapter entries; `board_cache.py` caches move text, child positions and results. |
+| Evidence | `explorer.py` fetches, validates and caches Explorer tables. |
+| Scoring | `score.py` plans and scores one color; `model.py` turns evidence into probabilities; `evaluate.py` traverses the graph; `uncertainty.py` computes posterior means, variances and intervals; `baseline.py`, `depth.py` and `transitions.py` compute entry baselines, prepared depth and chapter transitions. |
+| Analysis stages | `vulnerabilities.py`, `preparation.py` (with `routes.py`), `character.py` (with `gaps.py`, `sharpness.py` and `spread.py`), `ratings.py`, `openings.py` (with `opening_names.py`), `report_insights.py`, `position_correlations.py` and `rating_correlations.py`, sharing `context.py` for loading saved scores and `stats.py` for weighted statistics. |
+| Attribution | `attribution.py` links each line to the chapters that contain it. |
+| Comparisons | `alternatives.py` finds decision points and builds hypothetical repertoires; `compare.py` is the `compare` command. |
+| Reports | The `report` package renders every page from saved JSON: `bundle` loads matching analyses, `derive` and `tables` build rows, `format`, `markdown` and `links` format numbers, tables and lines, `sections` and `pages` lay out the pages, `generate` writes them and resolves links between them, and `comparison` renders comparison pages. `definitions.md` is the glossary. `render.py` is the `report` command. |
+| Saved data | `schema.py` describes the saved score JSON as TypedDicts; `status.py` holds status values; `ledger.py` builds the end-event ledger saved with each score; `layout.py` decides where outputs go and writes JSON. |
+| Data | `data/chess-openings/` is the bundled opening-name dataset (see its README for updating it). |
 
-Before publishing regenerated reports, check probability conservation, saved sanity checks, matching source and evidence hashes, legal representative lines, table columns and links. The full report's contents are generated from headings and anchors.
+## Build pipeline
 
-For presentation-only changes, confirm that score and companion JSON hashes remain unchanged and that no requests were made. If only the summary changed, the full report should remain unchanged too. Keep the five-row summary limits and sparse filters intact. The presentation tests check that every relative link on every generated page reaches an existing file and anchor. Check the final diff with `git diff --check`; documentation-only edits do not need a scoring run.
+A full build runs these stages in order:
 
-The supplied PGN source files are never modified.
+`export → fetch → scores → vulnerabilities → preparation → character → ratings → openings → insights → correlations → rating correlations → saved comparisons → render`
 
-## Design notes
+Only `export` and `fetch` use the network. Every later stage reads the cache and saved JSON, so it can be rerun offline. Ratings depend on vulnerabilities, preparation and character; insights also depend on openings; the correlations depend on vulnerabilities and ratings.
 
-[design.md](design.md) describes the statistical foundations: the probability model, evidence handling, uncertainty, chapter semantics and validation invariants.
+Each stage saves a manifest with the hashes of its inputs: the source PGN, the score it builds on, the analyses it depends on and the cache entries it read. `build` reruns a stage only when one of these, the code or the settings changed, and checkpoints progress in `reports/data/.build-state.json`. The renderer refuses to combine analyses whose hashes do not match. Never edit hashes or numerical JSON by hand to get past a mismatch.
+
+## Conventions
+
+**One evaluation engine.** `model.prepare_node` builds each position's branches (every legal reply in sorted UCI order, then any games with no listed move) and is the only place evidence becomes probabilities. `evaluate.py` traverses those nodes:
+
+- `fold` computes values from the leaves up: `backward` for scores, and the recursive WDL in `sharpness.py` and spread in `spread.py`.
+- `forward` propagates probability to end events and first entries.
+- `reaches` gives the probability arriving at each position.
+- `best_routes` gives representative lines. Exact ties go to the earlier root, then earlier moves, so labels never depend on traversal order.
+
+`preparation.Evaluator` is a lazy view over the same nodes for the analysis stages. Get one from `preparation.Evaluators`, which shares an evaluator between chapters with the same moves. Add new traversals to the engine instead of copying a propagation loop into an analysis module.
+
+**Positions and moves.**
+
+- A position is identified by its pieces, side to move, castling rights and legal en passant square, without move counters. Transpositions are merged, and displayed lines are representative routes.
+- Get move text, child positions, side to move and results from `board_cache.py` (`children`, `san`, `move_text`, `route_line`, `turn`, `owner_outcome`) rather than building a `chess.Board` inside a loop; board construction is the main cost in every stage.
+
+**Move selection.** Explicit policy overrides win. Otherwise `evaluate.select_alternatives` plays the highest-scoring of competing chapter moves, and the first recorded move elsewhere. The score stage saves the winners and `context.selected_policy` hands them to every later stage, so never resolve the overall policy from the configuration alone. Each chapter is evaluated with its own first moves and the overall policy elsewhere; keep alternative chapters visible and label them as such.
+
+**Evidence.**
+
+- Your moves never inherit their database popularity. Opponent reply probabilities keep deviations and games with no listed move.
+- Replies are expanded after the last recorded move, and a reply that transposes straight into preparation continues it. Unknown positions end preparation; there is no search for a later return.
+- Unprepared replies use the parent table's move row. Analyses never fetch the tables of unprepared positions.
+- Missing evidence stays unresolved; a failed request is never zero data. Sparse filtering applies to strength and vulnerability rankings, never to probabilities or the score.
+
+**Reports.**
+
+- Numerical results belong in analysis JSON. The `report` package only reads saved results: it never queries Lichess or recomputes an estimate. Change the generators rather than editing generated Markdown.
+- Pages link to each other through in-page anchors and `@page` placeholders that `generate` resolves to relative paths, so sections can move between pages without breaking links.
+- Caveats belong in the glossary (`def-*` anchors in `report/definitions.md`); tables link to them instead of repeating paragraphs.
+- Scores and CP favor the repertoire owner for both colors. Opponent ratings describe chapters or lines; they never form a repertoire-wide average or adjust a score.
+- Saved JSON is written compactly with `layout.data_json`.
+- Documentation and report text avoid em dashes.
+
+## Tests
+
+Shared helpers for small PGN graphs, Explorer tables and cached runs are in `tests/helpers.py`, and pytest fixtures in `tests/conftest.py`. Sanity checks enforce probability conservation at every evaluated position and reproduce the root value from the end events; the full list of covered cases is under [Validation](design.md#validation).
+
+For a focused change, run the relevant tests:
+
+| Change | Tests |
+| --- | --- |
+| Reports and summary | `uv run pytest tests/test_consolidated.py tests/test_report_insights.py -q` |
+| Traversal, reach, chapters, depth or uncertainty | `uv run pytest tests/test_model.py tests/test_uncertainty.py tests/test_endpoint_traversal.py tests/test_entries.py tests/test_chapter_policies.py tests/test_depth.py tests/test_gaps.py -q` |
+| Explorer access or incremental builds | `uv run pytest tests/test_explorer.py tests/test_build.py -q` |
+| Anything broader | `uv run pytest -q` |
+
+The report tests check that every relative link on every generated page reaches an existing file and anchor.
+
+### Checking that results are unchanged
+
+A refactor or performance change should leave every score and table the same. With a populated cache, build into a scratch directory before and after the change and compare the JSON, ignoring timestamps, paths and hashes:
+
+```sh
+uv run repertoire build --offline --force --directory path/to/scratch/data
+```
+
+For a presentation-only change, the score and analysis JSON should be byte-identical, and only the Markdown should differ.

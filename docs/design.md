@@ -1,235 +1,174 @@
-# Design: Expected Score of a Chess Repertoire
+# Model
 
-## Objective
+How Repertoire turns a set of study chapters and Opening Explorer tables into an expected score, and how it handles uncertainty and missing evidence. For how the results appear in the reports, see [Reports and metrics](metrics.md).
 
-Build a Python application that reads a Lichess study PGN and estimates:
+## What is estimated
 
-- The expected score of the overall repertoire.
-- Each chapter’s expected score conditional on entering it.
-- The probability of reaching theory leaves versus leaving theory.
-- Uncertainty caused by limited database evidence.
-- Which positions and deviations most affect the estimate.
+For each color, Repertoire estimates:
 
-Use Lichess Opening Explorer statistics for a configurable player population. Treat our selected repertoire moves as certain and opponent moves as probabilistic.
+- The expected score of the whole repertoire.
+- Each chapter's expected score among games that enter it, and how often it is entered.
+- How often games reach the end of prepared lines, and where they leave preparation before that.
+- The uncertainty caused by the limited number of games behind each table.
+- Which positions and replies matter most to the score.
 
-The result is a population-based model estimate, not a prediction calibrated to the individual user or a causal measure of opening quality.
+Your own moves are treated as certain and the opponent's as probabilistic, using Lichess Opening Explorer statistics for a chosen population of players (rating bands, time controls and dates). The result is an estimate for that population. It is not calibrated to you, and it does not measure whether an opening is objectively good.
 
-## Inputs
+White and Black are analyzed separately. The combined row in the reports is a fixed 50/50 average of the two.
 
-Required:
+## The repertoire graph
 
-- Study PGN.
-- Repertoire color.
-- Lichess token, supplied through an environment variable.
-- Explorer filters: ratings, time controls, and date range.
+Every chapter and variation is parsed with [python-chess](https://python-chess.readthedocs.io/). Malformed games, illegal moves and chess variants are rejected. Chapter IDs and names are kept for every position and move.
 
-Optional configuration:
+All chapters are merged into one graph of positions. A position is identified by its piece placement, side to move, castling rights and a legal en passant square, ignoring move counters, so transpositions within and across chapters meet at the same node. A line that ends in one chapter is not the end of preparation if another chapter continues from that position.
 
-- Our move choices where the repertoire contains alternatives.
-- Chapter entry positions or paths.
-- Prior parameters and cache policy.
-- Reporting tolerance for uncertainty, expressed in score percentage points.
+Every recorded variation is part of the repertoire. Comments are never read as instructions; lines can be removed explicitly with `exclude` in the configuration.
 
-Analyze White and Black repertoires separately. Combine them only when explicit color weights are supplied.
+A repertoire whose moves can return to an earlier position is rejected with the positions in the cycle, rather than scoring the repetition as a draw: handling repetition properly needs the game history, which the position key leaves out.
 
-## Repertoire representation
+## Choosing your moves
 
-Parse every chapter and variation with `python-chess`. Reject malformed games, illegal moves, and unsupported variants. Preserve chapter IDs, names, and provenance for positions and moves.
+At each of your positions, one move is played:
 
-Build a shared graph of canonical positions. For standard chess, the key includes:
+1. **An explicit policy** in the configuration, a move or a set of weights summing to one, always wins.
+2. **Competing chapters are decided by score.** Where chapters record different first moves, each move is scored with the best choices after it, deciding later positions first (backward induction), and the highest-scoring move is played. Together these choices maximize the score from every starting position. The comparison uses posterior mean scores, so a position with no evidence counts at its prior mean. An exact tie keeps the earlier chapter.
+3. **Otherwise the first recorded move is played:** the main line before side variations, earlier chapters before later ones. Side variations within one chapter do not compete.
 
-- Piece placement.
-- Side to move.
-- Castling rights.
-- Legally available en passant.
+The resolved choices, every competing move's score and the winners are saved with the score, and every later stage replays them. Two moves are never both given probability one. Choosing the best of several estimated scores is biased upward, so a small winning margin can be chance.
 
-Exclude move counters for ordinary opening transpositions.
+## Opponent replies and where preparation ends
 
-Merge identical positions and deduplicate edges. A position ending one chapter is not an overall theory leaf if another chapter supplies a continuation.
+At every opponent position the model uses the position's full reply table, including after the last move recorded in a chapter:
 
-At our turn, select the first recorded move: main PGN variation before side variations, and earlier chapters before later chapters. Where chapters record different first moves, those moves compete instead: each is scored with the best choices after it, deciding later positions first (backward induction), and the highest repertoire score is played, so the selected moves together maximize the score from every root. Comparisons use prior-completed scores, so unresolved evidence counts at its prior mean, and exact ties keep the earlier chapter. Side variations within one chapter do not compete. Explicit configured moves or mixture weights summing to one override both rules for the overall policy. Record resolved conflicts, every competing alternative's score and the winners in the saved score, and replay those winners in every later stage. Never assign probability one to multiple alternatives. Choosing the highest of several sampled scores is biased upward, so a small winning margin can be chance.
+- A reply that reaches a prepared position, directly or by transposition, continues the repertoire.
+- Any other reply is a **deviation**, and preparation ends there. The model does not search through unknown positions for a later return to preparation, and never fetches the deviation's own table.
 
-All included PGN variations are assumed to represent repertoire content. Allow explicit exclusions for illustrative lines or annotated mistakes; do not infer exclusions from prose comments.
+A position where you are to move and have no prepared move is a **theory leaf**, and preparation ends there too. Checkmate, stalemate and insufficient material are scored directly without database evidence.
 
-At every prepared opponent-turn position, including after the last move recorded in the PGN, expand its cached opponent response table. An unlisted move that immediately reaches a known position counts as a transposition into theory. Otherwise, it is a deviation, and evaluation stops there. Do not search through unknown positions for later re-entry or fetch their response tables.
+The score, position reach, prepared depth, chapter entries and opening sources all follow these same transitions.
 
-A position with no prepared continuation at our turn is a theory leaf. An opponent-turn position with no recorded PGN continuation still uses its cached replies and can transpose back into preparation. Score, position reach, prepared depth, chapter entries, and opening sources all follow these same transitions. The reach of an unanswered own-turn board equals its first-gap probability, summed over all transposed arrivals.
+## The score
 
-Detect reachable graph cycles after resolving our policy. For the initial implementation, fail with an actionable cycle report. Do not silently treat a repeated position as a draw. Exact repetition handling requires history beyond the canonical position key.
+All scores are from your side. A table with $W$ wins, $D$ draws and $L$ losses for you scores
 
-## Probability and score model
+$$
+S = \frac{W + \tfrac{1}{2}D}{W + D + L}.
+$$
 
-All scores are from the repertoire owner’s perspective:
+The value of a position $s$ is
 
-\[
-S=\frac{W+\frac12D}{W+D+L}
-\]
-
-At our turn, follow the selected move with probability one.
-
-At an opponent node, use the observed move frequency within the selected explorer population. Do not renormalize over repertoire moves alone: deviations retain their full probability.
-
-For position \(s\):
-
-\[
-V(s)=
+$$
+V(s) =
 \begin{cases}
-S(s), & \text{theory leaf}\\
-V(s_a), & \text{our selected move }a\\
-\sum_{a\in K(s)}p(a\mid s)V(s_a)
-+\sum_{a\in D(s)}p(a\mid s)S(s,a),
-& \text{opponent turn}
+S(s) & \text{at a theory leaf,} \\
+V(s_a) & \text{at your turn, playing your move } a, \\
+\displaystyle\sum_{a \in K(s)} p(a \mid s)\, V(s_a) + \sum_{a \in D(s)} p(a \mid s)\, S(s, a) & \text{at the opponent's turn,}
 \end{cases}
-\]
+$$
 
-Here, \(K(s)\) contains theory continuations and \(D(s)\) contains deviations.
+where $K(s)$ are the replies that continue the repertoire, $D(s)$ are the deviations, $p(a \mid s)$ is the share of games at $s$ in which $a$ was played, and $S(s, a)$ is the score of the games with that move in the table at $s$. Reply probabilities are never renormalized over prepared replies: deviations keep their full share.
 
-Use position-level results for theory leaves. Use the parent explorer response’s move-specific results for deviations. These are different statistical populations and must not be substituted interchangeably.
+A theory leaf uses its own position's results, and a deviation uses its move's row in the parent position's table. These are different groups of games and are never substituted for each other.
 
-Recognize checkmate, stalemate, and insufficient-material outcomes directly instead of requiring database evidence.
+Values are computed backward through the graph and probabilities forward. Probability arriving at a position by several routes is added up before it is passed on, and a shared position's value is computed once. Each point where preparation ends records its probability (the product of the opponent's reply probabilities along the way) and its score; together these reproduce the root value exactly. These probabilities are modeled frequencies under your repertoire, not observed frequencies of complete move sequences.
 
-Compute values backward through the graph and probability mass forward. Sum incoming mass at transpositions before propagating it. Cache a shared position’s value without discarding alternative routes into it.
+## Explorer evidence
 
-For each stopping event, record:
+Tables come from the authenticated [Lichess Opening Explorer](https://lichess.org/api#tag/Opening-Explorer) endpoint, `https://explorer.lichess.org/lichess`, with enough move rows to cover every legal move, no example games, and the same filters for the whole run.
 
-\[
-\text{contribution}=\text{absolute probability}\times\text{score}
-\]
+- Requests are sequential. Rate limits are waited out indefinitely; server errors and dropped connections are retried for up to 30 minutes per request.
+- Every response is cached on disk, keyed by endpoint, position and filters, with its retrieval time. Runs can be stopped and resumed.
+- Each score saves a manifest of its configuration, filters, input hashes and the cache entries it used.
+- The token is never logged or written to any output.
 
-Absolute path probability is the product of opponent move probabilities, with our moves contributing a factor of one. Label it as modeled repertoire probability, not observed historical sequence frequency.
+Each table is checked: the win, draw and loss totals of the position must match the sum of its move rows. When every move is listed and some games are left over, those games form a separate **no recorded continuation** outcome, which is not treated as an opponent deviation. A table that cannot be reconciled is rejected.
 
-## Explorer client and data integrity
+A failed request is never treated as a position with no games, and neither becomes a zero score or a zero probability.
 
-Use authenticated requests to:
+## Uncertainty
 
-`https://explorer.lichess.org/lichess`
+A rare database position may be common in your repertoire, because your moves are forced. Probability is therefore kept regardless of sample size, and uncertainty is modeled instead.
 
-Request enough move rows to cover all legal moves. Disable example-game payloads. Keep filters identical throughout a run.
+Each table gets a Dirichlet posterior. For an end score,
 
-Implement:
+$$
+(\theta_W, \theta_D, \theta_L) \sim \operatorname{Dirichlet}(W + \alpha_W,\; D + \alpha_D,\; L + \alpha_L), \qquad S = \theta_W + \tfrac{1}{2}\theta_D,
+$$
 
-- Sequential requests and timeouts. Rate limits are waited out indefinitely; server errors and dropped connections are retried for up to 30 minutes per request.
-- Persistent caching keyed by canonical position, endpoint, and all filters.
-- Response validation and resumable runs.
-- A run manifest containing configuration, retrieval timestamps, and data provenance.
-- No token logging or inclusion in reports.
+with a default prior of $(0.5, 0.5, 0.5)$, set with `--prior`. Scores never fall back to the parent position's score. At opponent positions the posterior is over the joint table of moves and results, so reply probabilities and deviation scores share their evidence. The prior's total strength is spread across all legal moves, so positions with more legal moves are not smoothed more heavily. Legal moves that were never played keep their prior probability as an explicit unresolved share, rather than being treated as impossible.
 
-Compare parent win/draw/loss totals with the sum of returned move rows.
+Uncertainty is propagated analytically, not by simulation. A score is a sum over paths of products of probabilities from distinct positions, so:
 
-If complete move coverage leaves valid nonnegative residual counts, retain them as a distinct “no recorded continuation” stopping bucket. Do not label this bucket an opponent deviation. Reject unexplained inconsistencies.
+1. **Its posterior mean is exact:** evaluate it once with each table at its posterior mean.
+2. **Its variance is first-order:** each table's posterior variance, weighted by the square of that table's influence on the score. Interactions between tables are left out.
+3. **Chapter scores** divide by uncertain first-entry weights, so a table's influence includes its effect on those weights.
+4. **Intervals** fit a Beta distribution to the mean and variance.
 
-Distinguish API failures from successful zero-data responses. Neither becomes a zero score or zero probability.
+The same evidence is one quantity wherever it is used, including at transpositions. The target is uncertainty in the expected score, not in the result of a single game.
 
-## Sparse data and uncertainty
+The Explorer does not show how far the games behind different positions overlap. Intervals are therefore approximate model-based credible intervals. They do not cover differences between the database population and you, dependence between games by the same players, or bias from how the repertoire was chosen.
 
-Preserve repertoire probability regardless of sample size. A rare database position may be common under our forced move choices.
+## Missing evidence and sensitivity
 
-Represent a stopping score using a Dirichlet posterior over wins, draws, and losses:
+An end position with no games is unresolved; any estimate based only on the prior is labeled as such. An opponent position with no usable reply table makes everything after it unresolved, rather than falling back to the position's overall score or to uniform play.
 
-\[
-(\theta_W,\theta_D,\theta_L)
-\sim
-\operatorname{Dirichlet}
-(W+\alpha_W,D+\alpha_D,L+\alpha_L)
-\]
+Unresolved probability is kept. With known contribution $K$ and unresolved probability $U$, the score lies in
 
-\[
-S=\theta_W+\frac12\theta_D
-\]
+$$
+E \in [K,\, K + U].
+$$
 
-Use configurable priors. A weak default of \((0.5,0.5,0.5)\) is acceptable, but document it and expose prior sensitivity. Do not automatically back off to the parent’s score.
+These bounds hold the resolved inputs fixed; they are not confidence intervals.
 
-Propagate uncertainty analytically rather than by simulation. A score is a sum over paths of products of probabilities from distinct positions, so:
+A second range assigns every sparse end position (fewer than 30 games by default) any score from 0 to 1, and a third rescores the repertoire with priors of 0.1 and 2. Three things are kept apart throughout:
 
-1. Its posterior mean is exact: evaluate it once with each table at its posterior mean.
-2. Its variance is approximated to first order: each table's posterior variance, weighted by the squared influence of that table on the score. Interactions between tables are omitted.
-3. Chapter scores divide by uncertain first-entry weights; their influence includes the effect of each upstream table on those weights.
-4. Intervals match a Beta distribution to the mean and variance.
+- Posterior uncertainty from sampling variation.
+- Sensitivity to the prior and to sparse evidence.
+- Probability that is entirely unresolved.
 
-At opponent nodes, use a joint move-by-result table and derive move probabilities and deviation scores from it. This preserves their shared local evidence. Give the prior a controlled total strength so positions with more legal moves do not accidentally receive much stronger smoothing.
+## Chapters
 
-Represent legal but unobserved moves explicitly or in an auditable unresolved bucket. Never silently assume they are impossible.
+A chapter's score is the expected score among games that first enter it, playing the chapter's own first moves where it records them and the overall repertoire elsewhere.
 
-Treat the same evidence as one quantity wherever it is referenced, including transpositions. The target is uncertainty in expected score, not in individual game outcomes.
+A chapter's PGN start is usually not where it begins in practice, because most chapters repeat the opening moves. A chapter is entered at its **entries**: by default the first positions on its lines, following its own first moves, that no other chapter continues from. A chapter that ends a line at a position does not share it. If other chapters continue from every position of a chapter, its first own-turn main-line position, or its start, is used. Entries can be set explicitly in the configuration; give competing systems the same entry to compare them directly.
 
-Explorer aggregates do not expose all overlap between historical games at different positions. Label intervals as approximate, model-based credible intervals. They do not cover all population mismatch, player dependence, or repertoire-selection bias.
+Entry is the first arrival at any entry, by any route, under the chapter's moves. Later shared positions do not count, and a later return does not count as a second entry. The score, entry weights, baseline, depth, transitions and vulnerabilities all use the same entries and moves. Entry probability is reported separately from the conditional score. Every chapter is kept, including chapters whose moves lost to an alternative; their numbers are labeled as alternatives, with their reach under the moves actually played shown separately. Compatible continuations recorded in other chapters stay merged.
 
-## Missing evidence and conservative bounds
-
-Treat zero-data terminal scores as unresolved by default. Any prior-only estimate must be explicitly labeled.
-
-If an opponent node has no usable move distribution, its downstream repertoire value is unresolved. Do not replace it with the node’s historical score or assume uniform opponent play.
-
-Preserve unresolved probability mass. For known contribution \(K\) and unresolved mass \(U\), report:
-
-\[
-E\in[K,K+U]
-\]
-
-These are conditional bounds holding the resolved inputs fixed, not confidence intervals.
-
-Also report a sensitivity range obtained by assigning all flagged sparse stopping events scores between zero and one. Their combined probability determines the width of this range.
-
-Keep three concepts distinct:
-
-- Posterior uncertainty from modeled sampling variation.
-- Sensitivity to priors and sparse evidence.
-- Completely unresolved probability mass.
-
-## Chapter semantics
-
-A chapter’s score means:
-
-> Expected repertoire score conditional on first entering this chapter, preferring that chapter's first own moves and following the overall policy elsewhere in the merged repertoire.
-
-Do not assume the chapter’s PGN root is its meaningful opening entry. Many chapters repeat moves from the initial position.
-
-A chapter is reached only at its entry positions. By default these are the first positions on the chapter's lines, following its first own moves, that no other chapter continues from; a chapter ending its line at a position does not share it. Support explicit entry positions or paths as overrides. If other chapters continue from every position of a chapter, fall back to its first own-turn mainline position or PGN root. Find first arrival at the entries across all routes under the chapter comparison policy; later shared positions do not count as reaching the chapter. Use that same policy for the score, entry weights, baseline, prepared depth, chapter transitions and vulnerabilities. Retain every chapter, including alternatives excluded by overall chapter order. Label alternative comparisons and report entry reach under the overall policy separately. For comparisons of whole alternative systems, configure the same entry for both. Compatible continuations split across chapters remain merged.
-
-For multiple entry routes, use first-entry probabilities and their conditional weights. Do not count a later return to the same chapter as another entry.
-
-Report chapter entry probability separately from its conditional score.
-
-Chapters may overlap, so their contributions need not sum to the overall score. Compute the overall score independently from the repertoire root. If additive chapter attribution is requested, require an exclusive attribution rule and retain an “outside chapters” category.
-
-Custom-FEN roots without a connecting path can receive conditional scores, but not absolute reach probabilities without supplied root weights.
+Chapters can overlap, so their contributions need not sum to the overall score, which is computed independently from the starting position. A chapter that starts from a custom position with no route to it gets a conditional score, but not an absolute reach, unless root weights are configured.
 
 ## Outputs
 
-Produce machine-readable JSON and a concise human-readable report containing:
+Each score is saved as JSON containing:
 
-- Raw empirical estimate when fully defined.
-- Posterior mean and approximate 95% credible interval.
-- Theory-leaf, deviation, other-stop, and unresolved probability masses.
-- Overall and chapter-specific sparse-data sensitivity.
-- Largest score contributions and largest uncertainty contributors.
-- Sample counts, prior influence, and evidence provenance.
-- Policy conflicts, chapter-entry ambiguities, and unsupported cycles.
+- The raw empirical score, when fully defined, and the posterior mean with an approximate 95% interval.
+- The probability of reaching a theory leaf, a deviation, another stop or an unresolved outcome.
+- Sparse-evidence sensitivity, overall and per chapter.
+- Sample counts, prior sensitivity and evidence provenance.
+- Own-move conflicts, chapter entries and how they were chosen.
+- Every end event, with its position, a representative move path, its type, chapters, probability, score, uncertainty and weighted contribution.
 
-For each terminal event, include its position, representative move path, event type, chapter references, probability, score estimate, uncertainty, and weighted contribution.
+A deviation is never called good or bad without a stated baseline. Its contribution to the score is never negative; its effect relative to a baseline can go either way.
 
-Do not call a deviation beneficial or harmful without defining a comparison baseline. Its absolute contribution is nonnegative; its effect relative to a baseline may have either sign.
+## Validation
 
-## Validation and acceptance
+Tests run on synthetic Explorer tables and cover:
 
-Use synthetic explorer fixtures for deterministic tests. Cover:
-
-- Forced own moves despite low database popularity.
-- Opponent deviations that raise or lower expected score.
+- Forced own moves that are rare in the database.
+- Deviations that raise or lower the expected score.
 - Transpositions within and across chapters.
-- Duplicate chapters and shared leaves.
+- Duplicate chapters and shared endings.
 - Conflicting own moves.
-- Sparse, zero-data, incomplete, and inconsistent responses.
-- Chapter overlap and multiple entry routes.
-- Cycle detection and color reversal.
+- Sparse, empty, incomplete and inconsistent tables.
+- Overlapping chapters and multiple entry routes.
+- Cycles, and scoring from Black's side as well as White's.
 
-Required invariants:
+These invariants are checked:
 
-- Every evaluated node conserves probability.
-- Terminal and unresolved probability masses sum to one.
-- Weighted stopping contributions reproduce the root value.
+- Every evaluated position conserves probability.
+- The probabilities of all end and unresolved outcomes sum to one.
+- The weighted end contributions reproduce the root value.
 - Duplicating a chapter does not change the overall result.
-- Equivalent transposing PGNs produce equivalent results.
-- Exact posterior means and first-order variances agree with a brute-force Dirichlet simulation.
+- PGNs that differ only by transposition give the same results.
+- The exact posterior means and first-order variances agree with a brute-force Dirichlet simulation.
 
-Keep parsing, graph construction, explorer access, statistical estimation, evaluation, and reporting separate. The evaluator must run entirely against cached or synthetic data without network access.
+Parsing, graph construction, Explorer access, estimation, evaluation and reporting are kept separate, and the evaluator runs entirely on cached or synthetic data.
