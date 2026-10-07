@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import numpy as np
 
 from .board_cache import children
-from .context import DEFAULT_CACHE, AnalysisContext, stage_main
+from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
 from .evaluate import COMPLETED
 from .explorer import counts, validate
 from .graph import resolve, topology
@@ -220,9 +220,7 @@ def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None)
     for chapter in saved['chapters']:
         profiles[json.dumps(chapter.get('policy_overrides', {}), sort_keys=True)].append(chapter['id'])
     for identity, scopes in profiles.items():
-        evaluator = Evaluator(
-            graph, color, evidence, facts, dict(manifest['configuration'].get('policy', {}), **json.loads(identity))
-        )
+        evaluator = Evaluator(graph, color, evidence, facts, dict(selected_policy(manifest), **json.loads(identity)))
         starts = {k: 1.0 for sid in scopes for k, p in preparations[sid]['starts'].items() if p > 0}
         evaluator.evaluate(starts)
         position_values = recursive_spread(evaluator)
@@ -360,7 +358,7 @@ def analyze(path, cache=DEFAULT_CACHE):
         transitions = (
             default_transitions
             if identity == '{}'
-            else resolve(graph, color, dict(manifest['configuration'].get('policy', {}), **json.loads(identity)))
+            else resolve(graph, color, dict(selected_policy(manifest), **json.loads(identity)))
         )
         order = topology(transitions, roots)
         model = prepare(graph, transitions, order, color, evidence)
@@ -368,9 +366,7 @@ def analyze(path, cache=DEFAULT_CACHE):
             Posterior(model, order, color, manifest['prior'], manifest['sparse_threshold']), database, owner
         )
         branches = {k: {b.move: j for j, b in enumerate(n.branches) if b.move} for k, n in model.items()}
-        evaluator = Evaluator(
-            graph, color, evidence, facts, dict(manifest['configuration'].get('policy', {}), **json.loads(identity))
-        )
+        evaluator = Evaluator(graph, color, evidence, facts, dict(selected_policy(manifest), **json.loads(identity)))
         for scope in group:
             if scope['id'] != 'overall':
                 chapter = chapters[scope['id']]

@@ -867,6 +867,7 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
         headings = re.findall(r'^### (.+)$', subsection, flags=re.M)
         expected = [
             f'{color.title()} chapters ({len(report["chapters"])})',
+            *([f'{color.title()} competing alternatives'] if report['alternatives'] else []),
             'Where preparation ends',
             'Most common positions',
             'Openings reached',

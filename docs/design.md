@@ -47,7 +47,7 @@ Exclude move counters for ordinary opening transpositions.
 
 Merge identical positions and deduplicate edges. A position ending one chapter is not an overall theory leaf if another chapter supplies a continuation.
 
-At our turn, select the first recorded move: main PGN variation before side variations, and earlier chapters before later chapters. Explicit configured moves or mixture weights summing to one override that default for the overall policy. Record resolved conflicts in diagnostics. Never assign probability one to multiple alternatives.
+At our turn, select the first recorded move: main PGN variation before side variations, and earlier chapters before later chapters. Where chapters record different first moves, those moves compete instead: each is scored with the best choices after it, deciding later positions first (backward induction), and the highest repertoire score is played, so the selected moves together maximize the score from every root. Comparisons use prior-completed scores, so unresolved evidence counts at its prior mean, and exact ties keep the earlier chapter. Side variations within one chapter do not compete. Explicit configured moves or mixture weights summing to one override both rules for the overall policy. Record resolved conflicts, every competing alternative's score and the winners in the saved score, and replay those winners in every later stage. Never assign probability one to multiple alternatives. Choosing the highest of several sampled scores is biased upward, so a small winning margin can be chance.
 
 All included PGN variations are assumed to represent repertoire content. Allow explicit exclusions for illustrative lines or annotated mistakes; do not infer exclusions from prose comments.
 

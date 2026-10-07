@@ -27,61 +27,74 @@ class Graph:
     roots: list[str]
 
 
-def parse(path, exclusions=()):
-    nodes, chapters, roots = {}, [], []
+def read_games(path):
+    """Every PGN game in a file, in order. The file is closed before any game is checked."""
+    games = []
     with Path(path).open(encoding="utf-8-sig") as stream:
         while (game := chess.pgn.read_game(stream)) is not None:
-            if game.errors:
-                raise ValueError(f"Malformed chapter: {game.headers}: {game.errors}")
-            if game.headers.get("Variant", "Standard") not in ("Standard", "Chess"):
-                raise ValueError("Only standard chess is supported")
-            board = game.board()
-            if not board.is_valid():
-                raise ValueError(f"Invalid root position: {board.fen()}")
-            cid = game.headers.get("ChapterURL", "").rstrip("/").split("/")[-1] or str(len(chapters) + 1)
-            if cid in exclusions:
-                continue
-            if any(c["id"] == cid for c in chapters):
-                cid += f"-copy-{len(chapters) + 1}"
-            root = key(board)
-            roots.append(root)
-            mainline = [root]
-            mb = board.copy()
-            for move in game.mainline_moves():
-                mb.push(move)
-                mainline.append(key(mb))
-            chapters.append(
-                {
-                    "id": cid,
-                    "name": game.headers.get("ChapterName", game.headers.get("Event", cid)),
-                    "url": game.headers.get("ChapterURL"),
-                    "root": root,
-                    "mainline": mainline,
-                }
-            )
-            stack = [(game, board, [])]
-            while stack:
-                pgn, b, moves = stack.pop()
-                k = key(b)
-                node = nodes.setdefault(k, Node(b.fen(en_passant="legal"), moves))
-                node.chapters.add(cid)
-                pending = []
-                for child in pgn.variations:
-                    if child.move not in b.legal_moves:
-                        raise ValueError(f"Illegal move in {cid}: {child.move}")
-                    uci = child.move.uci()
-                    if f"{cid}:{k}:{uci}" in exclusions:
-                        continue
-                    after = b.copy()
-                    san = b.san(child.move)
-                    after.push(child.move)
-                    node.edges[uci] = key(after)
-                    node.provenance.setdefault(uci, set()).add(cid)
-                    recorded = node.chapter_moves.setdefault(cid, [])
-                    if uci not in recorded:
-                        recorded.append(uci)
-                    pending.append((child, after, moves + [san]))
-                stack.extend(reversed(pending))
+            games.append(game)
+    return games
+
+
+def parse(path, exclusions=()):
+    return parse_games(read_games(path), exclusions)
+
+
+def parse_games(games, exclusions=()):
+    """The repertoire graph of PGN games, each one a chapter, in priority order."""
+    nodes, chapters, roots = {}, [], []
+    for game in games:
+        if game.errors:
+            raise ValueError(f"Malformed chapter: {game.headers}: {game.errors}")
+        if game.headers.get("Variant", "Standard") not in ("Standard", "Chess"):
+            raise ValueError("Only standard chess is supported")
+        board = game.board()
+        if not board.is_valid():
+            raise ValueError(f"Invalid root position: {board.fen()}")
+        cid = game.headers.get("ChapterURL", "").rstrip("/").split("/")[-1] or str(len(chapters) + 1)
+        if cid in exclusions:
+            continue
+        if any(c["id"] == cid for c in chapters):
+            cid += f"-copy-{len(chapters) + 1}"
+        root = key(board)
+        roots.append(root)
+        mainline = [root]
+        mb = board.copy()
+        for move in game.mainline_moves():
+            mb.push(move)
+            mainline.append(key(mb))
+        chapters.append(
+            {
+                "id": cid,
+                "name": game.headers.get("ChapterName", game.headers.get("Event", cid)),
+                "url": game.headers.get("ChapterURL"),
+                "root": root,
+                "mainline": mainline,
+            }
+        )
+        stack = [(game, board, [])]
+        while stack:
+            pgn, b, moves = stack.pop()
+            k = key(b)
+            node = nodes.setdefault(k, Node(b.fen(en_passant="legal"), moves))
+            node.chapters.add(cid)
+            pending = []
+            for child in pgn.variations:
+                if child.move not in b.legal_moves:
+                    raise ValueError(f"Illegal move in {cid}: {child.move}")
+                uci = child.move.uci()
+                if f"{cid}:{k}:{uci}" in exclusions:
+                    continue
+                after = b.copy()
+                san = b.san(child.move)
+                after.push(child.move)
+                node.edges[uci] = key(after)
+                node.provenance.setdefault(uci, set()).add(cid)
+                recorded = node.chapter_moves.setdefault(cid, [])
+                if uci not in recorded:
+                    recorded.append(uci)
+                pending.append((child, after, moves + [san]))
+            stack.extend(reversed(pending))
     if not chapters:
         raise ValueError("No included PGN chapters")
     return Graph(nodes, chapters, list(dict.fromkeys(roots)))
@@ -96,7 +109,10 @@ def conflicts(graph, color):
 
 
 def resolve(graph, color, policy):
-    """Explicit overrides, otherwise first PGN move in first chapter order."""
+    """Explicit overrides, otherwise first PGN move in first chapter order.
+
+    The scorer passes the winners of competing chapter alternatives as part of `policy`.
+    """
     transitions = {}
     for k, n in graph.nodes.items():
         if terminal_white(k) is not None:
@@ -124,6 +140,49 @@ def resolve(graph, color, policy):
                 if target in graph.nodes:
                     transitions[k][move] = (target, None)
     return transitions
+
+
+def chapter_alternatives(graph, color, policy):
+    """Own-turn boards where chapters record different first moves: each distinct move, in chapter order.
+
+    These compete on score (see evaluate.select_alternatives). Side variations within one chapter do not
+    compete, and an explicit policy override settles its board.
+    """
+    result = {}
+    for k, n in graph.nodes.items():
+        if turn(k) != color or k in policy or terminal_white(k) is not None:
+            continue
+        moves = list(dict.fromkeys(recorded[0] for recorded in n.chapter_moves.values() if recorded))
+        if len(moves) > 1:
+            result[k] = moves
+    return result
+
+
+def alternative_transitions(graph, color, policy):
+    """The selected policy, plus every chapter's first move at each own-turn board.
+
+    Every board any chapter alternative or chapter comparison policy can reach is reachable here, so evidence
+    can be planned before scoring decides between alternatives. Own-turn boards may have several moves.
+    """
+    transitions = resolve(graph, color, policy)
+    for k, n in graph.nodes.items():
+        if turn(k) == color and terminal_white(k) is None:
+            for recorded in n.chapter_moves.values():
+                if recorded and recorded[0] not in transitions[k]:
+                    transitions[k][recorded[0]] = (n.edges[recorded[0]], None)
+    return transitions
+
+
+def reachable(transitions, roots):
+    """Every board reachable from the roots, in discovery order; unlike topology, cycles are allowed."""
+    seen, pending = {}, list(roots)
+    while pending:
+        k = pending.pop()
+        if k in seen:
+            continue
+        seen[k] = None
+        pending.extend(target for target, _ in transitions[k].values())
+    return list(seen)
 
 
 def chapter_policy_overrides(graph, color, global_transitions, chapter_id):

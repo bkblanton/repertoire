@@ -18,3 +18,8 @@ def test_saved_score_matches_the_documented_schema(tmp_path, monkeypatch):
         assert set(chapter['score']) <= set(schema.ChapterScore.__annotations__)
     for event in report['events']:
         assert missing(event, schema.StoppingEvent) == []
+    competing, _ = run_fixture(tmp_path, monkeypatch, common_entry=True, policy=None)
+    for row in competing['alternatives']:
+        assert missing(row, schema.Alternative) == []
+        for option in row['options']:
+            assert missing(option, schema.AlternativeOption) == []

@@ -5,7 +5,8 @@ from collections.abc import Callable, Collection, Mapping
 import numpy as np
 
 from .board_cache import children
-from .model import Branch, Model, Sampled
+from .graph import Graph, chapter_alternatives, resolve, topology
+from .model import Branch, Evidence, Model, Sampled, node_empirical, prepare_node
 from .schema import Position, ScoreSummary
 from .status import Status
 
@@ -78,6 +79,49 @@ def backward(
         return v
 
     return fold(model, order, sampled, lambda b, s: stopping_vector(b, s, sparse_threshold, width), combine)
+
+
+def select_alternatives(
+    graph: Graph,
+    color: bool,
+    policy: dict,
+    evidence: Evidence,
+    roots: Collection[Position],
+    sparse_threshold: int,
+    fixed: Mapping[Position, str] | None = None,
+) -> dict[Position, dict]:
+    """Where chapters compete, play the alternative with the highest repertoire score.
+
+    Boards are decided children first (backward induction), so each alternative is scored with the best choices
+    below it, and together the choices maximize the score from every root at once. Unresolved evidence counts as
+    the prior-completed score when comparing. Exact ties keep the earlier chapter's move. `fixed` settles boards
+    in advance, as a comparison does at its decision points.
+
+    Returns {position: {'selected': move, 'scores': {move: component vector}}} for every reachable contested board.
+    """
+    fixed = fixed or {}
+    options = {k: moves for k, moves in chapter_alternatives(graph, color, policy).items() if k not in fixed}
+    if not options:
+        return {}
+    transitions = resolve(graph, color, dict(policy, **fixed))
+    for k, moves in options.items():
+        transitions[k] = {m: (graph.nodes[k].edges[m], None) for m in moves}
+    values, result = {}, {}
+    for k in topology(transitions, list(roots)):
+        selected = transitions[k]
+        if k in options:
+            scores = {m: values[target] for m, (target, _) in selected.items()}
+            # max() keeps the first of equal scores, which is the earlier chapter's move.
+            best = max(options[k], key=lambda m: scores[m][COMPLETED])
+            result[k] = dict(selected=best, scores=scores)
+            selected = {best: (selected[best][0], 1.0)}
+        node = prepare_node(k, selected, color, evidence)
+        value = np.zeros(8)
+        for b, (p, s) in zip(node.branches, node_empirical(node, color)):
+            if p:
+                value += p * (values[b.target] if b.target is not None else stopping_vector(b, s, sparse_threshold))
+        values[k] = value
+    return result
 
 
 def can_enter(model: Model, order: list[Position], entries: Collection[Position]) -> dict[Position, bool]:

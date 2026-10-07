@@ -14,7 +14,8 @@ from .graph import parse
 SOURCES = 'studies.json'
 DIRECTORY = 'studies'
 ENDPOINT = 'https://lichess.org/api/study/{}.pgn'
-STUDY = re.compile(r'^(?:https?://)?(?:www\.)?lichess\.org/study/([A-Za-z0-9]{8})(?:/[A-Za-z0-9]{8})?/?(?:[?#].*)?$')
+CHAPTER_ENDPOINT = 'https://lichess.org/api/study/{}/{}.pgn'
+STUDY = re.compile(r'^(?:https?://)?(?:www\.)?lichess\.org/study/([A-Za-z0-9]{8})(/[A-Za-z0-9]{8})?/?(?:[?#].*)?$')
 
 
 def study_id(value):
@@ -45,9 +46,20 @@ def comparable(text):
     return [line for line in text.replace('\r\n', '\n').strip().split('\n') if not line.startswith('[Date ')]
 
 
-def download(client, study, patience=OUTAGE_PATIENCE):
-    url = ENDPOINT.format(study_id(study))
+def chapter_url(value):
+    """The export URL for a study or chapter link: a chapter link exports only that chapter."""
+    match = STUDY.match(value.strip())
+    if match and match.group(2):
+        return CHAPTER_ENDPOINT.format(match.group(1), match.group(2)[1:])
+    return ENDPOINT.format(study_id(value))
+
+
+def download(client, study, patience=OUTAGE_PATIENCE, url=None, orientation=False):
+    """A study's PGN text; `url` exports something else, such as one chapter, and `orientation` adds tags."""
+    url = url or ENDPOINT.format(study_id(study))
     params = dict(clocks='false', comments='true', variations='true')
+    if orientation:
+        params['orientation'] = 'true'
     backoff = Backoff('Study export', patience)
     while True:
         try:

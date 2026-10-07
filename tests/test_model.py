@@ -15,10 +15,11 @@ from repertoire_score.evaluate import (
     UNKNOWN,
     chapter_score,
     forward,
+    select_alternatives,
     summarize,
 )
 from repertoire_score.explorer import Explorer, validate
-from repertoire_score.graph import conflicts, infer_entries, key, parse, resolve, topology
+from repertoire_score.graph import chapter_alternatives, conflicts, infer_entries, key, parse, resolve, topology
 
 
 def test_forced_own_move_deviations_and_conservation(tmp_path):
@@ -343,3 +344,27 @@ def test_prior_strength_is_independent_of_legal_move_count(tmp_path):
     k = position('e4')
     j = next(j for j, b in enumerate(m[k].branches) if b.move == 'e7e5')
     assert s.sample[k][j][0] == pytest.approx(1.075 / 2.5)
+
+
+def test_competing_chapters_are_decided_from_the_leaves_up(tmp_path):
+    g = graph(tmp_path, '1. e4 e5 2. Nf3 *\n\n1. e4 e5 2. Bc4 *\n\n1. d4 *')
+    root, after_e5 = position(''), position('e4 e5')
+    evidence = {
+        position('e4'): data(50, 0, 50, [('e7e5', 50, 0, 50)]),
+        position('e4 e5 Nf3'): data(55, 0, 45),
+        position('e4 e5 Bc4'): data(70, 0, 30),
+        position('d4'): data(68, 0, 32),
+    }
+    # 2.Nf3 comes first but scores 55%; 1.d4 scores 68%; the best line is 1.e4 e5 2.Bc4 at 70%.
+    selection = select_alternatives(g, True, {}, evidence, g.roots, 30)
+    assert {k: choice['selected'] for k, choice in selection.items()} == {root: 'e2e4', after_e5: 'f1c4'}
+    assert selection[root]['scores']['e2e4'][KNOWN] == pytest.approx(0.7)
+    assert selection[after_e5]['scores']['g1f3'][KNOWN] == pytest.approx(0.55)
+    # A settled board is not reconsidered, and the choice above it adapts.
+    fixed = select_alternatives(g, True, {}, evidence, g.roots, 30, fixed={after_e5: 'g1f3'})
+    assert {k: choice['selected'] for k, choice in fixed.items()} == {root: 'd2d4'}
+    # An explicit policy override is never an alternative.
+    assert select_alternatives(g, True, {root: 'e2e4', after_e5: 'g1f3'}, evidence, g.roots, 30) == {}
+    # Side variations within one chapter do not compete.
+    single = graph(tmp_path, '1. e4 (1. d4) e5 *')
+    assert chapter_alternatives(single, True, {}) == {}

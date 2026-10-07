@@ -57,6 +57,9 @@ uv run repertoire build --offline
 # Analyze PGN files you already have instead of the configured studies.
 uv run repertoire build path/to/white.pgn path/to/black.pgn --token-file path/to/lichess_token.txt
 
+# Compare a candidate study with your repertoire, alternative by alternative.
+uv run repertoire compare https://lichess.org/study/qrst7890 --token-file path/to/lichess_token.txt
+
 # List chapter IDs, move conflicts and entry candidates for a PGN.
 uv run repertoire score inspect path/to/white.pgn --color white --output reports/data/inspection
 ```

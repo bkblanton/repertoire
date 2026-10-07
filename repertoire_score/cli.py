@@ -11,6 +11,7 @@ COMMANDS = [
     ('fetch', 'fetch', 'Fetch the Explorer tables both repertoires need; slow, resumable, and estimated'),
     ('score', 'score', 'Inspect or score one repertoire PGN'),
     ('report', 'render', 'Render the Markdown reports from saved results, offline'),
+    ('compare', 'compare', 'Compare a candidate study or PGN with your repertoire, alternative by alternative'),
     ('vulnerabilities', 'vulnerabilities', 'Rank strengths and vulnerabilities from saved scores'),
     ('preparation', 'preparation', 'Stopping outcomes, prepared-depth distributions and entry routes'),
     ('character', 'character', 'Position reach, gaps, reuse, reply variety and position profiles'),

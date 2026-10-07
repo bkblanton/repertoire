@@ -14,18 +14,30 @@ import numpy as np
 from . import SCHEMA_VERSION
 from .attribution import enrich
 from .baseline import chapter_entry_baseline
-from .board_cache import STARTING_POSITION, owner_outcome, turn
+from .board_cache import STARTING_POSITION, owner_outcome, san, turn
 from .context import DEFAULT_CACHE
 from .depth import chapter_prepared_depth, prepared_depth_values, summarize_depth
-from .evaluate import KNOWN, backward, chapter_score, forward, summarize
+from .evaluate import (
+    COMPLETED,
+    KNOWN,
+    UNKNOWN,
+    backward,
+    chapter_score,
+    forward,
+    reaches,
+    select_alternatives,
+    summarize,
+)
 from .explorer import DEFAULT_FILTERS, Explorer, add_token_option, apply_token_file, collect
 from .graph import (
+    alternative_transitions,
     chapter_policy_overrides,
     chapter_region,
     conflicts,
     infer_entries,
     key,
     parse,
+    reachable,
     region_entries,
     resolve,
     topology,
@@ -70,6 +82,14 @@ class Plan:
     entries: dict
     entry_status: dict
     regions: dict
+    # Every chapter alternative selectable: what evidence planning must cover before alternatives are scored.
+    candidates: dict
+    reachable: list
+
+    @property
+    def roots(self):
+        """The repertoire roots and every chapter entry: where evaluation starts."""
+        return list(dict.fromkeys([*self.root_weights, *(p for positions in self.entries.values() for p in positions)]))
 
     @property
     def overall(self):
@@ -182,14 +202,26 @@ def chapter_entries(graph, color, config, profiles, root_weights, inspection):
     return entries, entry_status, regions
 
 
-def plan_repertoire(graph, color, config, inspection):
-    profiles = policy_profiles(graph, color, config.get('policy', {}))
+def plan_repertoire(graph, color, config, inspection, selected=None):
+    """What to score. `selected` holds the winners of competing chapter alternatives, once they are known."""
+    policy = config.get('policy', {})
+    profiles = policy_profiles(graph, color, dict(policy, **(selected or {})))
     root_weights, absolute_reach = root_weighting(graph, config)
     entries, entry_status, regions = chapter_entries(graph, color, config, profiles, root_weights, inspection)
     analysis_roots = list(root_weights) + [p for positions in entries.values() for p in positions]
     for profile in profiles:
         profile['order'] = topology(profile['transitions'], analysis_roots)
-    return Plan(profiles, root_weights, absolute_reach, entries, entry_status, regions)
+    candidates = alternative_transitions(graph, color, policy)
+    return Plan(
+        profiles,
+        root_weights,
+        absolute_reach,
+        entries,
+        entry_status,
+        regions,
+        candidates,
+        reachable(candidates, [*analysis_roots, *graph.roots]),
+    )
 
 
 def required_positions(plan, color):
@@ -199,6 +231,10 @@ def required_positions(plan, color):
         for profile in plan.profiles
         for k in profile['order']
         if owner_outcome(k, color) is None and (not profile['transitions'][k] or turn(k) != color)
+    ]
+    # Boards only a competing chapter alternative reaches are needed to score that alternative.
+    required += [
+        k for k in plan.reachable if owner_outcome(k, color) is None and (not plan.candidates[k] or turn(k) != color)
     ]
     baseline_positions = [
         p for positions in plan.entries.values() for p in positions if owner_outcome(p, color) is None
@@ -213,6 +249,9 @@ def parent_positions(plan, color):
         for profile in plan.profiles
         for k in profile['order']
         if owner_outcome(k, color) is None and profile['transitions'][k] and turn(k) == color
+    ]
+    parents += [
+        k for k in plan.reachable if owner_outcome(k, color) is None and plan.candidates[k] and turn(k) == color
     ]
     return list(dict.fromkeys(parents))
 
@@ -354,6 +393,36 @@ def score_repertoire(graph, color, plan, evidence, provenance, prior, sparse_thr
     )
 
 
+def alternative_rows(graph, color, plan, selection):
+    """Each board where chapters compete: every alternative's score there, its reach and the winner."""
+    overall = plan.overall
+    reach = reaches(overall['model'], overall['order'], overall['raw'], plan.root_weights)
+    rows = []
+    for k, choice in selection.items():
+        node = graph.nodes[k]
+        rows.append(
+            {
+                'position': k,
+                'path': node.path,
+                'reach': reach.get(k, 0.0) if plan.absolute_reach else None,
+                'selected': choice['selected'],
+                'options': [
+                    {
+                        'move': move,
+                        'san': san(k, move),
+                        'chapters': [cid for cid, recorded in node.chapter_moves.items() if recorded[:1] == [move]],
+                        'score': float(value[KNOWN]) if value[UNKNOWN] == 0 else None,
+                        'resolved_contribution': float(value[KNOWN]),
+                        'unresolved_mass': float(value[UNKNOWN]),
+                        'prior_completed_score': float(value[COMPLETED]),
+                    }
+                    for move, value in choice['scores'].items()
+                ],
+            }
+        )
+    return sorted(rows, key=lambda r: (-(r['reach'] or 0.0), len(r['path']), r['path']))
+
+
 def analyze(args):
     config = load_config(args.config)
     color = args.color == "white"
@@ -369,6 +438,18 @@ def analyze(args):
         )
         return
     plan = plan_repertoire(graph, color, config, inspection)
+    explorer = Explorer(args.cache, dict(DEFAULT_FILTERS, **config.get("filters", {})), args.offline, args.refresh)
+    try:
+        evidence = collect(explorer, required_positions(plan, color), f"{args.color} scores")
+    finally:
+        explorer.close()
+    # Competing chapter alternatives are scored first; the overall policy plays each winner.
+    selection = select_alternatives(
+        graph, color, config.get('policy', {}), evidence, [*plan.roots, *graph.roots], args.sparse_threshold
+    )
+    selected = {k: choice['selected'] for k, choice in selection.items()}
+    if selected:
+        plan = plan_repertoire(graph, color, config, inspection, selected)
     for conflict in inspection['conflicts']:
         conflict['selected_moves'] = {
             move: weight for move, (_, weight) in plan.overall['transitions'][conflict['position']].items()
@@ -376,13 +457,10 @@ def analyze(args):
         conflict['resolution'] = (
             'explicit configuration'
             if conflict['position'] in config.get('policy', {})
+            else 'highest repertoire score among chapter alternatives'
+            if conflict['position'] in selection
             else 'first PGN move in first chapter order'
         )
-    explorer = Explorer(args.cache, dict(DEFAULT_FILTERS, **config.get("filters", {})), args.offline, args.refresh)
-    try:
-        evidence = collect(explorer, required_positions(plan, color), f"{args.color} scores")
-    finally:
-        explorer.close()
     scores = score_repertoire(graph, color, plan, evidence, explorer.provenance, args.prior, args.sparse_threshold)
     interval = scores['overall']['posterior']['credible_interval_95']
     report = {
@@ -390,6 +468,7 @@ def analyze(args):
         "overall": scores['overall'],
         "chapters": scores['chapters'],
         "chapter_transitions": scores['chapter_transitions'],
+        "alternatives": alternative_rows(graph, color, plan, selection),
         "starting_position_reference": starting_position_reference(
             evidence[STARTING_POSITION], color, explorer.provenance[STARTING_POSITION]
         ),
@@ -410,7 +489,9 @@ def analyze(args):
             "evaluated_positions": len({k for p in plan.profiles for k in p['order']}),
             "overall_policy_evaluated_positions": len(plan.overall['order']),
             "root_weights": plan.root_weights,
-            "conflict_resolution": "explicit policy overrides, otherwise first PGN move in first chapter order",
+            "conflict_resolution": "explicit policy overrides; where chapters record different first moves, the "
+            "alternative with the highest repertoire score; otherwise first PGN move in first chapter order",
+            "selected_alternatives": selected,
             "schema_version": SCHEMA_VERSION,
             "traversal_rule": "At every prepared opponent-turn board, expand cached reply rows, "
             "including after the last recorded PGN move. Immediate transpositions "

@@ -1,8 +1,10 @@
 """Report sections shared by the full report, the summary and the chapter pages."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..preparation import line_text
 from ..stats import cell
 from ..status import Status
 from .bundle import scope_by_id
@@ -25,10 +27,12 @@ from .format import (
     line,
     number,
     opponent_rating,
+    per_thousand,
     percentage,
     population_text,
     position_reach_label,
     rating_difference,
+    score_points,
     spread_display,
 )
 from .links import analysis_url, bundle_refs, exit_reply, linked_line
@@ -443,6 +447,104 @@ def strengths_section(moves, positions, refs, top, level='###', sparse_threshold
             '',
         ]
     return text
+
+
+def alternatives_section(report, refs, level='###', anchor=None):
+    """Boards where chapters compete: every alternative's score there, and which one the repertoire plays."""
+    rows = []
+    for alternative in report.get('alternatives', []):
+        played = next(o for o in alternative['options'] if o['move'] == alternative['selected'])
+        route = line_text(alternative['path'])
+        for i, option in enumerate(sorted(alternative['options'], key=lambda o: o['move'] != alternative['selected'])):
+            difference = (
+                None if option['score'] is None or played['score'] is None else option['score'] - played['score']
+            )
+            weighted = None if difference is None or alternative['reach'] is None else alternative['reach'] * difference
+            rows.append(
+                [
+                    refs.position_cell({'position': alternative['position'], 'line': route}) if i == 0 else '',
+                    percentage(alternative['reach']) if i == 0 else '',
+                    escape(option['san']) + (' **(played)**' if option is played else ''),
+                    ', '.join(refs.label(cid) for cid in option['chapters']),
+                    percentage(option['score']),
+                    ''
+                    if option is played
+                    else score_points(None if difference is None else 100 * difference, signed=True),
+                    '' if option is played else per_thousand(None if weighted is None else 100 * weighted, signed=True),
+                ]
+            )
+    if not rows:
+        return []
+    color = report['color']
+    return [
+        *section(f'{level} {color.title()} competing alternatives', anchor or f'{color}-alternatives'),
+        'Where chapters record different first moves, each alternative is scored with the best choices after it '
+        'and the highest-scoring one is played. The other rows show what each alternative would change: at the '
+        f'position, and in points per 1,000 {color.title()} games. {about("competing")}.',
+        '',
+        *table(
+            [
+                'Position',
+                'Position reach',
+                'Your move',
+                'Chapters',
+                'Repertoire score',
+                'Difference vs played',
+                'Points per 1,000 games',
+            ],
+            rows,
+        ),
+    ]
+
+
+def load_comparisons(bundles):
+    """Saved comparison results beside the scores, each marked current when made from the same score file."""
+    if not bundles:
+        return []
+    digests = {b['report']['color']: b['digest'] for b in bundles}
+    result = []
+    for path in sorted((bundles[0]['path'].parent / 'comparisons').glob('*.json')):
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+        except ValueError:
+            continue
+        if data.get('kind') != 'comparison' or data.get('color') not in digests:
+            continue
+        data['current'] = data['manifest']['report_sha256'] == digests[data['color']]
+        result.append(data)
+    return result
+
+
+def comparisons_section(bundles, level='##'):
+    """One row per saved comparison: its verdict and what the improving choice would change."""
+    from .comparison import headline, verdict
+
+    rows = []
+    for data in load_comparisons(bundles):
+        scenarios = data['scenarios']
+        status = (
+            verdict(data)
+            if data['current']
+            else '**Out of date:** your repertoire changed; rerun `uv run repertoire compare` to refresh it.'
+        )
+        rows.append(
+            [
+                f"[{escape(data['title'])}](@comparisons/{data['name']})",
+                data['color'].title(),
+                status,
+                headline(scenarios['improving']['score'], scenarios['current']['score']),
+                headline(scenarios['all']['score'], scenarios['current']['score']),
+            ]
+        )
+    if not rows:
+        return []
+    return [
+        *section(f'{level} Comparisons', 'comparisons'),
+        'Candidate studies compared with your repertoire, alternative by alternative. Changes are to the '
+        'whole color: adopting only the improving alternatives, or every alternative.',
+        '',
+        *table(['Comparison', 'Color', 'Verdict', 'Improving only', 'All alternatives'], rows),
+    ]
 
 
 def correlations_section(result, reason):

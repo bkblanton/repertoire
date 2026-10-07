@@ -74,7 +74,14 @@ SPLIT = (
 )
 
 
-def run_fixture(tmp_path, monkeypatch, common_entry=False, alternative_first=False, multiple_entries=False):
+# The Tarrasch chapters score better than the Advance, so they would win 3rd move on score. Fixtures force 3.e5
+# by default to keep them as unselected alternative chapters.
+FORCE_ADVANCE = {position('e4 e6 d4 d5'): 'e4e5'}
+
+
+def run_fixture(
+    tmp_path, monkeypatch, common_entry=False, alternative_first=False, multiple_entries=False, policy=FORCE_ADVANCE
+):
     def forbidden(*args, **kwargs):
         raise AssertionError('A fully cached comparison must not use the network')
 
@@ -102,6 +109,8 @@ def run_fixture(tmp_path, monkeypatch, common_entry=False, alternative_first=Fal
         configuration.setdefault('entries', {})['tarrasch'] = [
             {'path': ['e4', 'e6', 'd4', 'd5', 'Nd2', move]} for move in ('Nf6', 'c5')
         ]
+    if policy:
+        configuration['policy'] = policy
     config.write_text(json.dumps(configuration))
     args = SimpleNamespace(
         config=str(config),

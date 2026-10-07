@@ -29,6 +29,8 @@ Start with [summary.md](../reports/summary.md). After the headline scores, each 
 
 Collapsed sections follow: the most common positions as a nested tree, chapter comparisons, costly unprepared replies, strongest moves, and preparation and variability. Evidence and definitions appear at the end. Changed-source and missing-analysis notices stay visible above the scores. The summary uses one decimal place and compact game counts.
 
+Where your chapters record different first moves at the same position, the full report and summary list each competing alternative with its score; the repertoire plays the highest-scoring one (see [Move selection](usage.md#move-selection)). Saved comparisons of candidate studies are listed at the end of the summary, each with its own page in `reports/comparisons/` (see [Comparing alternative preparation](usage.md#comparing-alternative-preparation)).
+
 [report.md](../reports/report.md) is the index for detailed analysis: per-color chapter tables, exit points, positions, openings, vulnerabilities, strengths, gap priorities, depth distributions, correlations, and a glossary (`Definitions and evidence`) with one anchor per metric. Tables state their main caveat in a sentence and link to the glossary entry instead of repeating it. Each chapter has its own page in `reports/chapters/` (W1, W2, ... and B1, B2, ...) with its exit points, positions, vulnerabilities, strengths, gaps, depth, entry positions and routes, plus links to the previous and next chapter and to the Lichess study chapter. Per-opening entry evidence is in `reports/openings/white.md` and `reports/openings/black.md`.
 
 | Column | How to read it |

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from . import (
     character,
+    compare,
     fetch,
     openings,
     position_correlations,
@@ -28,6 +29,8 @@ from .layout import data_json, report_directory
 from .render import defer_report_outputs
 from .report.generate import generate, page_names
 
+# Comparisons never affect the repertoire's own analyses; only their own step depends on this code.
+COMPARISON_CODE = ('compare.py', 'alternatives.py')
 FAMILIES = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights')
 DEPENDENCIES = {
     'ratings': ('preparation', 'character', 'vulnerabilities'),
@@ -86,7 +89,7 @@ def code_inputs(presentation=False):
     package = Path(__file__).parent
     rendering = [package / 'render.py', *sorted((package / 'report').glob('*.py'))]
     # Study export, table fetching and the command dispatcher never affect analyses or rendering.
-    excluded = ('studies.py', 'fetch.py', 'cli.py', 'render.py')
+    excluded = ('studies.py', 'fetch.py', 'cli.py', 'render.py', *COMPARISON_CODE)
     files = [p for p in sorted(package.glob('*.py')) if p.name not in excluded]
     # Bundled opening names label the opening analyses.
     files += sorted((package / 'data').rglob('*.tsv'))
@@ -158,15 +161,23 @@ def build(
     cache=DEFAULT_CACHE,
     offline=False,
     force=False,
+    comparisons=None,
 ):
     started = time.perf_counter()
+    pgns, configs = dict(white=white_pgn, black=black_pgn), dict(white=white_config, black=black_config)
+    # Saved comparisons to rerun; the command line passes comparisons.json.
+    saved = compare.load_registry(comparisons) if comparisons else []
     if not offline:
         # All network work happens here, so the stages below never wait on Lichess.
-        fetch.fetch(dict(white=white_pgn, black=black_pgn), dict(white=white_config, black=black_config), cache)
+        for entry in saved:
+            compare.load_inputs(entry['sources'], entry['name'], export=True)
+        fetch.fetch(pgns, configs, cache, extra=compare.registry_tables(saved, pgns, configs))
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     runner = Builder(directory / '.build-state.json', force)
     analysis_code, presentation_code = code_inputs(), code_inputs(presentation=True)
+    package = Path(__file__).parent
+    comparison_code = dict(presentation_code, **file_inputs([package / name for name in COMPARISON_CODE]))
     paths = [directory / f'{color}.json' for color in ('white', 'black')]
     cache = str(Path(cache).resolve())
     options = dict(
@@ -236,10 +247,14 @@ def build(
             lambda: write_json(rating_correlation, rating_correlations.analyze(paths)),
         )
     folder = report_directory(paths[0])
+    results = []
+    for entry in saved:
+        results += compare_step(runner, entry, directory, folder, cache, offline, comparison_code)
     render_inputs = (
         paths
         + [path.with_suffix(f'.{family}.json') for path in paths for family in FAMILIES]
         + [correlation, rating_correlation]
+        + results
     )
     registry = directory / '.report-index.json'
 
@@ -268,6 +283,38 @@ def build(
     return result
 
 
+def compare_step(runner, entry, directory, folder, cache, offline, code):
+    """Rerun one saved comparison when its repertoire score or candidate changes. A failure is reported and
+    skipped, so it never blocks the main reports; the previous comparison page is kept."""
+    name, score = entry['name'], Path(directory) / f"{entry['color']}.json"
+    data, page = Path(directory) / 'comparisons' / f'{name}.json', Path(folder) / 'comparisons' / f'{name}.md'
+
+    def inputs():
+        files = [score, *compare.source_files(entry['sources'], name)]
+        return dict(code=code, entry=entry, files=file_inputs(files), cache=cache)
+
+    try:
+        runner.step(
+            f'comparison.{name}',
+            inputs,
+            [data, page],
+            lambda: compare.run(
+                entry['sources'],
+                color=entry['color'],
+                score=score,
+                entry=entry.get('entry'),
+                name=name,
+                cache=cache,
+                offline=offline,
+                export=False,
+            ),
+        )
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+        print(f'Comparison {name} skipped: {exc}', flush=True)
+        return []
+    return [data]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('white_pgn', nargs='?', help='Exported White PGN; omit both to use the Lichess studies')
@@ -281,6 +328,7 @@ def main():
     parser.add_argument('--cache', default=DEFAULT_CACHE)
     parser.add_argument('--offline', action='store_true', help='Use only cached Explorer tables and the last export')
     parser.add_argument('--force', action='store_true', help='Rebuild all analyses using existing cached evidence')
+    parser.add_argument('--comparisons', default=compare.REGISTRY, help='Saved comparisons to rerun')
     parser.add_argument(
         '--dry-run', action='store_true', help='Export the studies, then count the tables to fetch and stop'
     )
@@ -301,7 +349,9 @@ def main():
         if dry_run:
             pgns = dict(white=options['white_pgn'], black=options['black_pgn'])
             configs = dict(white=options['white_config'], black=options['black_config'])
-            fetch.fetch(pgns, configs, options['cache'], dry_run=True)
+            saved = compare.load_registry(options['comparisons'])
+            extra = compare.registry_tables(saved, pgns, configs)
+            fetch.fetch(pgns, configs, options['cache'], dry_run=True, extra=extra)
             return
         build(**options)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:

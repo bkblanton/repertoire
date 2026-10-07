@@ -17,11 +17,12 @@ def required_tables(pgn, color, config):
     return list(dict.fromkeys([*required_positions(plan, color), *parent_positions(plan, color)]))
 
 
-def fetch(pgns, configs, cache=DEFAULT_CACHE, dry_run=False):
+def fetch(pgns, configs, cache=DEFAULT_CACHE, dry_run=False, extra=None):
     """Cache the tables for {color: pgn} with {color: config path or None}.
 
     Colors with the same Explorer filters share one pass, so the run has a single count and estimate.
-    `dry_run` reports what would be fetched and makes no requests.
+    `extra` adds {color: positions}, such as saved comparisons. `dry_run` reports what would be fetched
+    and makes no requests.
     """
     groups = {}
     for color, pgn in pgns.items():
@@ -30,6 +31,7 @@ def fetch(pgns, configs, cache=DEFAULT_CACHE, dry_run=False):
         group = groups.setdefault(tuple(sorted(filters.items())), dict(filters=filters, colors=[], positions=[]))
         group['colors'].append(color)
         group['positions'] += required_tables(pgn, color == 'white', config)
+        group['positions'] += (extra or {}).get(color, [])
     for group in groups.values():
         label = ' and '.join(group['colors'])
         positions = list(dict.fromkeys(group['positions']))
@@ -44,6 +46,8 @@ def fetch(pgns, configs, cache=DEFAULT_CACHE, dry_run=False):
 
 
 def main():
+    from . import compare
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('white_pgn', nargs='?', help='White PGN; omit both to use the exported studies')
     parser.add_argument('black_pgn', nargs='?')
@@ -52,6 +56,7 @@ def main():
     parser.add_argument('--black-config', default='configs/black.json')
     parser.add_argument('--cache', default=DEFAULT_CACHE)
     parser.add_argument('--dry-run', action='store_true', help='Count the tables to fetch and estimate the time')
+    parser.add_argument('--comparisons', default='comparisons.json', help='Saved comparisons whose tables to fetch')
     add_token_option(parser)
     args = parser.parse_args()
     apply_token_file(parser, args)
@@ -61,8 +66,11 @@ def main():
         pgns = studies.default_paths(args.studies)
     else:
         pgns = dict(white=Path(args.white_pgn), black=Path(args.black_pgn))
+    configs = dict(white=args.white_config, black=args.black_config)
     try:
-        fetch(pgns, dict(white=args.white_config, black=args.black_config), args.cache, args.dry_run)
+        # Saved comparisons share the pass, as in a build.
+        extra = compare.registry_tables(compare.load_registry(args.comparisons), pgns, configs)
+        fetch(pgns, configs, args.cache, args.dry_run, extra)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         parser.exit(1, f'Fetch failed: {exc}\nTables fetched so far are cached; rerun to continue.\n')
 

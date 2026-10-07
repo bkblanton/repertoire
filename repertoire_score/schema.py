@@ -92,6 +92,26 @@ class Chapter(TypedDict):
     entry_baseline: EntryBaseline
 
 
+class AlternativeOption(TypedDict):
+    move: str
+    san: str
+    chapters: list[str]  # chapters whose first recorded move here is this one
+    score: float | None  # repertoire score after this move, with the best choices below it
+    resolved_contribution: float
+    unresolved_mass: float
+    prior_completed_score: float  # the value compared when choosing
+
+
+class Alternative(TypedDict):
+    """An own-turn board where chapters record different first moves; the highest-scoring move is played."""
+
+    position: Position
+    path: list[str]
+    reach: float | None  # under the overall policy; None when roots are custom
+    selected: str
+    options: list[AlternativeOption]
+
+
 class StoppingEvent(TypedDict):
     """One way a modeled game leaves preparation under the overall policy."""
 
@@ -140,6 +160,7 @@ class ScoreManifest(TypedDict):
     overall_basis: str
     tolerance_score_points: float
     tolerance_met: bool
+    selected_alternatives: dict[Position, str]  # the winner at each board in `alternatives`
 
 
 class ScoreResult(TypedDict):
@@ -149,6 +170,7 @@ class ScoreResult(TypedDict):
     overall: ScoreSummary
     chapters: list[Chapter]
     chapter_transitions: list[dict]
+    alternatives: list[Alternative]
     starting_position_reference: dict
     events: list[StoppingEvent]
     prior_sensitivity: list[dict]

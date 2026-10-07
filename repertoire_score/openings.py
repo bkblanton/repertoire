@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 import numpy as np
 
 from .board_cache import STARTING_POSITION, fen_number, route_line
-from .context import DEFAULT_CACHE, AnalysisContext, stage_main
+from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
 from .explorer import counts
 from .gaps import distribution as gap_distribution
 from .model import score
@@ -435,9 +435,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     evidence = analysis.read_evidence(cache)
     facts = chess_facts(graph, color, evidence)
-    evaluators = Evaluators(
-        graph, color, evidence, facts, manifest['configuration'].get('policy', {}), manifest['sparse_threshold']
-    )
+    evaluators = Evaluators(graph, color, evidence, facts, selected_policy(manifest), manifest['sparse_threshold'])
     evaluator = evaluators()
     roots = manifest['root_weights']
     value = evaluator.evaluate(roots)

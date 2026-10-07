@@ -22,10 +22,12 @@ from .format import (
 from .links import bundle_refs, linked_line
 from .markdown import about, drop_uniform, report_navigation, section, table
 from .sections import (
+    alternatives_section,
     branch_spread_section,
     character_section,
     common_positions_for_scope,
     common_positions_section,
+    comparisons_section,
     correlations_section,
     depth_section,
     entry_routes_section,
@@ -354,6 +356,7 @@ def full_report(
             '',
             *chapter_table(r, refs),
         ]
+        text += alternatives_section(r, refs)
         text += exits_section(characters.get('overall'), refs, top, anchor=f'{color}-exits')
         text += common_positions_section([b], position_top)
         text += openings_section(b, refs)
@@ -546,6 +549,16 @@ def _summary_report(bundles):
             '</details>',
             '',
         ]
+        competing = alternatives_section(r, refs, level='####', anchor=f'{color}-summary-alternatives')
+        if competing:
+            text += [
+                '<details>',
+                f'<summary>Competing alternatives ({len(r["alternatives"])})</summary>',
+                '',
+                *competing,
+                '</details>',
+                '',
+            ]
         if replies:
             text += [
                 '<details>',
@@ -643,6 +656,7 @@ def _summary_report(bundles):
             '</details>',
             '',
         ]
+    text += comparisons_section(bundles)
     text += [
         '<details>',
         '<summary>Evidence and definitions</summary>',
@@ -672,8 +686,8 @@ def _summary_report(bundles):
     ]
     if any(c.get('policy_overrides') for b in bundles for c in b['report']['chapters']):
         text += [
-            '**Alternative** chapters prefer their own first moves; overall uses '
-            'the earliest chapter and first PGN choice.',
+            '**Alternative** chapters prefer their own first moves; where chapters compete, overall plays '
+            'the highest-scoring move, and otherwise the earliest chapter and first PGN choice.',
             '',
         ]
     text += [

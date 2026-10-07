@@ -78,6 +78,8 @@ def generate(
         **{folder / name: content for name, content in rendered.items()},
     }
     aliases = {'report': full_path, 'summary': summary_path, **{name[:-3]: folder / name for name in rendered}}
+    # Comparison pages are written by `repertoire compare` beside the report.
+    aliases.update({f'comparisons/{p.stem}': p for p in sorted((folder / 'comparisons').glob('*.md'))})
     pages[full_path] = pages[full_path].replace('](summary.md)', '](@summary)')
     # Use relative paths even when callers place the outputs in different folders.
     for b in bundles:

@@ -19,6 +19,11 @@ from .schema import CompanionManifest
 DEFAULT_CACHE = '.cache/explorer'
 
 
+def selected_policy(manifest):
+    """The overall policy a score used: explicit overrides plus the winners of competing chapter alternatives."""
+    return dict(manifest['configuration'].get('policy', {}), **manifest.get('selected_alternatives', {}))
+
+
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -51,7 +56,7 @@ class AnalysisContext:
 
     @property
     def policy(self):
-        return self.manifest['configuration'].get('policy', {})
+        return selected_policy(self.manifest)
 
     @property
     def roots(self):

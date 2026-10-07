@@ -20,27 +20,47 @@ def test_chapter_local_mainline_order_is_independent_of_global_edge_order(tmp_pa
     assert list(resolve(g, chess.WHITE, {g.roots[0]: 'd2d4'})[g.roots[0]]) == ['d2d4']
 
 
-def test_alternatives_with_shared_entry_keep_split_continuations_and_reorder(tmp_path, monkeypatch):
-    first, cache = run_fixture(tmp_path, monkeypatch, common_entry=True)
-    assert first['overall']['raw_empirical_score'] == pytest.approx(0.4)
+def test_competing_chapters_play_the_higher_scoring_alternative_in_any_order(tmp_path, monkeypatch):
+    decision = position('e4 e6 d4 d5')
+    first, cache = run_fixture(tmp_path, monkeypatch, common_entry=True, policy=None)
+    # Advance scores 40% and the Tarrasch chapters 86% after 2...d5, so 3.Nd2 is played although Advance is first.
+    assert first['overall']['raw_empirical_score'] == pytest.approx(0.86)
+    assert first['manifest']['selected_alternatives'] == {decision: 'b1d2'}
+    [row] = first['alternatives']
+    assert row['position'] == decision and row['selected'] == 'b1d2' and row['reach'] == 1
+    assert {o['san']: (o['score'], o['chapters']) for o in row['options']} == {
+        'e5': (pytest.approx(0.4), ['advance']),
+        'Nd2': (pytest.approx(0.86), ['tarrasch', 'split']),
+    }
+    conflict = next(c for c in first['diagnostics']['policy_conflicts'] if c['position'] == decision)
+    assert conflict['resolution'] == 'highest repertoire score among chapter alternatives'
     chapters = {c['id']: c for c in first['chapters']}
     assert chapters['advance']['score']['raw_empirical_score'] == pytest.approx(0.4)
+    assert chapters['advance']['score']['overall_policy_entry_probability'] == 1  # shared entry, not selected move
     for cid in ('tarrasch', 'split'):
         c = chapters[cid]
         assert c['score']['raw_empirical_score'] == pytest.approx(0.86)
         assert c['score']['entry_probability'] == 1
-        assert c['score']['overall_policy_entry_probability'] == 1  # shared entry, not selected move
         assert c['entry_baseline']['raw_score'] == 0.5
         assert c['score']['prepared_depth']['expected_moves'] == 3
     assert first['manifest']['policy_profile_count'] == 2
-    comparison = next(c for c in vulnerabilities(tmp_path / 'white.json', cache)['chapters'] if c['id'] == 'tarrasch')
-    selected = {r['move_san'] for r in comparison['all_signed_rows'] if r['position'] == position('e4 e6 d4 d5')}
-    assert selected == {'Nd2'}
-    reordered, _ = run_fixture(tmp_path, monkeypatch, common_entry=True, alternative_first=True)
+    # Later stages replay the saved choice rather than the first chapter's move.
+    overall = vulnerabilities(tmp_path / 'white.json', cache)['overall']
+    assert {r['move_san'] for r in overall['all_signed_rows'] if r['position'] == decision} == {'Nd2'}
+    reordered, _ = run_fixture(tmp_path, monkeypatch, common_entry=True, alternative_first=True, policy=None)
     assert reordered['overall']['raw_empirical_score'] == pytest.approx(0.86)
     assert {c['id']: c['score']['raw_empirical_score'] for c in reordered['chapters']} == pytest.approx(
         {c['id']: c['score']['raw_empirical_score'] for c in first['chapters']}
     )
+
+
+def test_explicit_policy_overrides_competing_alternatives(tmp_path, monkeypatch):
+    forced, _ = run_fixture(tmp_path, monkeypatch, common_entry=True)
+    assert forced['overall']['raw_empirical_score'] == pytest.approx(0.4)
+    assert forced['manifest']['selected_alternatives'] == {}
+    assert forced['alternatives'] == []
+    chapters = {c['id']: c for c in forced['chapters']}
+    assert chapters['tarrasch']['score']['raw_empirical_score'] == pytest.approx(0.86)
 
 
 def test_unselected_chapters_have_conditional_scores_and_separate_reach(tmp_path, monkeypatch):

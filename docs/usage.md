@@ -56,6 +56,7 @@ Everything runs through one command, `repertoire <command>`. `uv run repertoire 
 | `fetch` | Fetch the Explorer tables both repertoires need, without building. |
 | `score` | Inspect or score one repertoire PGN. |
 | `report` | Render the Markdown reports from saved results, offline. |
+| `compare` | Compare a candidate study or PGN with your repertoire, alternative by alternative. See [Comparing alternative preparation](#comparing-alternative-preparation). |
 | `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. |
 
 ## Generate both reports
@@ -215,7 +216,10 @@ Standalone scoring and analysis commands refresh the reports automatically. Duri
 | `reports/data/` | Score snapshots, companion JSON, correlation results, `.build-state.json` checkpoints and `.report-index.json` output registration. |
 | [reports/report.md](../reports/report.md), [reports/summary.md](../reports/summary.md) | The current generated full report and summary. |
 | `reports/chapters/`, `reports/openings/` | Generated chapter pages (`W1.md`, `B1.md`, ...) and per-color opening evidence pages, linked from the report and summary. |
-| `reports/comparisons/`, `reports/positions/` | The opponent-rating comparison, plus static examples of hypothetical comparisons and focused position reports from earlier snapshots. |
+| [comparisons.json](../comparisons.json) | Saved comparisons that `repertoire build` and `repertoire compare` rerun: name, color, sources and optional entry. |
+| `studies/candidates/` | Exports of candidate studies and copies of candidate PGNs from outside the repository, tracked so comparisons can be regenerated. |
+| `reports/comparisons/` | Comparison pages and adopt PGNs from `repertoire compare`, and the opponent-rating comparison. Comparison data is in `reports/data/comparisons/`. |
+| `reports/positions/` | Static examples of focused position reports from earlier snapshots. |
 
 Explorer cache and generated analysis JSON are ignored by Git because they can grow very large. Readable Markdown reports remain tracked, so a fresh checkout may include reports without the local evidence needed to regenerate them. Preserve local data when changing Git tracking; clearing the cache is not a routine repair.
 
@@ -251,9 +255,14 @@ Configuration is a JSON object:
 
 ### Move selection
 
-Policy keys are canonical positions: piece placement, turn, castling and legal en passant, without counters. Values are one UCI move or a move-to-weight map summing to one. Without an explicit override, own-move conflicts choose the first recorded move: PGN main variation before side variations, and earlier chapters before later chapters. Conflicting alternatives are never averaged or assigned simultaneous probability one. All PGN variations remain available as repertoire content; annotations are not instructions and do not remove lines.
+Policy keys are canonical positions: piece placement, turn, castling and legal en passant, without counters. Values are one UCI move or a move-to-weight map summing to one. Without an explicit override:
 
-Every chapter remains in the chapter report, including alternatives excluded from the overall policy. For each chapter comparison, its first recorded own moves take precedence and the overall policy applies elsewhere. This retains compatible preparation split across multiple chapters. Score, baseline, expected prepared depth, entry probability, transitions from that chapter, and vulnerabilities all use that same comparison policy. Alternative rows are labeled; a separate overall-policy region reach shows how often the selected overall repertoire enters that region. Shared region reach does not imply that the alternative own move was selected. Reordering chapters changes overall priority without discarding the alternatives' comparisons. Saved JSON records the exact policy overrides.
+- **Competing chapters are decided by score.** Where chapters record different first moves at the same position, each alternative is scored with the best choices after it and the highest-scoring one is played. Put an alternative line in its own chapter, rebuild, and the reports show whether it improves the repertoire: the full report and the summary list every competing position with each alternative's score, its difference from the move played and that difference in points per 1,000 games. The order of the chapters no longer matters there; an exact tie keeps the earlier chapter.
+- **Otherwise the first recorded move is played:** the PGN main variation before side variations within a chapter. Side variations of your own moves inside one chapter do not compete; move one into its own chapter to have it scored.
+
+An explicit policy override always wins and is never compared. The winners are saved in the score JSON (`manifest.selected_alternatives`, with every option's score under `alternatives`), and every later stage replays them. Picking the best of several sampled scores favors moves that scored well by chance, so treat a small winning margin with care. Conflicting alternatives are never averaged or assigned simultaneous probability one. All PGN variations remain available as repertoire content; annotations are not instructions and do not remove lines.
+
+Every chapter remains in the chapter report, including alternatives excluded from the overall policy. For each chapter comparison, its first recorded own moves take precedence and the overall policy applies elsewhere. This retains compatible preparation split across multiple chapters. Score, baseline, expected prepared depth, entry probability, transitions from that chapter, and vulnerabilities all use that same comparison policy. Alternative rows are labeled; a separate overall-policy region reach shows how often the selected overall repertoire enters that region. Shared region reach does not imply that the alternative own move was selected. Reordering chapters changes the overall choice only where no competing chapters decide by score. Saved JSON records the exact policy overrides.
 
 ### Chapter subjects and transpositions
 
@@ -376,11 +385,49 @@ Every analysis command adds this attribution automatically.
 
 ## Comparing alternative preparation
 
-First rebuild the actual repertoire from its current PGN. Compare the candidate and actual preparation from the same entry board, for the same color, with matching filters and evidence. Report the conditional score at that entry separately from its full-repertoire reach and impact.
+`repertoire compare` answers "would this other preparation do better than mine?" for a candidate study or PGN. Build your repertoire first; the comparison reads its saved score and cached tables and never changes your studies, PGNs or reports.
 
-Keep hypothetical results separate from the actual score snapshots and current reports: score a candidate from its own copy of the PGN (for example under `.cache/`), with the same color, filters, configuration and evidence as the actual repertoire, and leave the source PGNs unchanged. There is no generic candidate-comparison command.
+```sh
+uv run repertoire compare path/to/vienna-gambit.pgn --color white
+uv run repertoire compare https://lichess.org/study/qrst7890 --token-file path/to/lichess_token.txt
+```
 
-The pages in `reports/comparisons/french-schlechter.md`, `reports/comparisons/vienna-gambit.md` and `reports/positions/` are static examples of such comparisons. The one-off scripts that produced them have been removed, so they are not regenerated and describe earlier snapshots.
+Inputs are any number of PGN files and Lichess study or chapter URLs, in priority order. A study URL exports the whole study and a chapter URL only that chapter. Exports are checked by parsing, saved to `studies/candidates/<name>.pgn` and left untouched when only their dates changed; `--no-export` reuses the saved copy. Study exports carry each chapter's orientation, so `--color` is only needed when it is missing, as in a PGN downloaded from the Lichess website.
+
+The comparison follows each candidate chapter along its own first moves until it plays a different move from your repertoire, or adds a move where you have none. That position is a **decision point**. Its options are your move and each distinct candidate move there:
+
+- Several chapters choosing the same move share one option. If they later disagree with each other, that position becomes a nested decision point inside the option.
+- Chapters choosing different moves, such as an Advance and a Schlechter chapter against your Tarrasch, compete at one decision point.
+
+An adopted option places its candidate lines before your chapters: they decide every position they record, and your own preparation continues wherever they end or transpose into it. The report scores three scenarios:
+
+- **Your repertoire**, reproduced exactly from its saved score.
+- **Improving alternatives only:** at every decision point, the option with the highest repertoire score, which may be your own move.
+- **All alternatives:** every decision point switches to the candidate; where candidate chapters compete, the higher-scoring candidate move is used.
+
+Each scenario is scored for the whole color and after the **entry**, the last position every decision point shares (`1.e4 e5 2.Nc3` for a Vienna study). Pass `--entry "1.e4 e5 2.Nc3"` or a FEN to choose another position. Decision points whose lines transpose into each other are chosen together over every combination; the others are chosen one at a time and their gains add up, which the report checks.
+
+The page `reports/comparisons/<name>.md` leads with the verdict and the three scenarios, then one row per option at each decision point with its score, its change at the position and for the whole color, and a paired 95% interval. Caveats follow when they matter: candidate scores drawn from much weaker or stronger opponents, alternatives that interact through transpositions, and competing candidate chapters. A preparation table compares how much you would need to know and how often games leave preparation. Each decision point then has its own section with the database score of every move, how much the preparation adds, the main replies, and where each option's preparation ends most often. `reports/comparisons/<name>.adopt.pgn` holds the candidate lines of the improving choice, ready to import into your study; where they compete with your chapters, the build plays the higher-scoring move.
+
+Missing Explorer tables are fetched with the usual count, estimate and progress (`--dry-run` stops after the count); `--offline` reports them instead. Name the output with `--name` and the page with `--title`.
+
+### Saved comparisons
+
+Add `--save` to keep a comparison in [comparisons.json](../comparisons.json):
+
+```sh
+uv run repertoire compare https://lichess.org/study/qrst7890 --color white --save --token-file path/to/lichess_token.txt
+```
+
+```json
+{
+  "comparisons": [
+    {"name": "vienna-gambit", "color": "white", "sources": ["https://lichess.org/study/qrst7890"]}
+  ]
+}
+```
+
+`repertoire build` then exports the saved candidate studies with your own, fetches their tables in the same single pass, and reruns each comparison when your score or the candidate changes. A failing comparison is reported and skipped; it never blocks the main reports. The summary lists every saved comparison with its verdict and changes, and marks one made from an older score as out of date. `uv run repertoire compare` without inputs reruns every saved comparison. A PGN file outside the repository is copied into `studies/candidates/` when saved, so the registry never names a local folder.
 
 ## Troubleshooting
 

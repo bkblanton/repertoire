@@ -9,7 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .board_cache import STARTING_POSITION, children, turn
-from .context import DEFAULT_CACHE, AnalysisContext, file_sha256, stage_main
+from .context import DEFAULT_CACHE, AnalysisContext, file_sha256, selected_policy, stage_main
 from .explorer import counts
 from .preparation import Evaluators, chess_facts
 from .status import Status
@@ -361,7 +361,7 @@ def analyze(path, cache=DEFAULT_CACHE):
         ],
     )
     facts = chess_facts(graph, color, evidence)
-    policy = manifest['configuration'].get('policy', {})
+    policy = selected_policy(manifest)
     roots = manifest['root_weights']
     prep_scopes = {s['id']: s for s in supporting['preparation']['scopes']}
     chapters = {chapter['id']: chapter for chapter in saved['chapters']}
