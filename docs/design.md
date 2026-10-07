@@ -108,7 +108,7 @@ Request enough move rows to cover all legal moves. Disable example-game payloads
 
 Implement:
 
-- Sequential requests, timeouts, bounded retries, and rate-limit backoff.
+- Sequential requests and timeouts. Rate limits are waited out indefinitely; server errors and dropped connections are retried for up to 30 minutes per request.
 - Persistent caching keyed by canonical position, endpoint, and all filters.
 - Response validation and resumable runs.
 - A run manifest containing configuration, retrieval timestamps, and data provenance.

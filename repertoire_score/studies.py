@@ -4,12 +4,11 @@ import argparse
 import json
 import os
 import re
-import time
 from pathlib import Path
 
 import httpx
 
-from .explorer import add_token_option, apply_token_file
+from .explorer import OUTAGE_PATIENCE, Backoff, add_token_option, apply_token_file
 from .graph import parse
 
 SOURCES = 'studies.json'
@@ -46,20 +45,22 @@ def comparable(text):
     return [line for line in text.replace('\r\n', '\n').strip().split('\n') if not line.startswith('[Date ')]
 
 
-def download(client, study, retries=3):
+def download(client, study, patience=OUTAGE_PATIENCE):
     url = ENDPOINT.format(study_id(study))
     params = dict(clocks='false', comments='true', variations='true')
-    for attempt in range(retries + 1):
+    backoff = Backoff('Study export', patience)
+    while True:
         try:
             response = client.get(url, params=params)
         except httpx.TransportError as exc:
-            if attempt == retries:
-                raise RuntimeError(f'Study export transport failure ({type(exc).__name__}) for {study}') from None
-            time.sleep(2**attempt)
+            backoff.unavailable(f'connection failed ({type(exc).__name__})')
             continue
-        if response.status_code == 429 and attempt < retries:
-            print('Lichess HTTP 429; backing off 60s', flush=True)
-            time.sleep(60)
+        retry_after = response.headers.get('Retry-After', '')
+        if response.status_code == 429:
+            backoff.rate_limited(retry_after)
+            continue
+        if response.status_code >= 500:
+            backoff.unavailable(f'HTTP {response.status_code}', retry_after)
             continue
         if response.status_code in (401, 403, 404):
             raise RuntimeError(
@@ -69,7 +70,6 @@ def download(client, study, retries=3):
         if response.status_code != 200:
             raise RuntimeError(f'Lichess HTTP {response.status_code} for {study}')
         return response.text
-    raise AssertionError('Retry loop exhausted')
 
 
 def fetch(sources=SOURCES, directory=DIRECTORY, client=None):

@@ -41,6 +41,37 @@ class CacheMiss(ValueError):
     """An offline read found no cached table; distinct from a table with zero games."""
 
 
+# Lichess asks clients to wait a full minute after HTTP 429.
+RATE_LIMIT_WAIT = 60
+# How long one request keeps retrying through server errors and dropped connections, long enough
+# to ride out a Wi-Fi reconnect or a short Lichess outage during an unattended run.
+OUTAGE_PATIENCE = 30 * 60
+
+
+class Backoff:
+    """Waits between attempts at one request. Rate limits are temporary by definition, so they are
+    retried indefinitely; outages are retried with exponential waits until `patience` seconds."""
+
+    def __init__(self, label, patience=OUTAGE_PATIENCE):
+        self.label, self.patience = label, patience
+        self.attempt, self.waited = 0, 0
+
+    def rate_limited(self, retry_after=''):
+        wait = max(RATE_LIMIT_WAIT, int(retry_after) if retry_after.isdigit() else 0)
+        print(f'{self.label}: rate-limited (HTTP 429); waiting {wait}s', flush=True)
+        time.sleep(wait)
+
+    def unavailable(self, reason, retry_after=''):
+        if self.waited >= self.patience:
+            raise RuntimeError(f'{self.label} still unavailable after {self.waited // 60} minutes of retries: {reason}')
+        wait = max(min(60, 2**self.attempt), int(retry_after) if retry_after.isdigit() else 0)
+        wait = min(wait, max(1, self.patience - self.waited))
+        self.attempt += 1
+        self.waited += wait
+        print(f'{self.label}: {reason}; retrying in {wait}s', flush=True)
+        time.sleep(wait)
+
+
 def add_token_option(parser):
     parser.add_argument(
         '--token-file', help='File containing a Lichess API token; overrides LICHESS_TOKEN for this run'
@@ -94,11 +125,11 @@ def validate(data, position):
 
 
 class Explorer:
-    def __init__(self, cache, filters=None, offline=False, refresh=False, delay=1.0, retries=6):
+    def __init__(self, cache, filters=None, offline=False, refresh=False, delay=1.0, patience=OUTAGE_PATIENCE):
         self.cache = Path(cache)
         self.cache.mkdir(parents=True, exist_ok=True)
         self.filters = dict(DEFAULT_FILTERS if filters is None else filters)
-        self.offline, self.refresh, self.delay, self.retries = offline, refresh, delay, retries
+        self.offline, self.refresh, self.delay, self.patience = offline, refresh, delay, patience
         token = os.environ.get("LICHESS_TOKEN", "").strip()
         if not offline and not token:
             raise ValueError("Set LICHESS_TOKEN in the environment")
@@ -123,23 +154,21 @@ class Explorer:
             return entry["data"]
         if self.offline:
             raise CacheMiss(f"Offline cache miss: {position}")
-        for attempt in range(self.retries + 1):
+        backoff = Backoff("Explorer", self.patience)
+        while True:
             time.sleep(max(0, self.delay - (time.monotonic() - self.last_request)))
             self.last_request = time.monotonic()
             try:
                 response = self.client.get(ENDPOINT, params=query)
             except httpx.TransportError as exc:
-                if attempt == self.retries:
-                    raise RuntimeError(f"Explorer transport failure ({type(exc).__name__}) at {position}") from None
-                time.sleep(min(60, 2**attempt))
+                backoff.unavailable(f"connection failed ({type(exc).__name__})")
                 continue
-            if response.status_code == 429 or response.status_code >= 500:
-                if attempt == self.retries:
-                    raise RuntimeError(f"Explorer HTTP {response.status_code} after bounded retries")
-                retry = response.headers.get("Retry-After", "")
-                wait = max(60 if response.status_code == 429 else 2**attempt, float(retry) if retry.isdigit() else 0)
-                print(f"Explorer HTTP {response.status_code}; backing off {wait:.0f}s", flush=True)
-                time.sleep(wait)
+            retry_after = response.headers.get("Retry-After", "")
+            if response.status_code == 429:
+                backoff.rate_limited(retry_after)
+                continue
+            if response.status_code >= 500:
+                backoff.unavailable(f"HTTP {response.status_code}", retry_after)
                 continue
             if response.status_code != 200:
                 raise RuntimeError(f"Explorer HTTP {response.status_code}; response is not statistical evidence")
@@ -151,7 +180,6 @@ class Explorer:
             temporary.replace(path)
             self.provenance[position] = {"cache_key": digest, "retrieved_at": entry["retrieved_at"]}
             return data
-        raise AssertionError("Retry loop exhausted")
 
     def close(self):
         self.client.close()

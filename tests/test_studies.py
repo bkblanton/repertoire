@@ -78,6 +78,21 @@ def test_failed_or_malformed_export_keeps_previous_file(tmp_path, monkeypatch):
     assert not list(tmp_path.glob('*.tmp'))
 
 
+def test_export_waits_out_rate_limits_and_gives_up_on_long_outages(tmp_path, monkeypatch):
+    monkeypatch.setenv('LICHESS_TOKEN', 'test')
+    sleeps = []
+    monkeypatch.setattr('repertoire_score.explorer.time.sleep', sleeps.append)
+    text = CHAPTERS.format(date='2026.10.05')
+    limited = [httpx.Response(429)] * 10 + [httpx.Response(200, text=text)] * 2
+    paths = studies.fetch(dict(white='abcdEFGH', black='ijklMNOP'), tmp_path, client=client(limited, []))
+    assert sleeps == [60] * 10
+    assert paths['white'].is_file()
+    sleeps.clear()
+    with pytest.raises(RuntimeError, match='Study export still unavailable.*HTTP 503'):
+        studies.download(client([httpx.Response(503)] * 20, []), 'abcdEFGH', patience=100)
+    assert sum(sleeps) == 100
+
+
 def test_fetch_requires_token(tmp_path, monkeypatch):
     monkeypatch.delenv('LICHESS_TOKEN', raising=False)
     with pytest.raises(ValueError, match='LICHESS_TOKEN'):
