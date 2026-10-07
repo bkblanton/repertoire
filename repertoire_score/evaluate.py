@@ -10,8 +10,8 @@ from .status import Status
 KNOWN, UNKNOWN, SPARSE_KNOWN, SPARSE, LEAF, DEVIATION, OTHER, COMPLETED = range(8)
 
 
-def stopping_vector(branch, sampled_score, sparse_threshold, width):
-    result = np.zeros((8, width))
+def stopping_vector(branch, sampled_score, sparse_threshold, width=None):
+    result = np.zeros(8 if width is None else (8, width))
     unresolved = branch.fixed_score is None and not sum(branch.counts)
     sparse = branch.fixed_score is None and sum(branch.counts) < sparse_threshold
     s = 0.5 if sampled_score is None else sampled_score
@@ -27,10 +27,12 @@ def stopping_vector(branch, sampled_score, sparse_threshold, width):
     return result
 
 
-def backward(model, order, sampled, sparse_threshold, width=1):
+def backward(model, order, sampled, sparse_threshold, width=None):
+    """Each position's component vector. With `width`, every probability and score is an array of that many
+    simulated draws and each vector has one column per draw; the tests use this to check the calculated uncertainty."""
     values = {}
     for k in order:
-        v = np.zeros((8, width))
+        v = np.zeros(8 if width is None else (8, width))
         for b, (p, s) in zip(model[k].branches, sampled[k]):
             v += p * (values[b.target] if b.target is not None else stopping_vector(b, s, sparse_threshold, width))
         if not np.allclose(v[UNKNOWN]+v[LEAF]+v[DEVIATION]+v[OTHER], 1, atol=1e-9):
@@ -48,20 +50,21 @@ def can_enter(model, order, entries):
     return result
 
 
-def forward(model, order, sampled, roots, width=1, stop_at=(), entering=None):
+def forward(model, order, sampled, roots, stop_at=(), entering=None):
     """Propagate probability from the roots, stopping at `stop_at`.
 
     With `entering` (from can_enter), positions that cannot reach an entry are not expanded: their
     mass is absorbed whole and their individual stops are omitted. Entry masses are unchanged.
+    Probabilities may be arrays of simulated draws; masses then become arrays of the same length.
     """
-    mass = {k: np.zeros(width) for k in order}
+    mass = dict.fromkeys(order, 0.)
     for k, weight in roots.items():
         mass[k] += weight
     stops, entries = {}, {}
-    absorbed = np.zeros(width)
+    absorbed = 0.
     for k in reversed(order):
         if k in stop_at:
-            entries[k] = mass[k].copy()
+            entries[k] = mass[k]
             continue
         if entering is not None and not entering[k]:
             absorbed += mass[k]
@@ -72,7 +75,7 @@ def forward(model, order, sampled, roots, width=1, stop_at=(), entering=None):
                 mass[b.target] += flow
             else:
                 stops[(k, j)] = flow
-    total = sum(stops.values(), np.zeros(width))+sum(entries.values(), np.zeros(width))+absorbed
+    total = sum(stops.values(), 0.)+sum(entries.values(), 0.)+absorbed
     if not np.allclose(total, 1, atol=1e-9):
         raise AssertionError("Forward stopping mass does not sum to one")
     return stops, entries
@@ -135,9 +138,8 @@ def best_routes(model, order, sampled, roots, stop_at=(), replies=False):
     return best
 
 
-def summarize(raw, posterior) -> ScoreSummary:
-    """Empirical score fields from the raw component vector, plus the posterior block from uncertainty.py."""
-    r = raw[:, 0]
+def summarize(r, posterior) -> ScoreSummary:
+    """Empirical score fields from the raw component vector `r`, plus the posterior block from uncertainty.py."""
     u = float(r[UNKNOWN])
     return {
         "raw_empirical_score": float(r[KNOWN]) if u == 0 else None,
@@ -155,18 +157,18 @@ def chapter_score(model, order, raw_sample, values, root_weights, entries, poste
     # Only positions that can still reach the chapter matter for its entry weights.
     entering = can_enter(model, order, entries)
     raw_stops, raw_entries = forward(model, order, raw_sample, root_weights, stop_at=entries, entering=entering)
-    raw_reach = sum(raw_entries.values(), np.zeros(1))
-    r = sum((raw_entries[k]*values[k] for k in raw_entries), np.zeros((8, 1)))
-    weights = {k: float(v[0]/raw_reach[0]) if raw_reach[0] else None for k, v in raw_entries.items()}
-    unresolved_entry_mass = sum(float(flow[0]) for (k,j),flow in raw_stops.items()
+    raw_reach = sum(raw_entries.values(), 0.)
+    r = sum((raw_entries[k]*values[k] for k in raw_entries), np.zeros(8))
+    weights = {k: float(v/raw_reach) if raw_reach else None for k, v in raw_entries.items()}
+    unresolved_entry_mass = sum(float(flow) for (k,j),flow in raw_stops.items()
                                 if model[k].branches[j].kind == "unresolved_distribution" and entering[k])
     if unresolved_entry_mass > 0 and len(entries) > 1:
         return {"status": Status.UNRESOLVED_ENTRY_WEIGHTS, "entry_probability": None,
-                "entry_probability_bounds": [float(raw_reach[0]),float(raw_reach[0])+unresolved_entry_mass],
-                "conditional_score_bounds": [min(values[k][KNOWN,0] for k in entries),
-                                             max(values[k][KNOWN,0]+values[k][UNKNOWN,0] for k in entries)]}
+                "entry_probability_bounds": [float(raw_reach),float(raw_reach)+unresolved_entry_mass],
+                "conditional_score_bounds": [min(values[k][KNOWN] for k in entries),
+                                             max(values[k][KNOWN]+values[k][UNKNOWN] for k in entries)]}
     chapter = posterior.chapter(root_weights, entries)
-    if raw_reach[0] <= 0:
+    if raw_reach <= 0:
         if len(entries) == 1:
             k = next(iter(entries))
             summary = summarize(values[k], posterior.mixture({k: 1.}))
@@ -177,10 +179,10 @@ def chapter_score(model, order, raw_sample, values, root_weights, entries, poste
         if chapter['summary'] is None:
             raise ValueError("Posterior first-entry weights are zero; use a stronger prior or explicit entries")
         summary = summarize(r/raw_reach, chapter['summary'])
-    summary.update(entry_probability=float(raw_reach[0]), posterior_entry_probability_mean=chapter['entry_probability'],
+    summary.update(entry_probability=float(raw_reach), posterior_entry_probability_mean=chapter['entry_probability'],
                    first_entry_weights=weights)
     if unresolved_entry_mass > 0:
         summary["entry_probability"] = None
         summary["posterior_entry_probability_mean"] = None
-        summary["entry_probability_bounds"] = [float(raw_reach[0]),float(raw_reach[0])+unresolved_entry_mass]
+        summary["entry_probability_bounds"] = [float(raw_reach),float(raw_reach)+unresolved_entry_mass]
     return summary

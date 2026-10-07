@@ -184,7 +184,7 @@ class Posterior:
             if node.mode == 'stop':
                 cells = self.owner[None, :]
             else:
-                cells = np.array([np.full(3, self.values[b.target][COMPLETED, 0]) if b.target is not None
+                cells = np.array([np.full(3, self.values[b.target][COMPLETED]) if b.target is not None
                                   else np.full(3, b.fixed_score) if b.fixed_score is not None else self.owner
                                   for b in node.branches])
             self._cells[k] = cells
@@ -221,7 +221,7 @@ class Posterior:
         return sum(c * c * self.table_variance(m) for m, c in self.combined_influence(starts).items())
 
     def mixture(self, starts):
-        mean = sum((w * self.values[k][:, 0] for k, w in starts.items()), np.zeros(8))
+        mean = sum((w * self.values[k] for k, w in starts.items()), np.zeros(8))
         return summary(mean, self.value_variance(starts))
 
     def gradient(self, roots, entries=None):
@@ -232,7 +232,7 @@ class Posterior:
         Returns None when no entry can be reached.
         """
         if entries is None:
-            mean = sum((w * self.values[k][:, 0] for k, w in roots.items()), np.zeros(8))
+            mean = sum((w * self.values[k] for k, w in roots.items()), np.zeros(8))
             cells = {m: c * self.cells(m) for m, c in self.combined_influence(roots).items()}
             return dict(mean=mean, entry_probability=1., cells=cells)
         entries = set(entries)
@@ -250,7 +250,7 @@ class Posterior:
         probability = sum(starts.values())
         if probability <= 0:
             return None
-        mean = sum((w * self.values[k][:, 0] for k, w in starts.items()), np.zeros(8)) / probability
+        mean = sum((w * self.values[k] for k, w in starts.items()), np.zeros(8)) / probability
         score = mean[COMPLETED]
         # Value carried through the first entry (G) and probability of entering (H) from each position.
         carried, enters = {}, {}
@@ -258,7 +258,7 @@ class Posterior:
             if not entering[k]:
                 continue
             if k in entries:
-                carried[k], enters[k] = self.values[k][COMPLETED, 0], 1.
+                carried[k], enters[k] = self.values[k][COMPLETED], 1.
             else:
                 pairs = [(p, b.target) for b, (p, _) in zip(self.model[k].branches, self.sample[k]) if b.target is not None]
                 carried[k] = sum(p * carried.get(t, 0.) for p, t in pairs)

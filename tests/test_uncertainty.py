@@ -57,16 +57,16 @@ def test_posterior_means_are_exact_and_variances_match_simulation(fixture):
     posterior, simulated, root, n = fixture['posterior'], fixture['simulated'], fixture['root'], fixture['n']
     for k in (root, position('Nf3'), position('g3'), position('Nf3 d5 g3 Nf6')):
         draws = simulated[k][COMPLETED]
-        exact = posterior.values[k][COMPLETED, 0]
+        exact = posterior.values[k][COMPLETED]
         assert abs(draws.mean() - exact) < 4 * draws.std() / math.sqrt(n)
         assert posterior.value_variance({k: 1.}) == pytest.approx(draws.var(), rel=.06)
     summary = posterior.mixture({root: 1.})
     low, high = np.quantile(simulated[root][COMPLETED], [.025, .975])
     assert summary['credible_interval_95'] == pytest.approx([low, high], abs=.003)
-    assert summary['mean'] == pytest.approx(posterior.values[root][COMPLETED, 0])
+    assert summary['mean'] == pytest.approx(posterior.values[root][COMPLETED])
     # Legal moves nobody has played get prior mass, and stop unresolved: the mean is exact too.
     unresolved = simulated[root][UNKNOWN]
-    assert summary['unresolved_mass_mean'] == posterior.values[root][UNKNOWN, 0] > 0
+    assert summary['unresolved_mass_mean'] == posterior.values[root][UNKNOWN] > 0
     assert abs(unresolved.mean() - summary['unresolved_mass_mean']) < 4 * unresolved.std() / math.sqrt(n)
 
 
@@ -75,7 +75,7 @@ def test_chapter_score_with_uncertain_entry_weights_matches_simulation(fixture):
     root = fixture['root']
     # The shared board is reached from both first moves, so the entry weights are uncertain too.
     entries = [position('Nf3 d5 g3 Nf6'), position('g3 Nf6 Nf3 d5')]
-    _, masses = forward(model, order, sample, {root: 1.}, n, stop_at=entries)
+    _, masses = forward(model, order, sample, {root: 1.}, stop_at=entries)
     total = sum(masses.values())
     draws = sum(masses[k] * fixture['simulated'][k][COMPLETED] for k in masses) / total
     chapter = posterior.chapter({root: 1.}, entries)

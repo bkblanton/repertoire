@@ -51,9 +51,9 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
                           sparse=n < sparse_threshold, chapters=sorted(graph.nodes[k].chapters),
                           target=b.target)
             if node.mode == 'opponent':
-                before = float(values[k][KNOWN, 0]) if values[k][UNKNOWN, 0] == 0 else None
+                before = float(values[k][KNOWN]) if values[k][UNKNOWN] == 0 else None
                 if b.target is not None:
-                    after = float(values[b.target][KNOWN, 0]) if values[b.target][UNKNOWN, 0] == 0 else None
+                    after = float(values[b.target][KNOWN]) if values[b.target][UNKNOWN] == 0 else None
                     basis = 'prepared continuation'
                 else:
                     after = empirical_score
@@ -64,8 +64,8 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
                               alternative=None)
             else:
                 move_database_score = score(counts(row), color) if row else None
-                after = (float(values[b.target][KNOWN, 0])
-                         if b.target is not None and values[b.target][UNKNOWN, 0] == 0 else None)
+                after = (float(values[b.target][KNOWN])
+                         if b.target is not None and values[b.target][UNKNOWN] == 0 else None)
                 alternatives = [r for r in rows.values() if r['uci'] != b.move and sum(counts(r)) > 0]
                 alternatives.sort(key=lambda r: (-score(counts(r), color), -sum(counts(r)), r['uci']))
                 alternative = None
@@ -146,7 +146,7 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
         context['values'] = backward(context['model'], context['order'], context['sampled'], manifest['sparse_threshold'])
     model, sampled, values = (contexts['{}'][k] for k in ('model', 'sampled', 'values'))
     overall = sum(w*values[k] for k, w in roots.items())
-    if not np.allclose(overall[[KNOWN, UNKNOWN], 0],
+    if not np.allclose(overall[[KNOWN, UNKNOWN]],
                        [saved['overall']['resolved_contribution'], saved['overall']['unresolved_mass']],
                        atol=1e-12, rtol=0):
         raise AssertionError('Reconstructed model differs from saved scores')
@@ -179,8 +179,8 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
         cm, co, cs, cv = (context[k] for k in ('model', 'order', 'sampled', 'values'))
         entries = [e['position'] for e in chapter['entries']]
         _, entry_mass = forward(cm, co, cs, roots, stop_at=entries, entering=can_enter(cm, co, entries))
-        probability = sum(float(w[0]) for w in entry_mass.values())
-        weights = {k: float(v[0])/probability for k, v in entry_mass.items() if v[0] > 0} if probability else {}
+        probability = sum(float(w) for w in entry_mass.values())
+        weights = {k: float(v)/probability for k, v in entry_mass.items() if v > 0} if probability else {}
         reported_probability = chapter['score'].get('entry_probability')
         if reported_probability is not None and not np.isclose(probability, reported_probability, atol=1e-12, rtol=0):
             raise AssertionError('Chapter first-entry probability changed')
@@ -192,7 +192,7 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
         if weights:
             conditional = sum(w*cv[k] for k, w in weights.items())
             expected = chapter['score'].get('raw_empirical_score')
-            if expected is not None and not np.isclose(conditional[KNOWN, 0], expected, atol=1e-12, rtol=0):
+            if expected is not None and not np.isclose(conditional[KNOWN], expected, atol=1e-12, rtol=0):
                 raise AssertionError('Chapter conditional score changed')
             scope_lines = representative_lines(graph, cm, co, cs, weights, context['lines'])
             scope = rank_scope(context['local'], reaches(cm, co, cs, weights), scope_lines, reported_probability)
@@ -212,9 +212,9 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
     for context in contexts.values():
         cm, cs, cv = (context[k] for k in ('model', 'sampled', 'values'))
         for k, node in cm.items():
-            if node.mode != 'opponent' or cv[k][UNKNOWN, 0] != 0:
+            if node.mode != 'opponent' or cv[k][UNKNOWN] != 0:
                 continue
-            balance = sum(p*(cv[k][KNOWN, 0]-(cv[b.target][KNOWN, 0] if b.target else s))
+            balance = sum(p*(cv[k][KNOWN]-(cv[b.target][KNOWN] if b.target else s))
                           for b, (p, s) in zip(node.branches, cs[k]) if p > 0)
             max_balance_error = max(max_balance_error, abs(float(balance)))
     if max_balance_error > 1e-10:

@@ -78,17 +78,17 @@ def test_chapter_weighted_multiple_entries_and_transposition_aggregation(tmp_pat
     assert sorted(r['weighted_drag_pp'] for r in selected) == pytest.approx([6, 14])
     entries = [position('Nf3'), position('g3'), junction]
     _, first = forward(m, o, raw, {root: 1}, stop_at=entries)
-    assert first[junction][0] == 0
-    weights = {k: float(x[0]) for k, x in first.items()}
+    assert first[junction] == 0
+    weights = {k: float(x) for k, x in first.items()}
     conditional = rank_scope(local, reaches(m, o, raw, weights), {}, .25)
     join = next(r for r in conditional['rankings']['own'] if r['position'] == junction)
     assert join['study_drag_pp_after_entry'] == pytest.approx(5)
     assert all(r['position'] != root for r in conditional['all_signed_rows'])
     # The second route bypasses the early entry and first enters at the shared descendant.
     _, late = forward(m, o, raw, {root: 1}, stop_at=[position('Nf3'), junction])
-    assert late[position('Nf3')][0] == pytest.approx(.7)
-    assert late[junction][0] == pytest.approx(.3)
-    late_reach = reaches(m, o, raw, {k: float(w[0]) for k, w in late.items()})
+    assert late[position("Nf3")] == pytest.approx(.7)
+    assert late[junction] == pytest.approx(.3)
+    late_reach = reaches(m, o, raw, {k: float(w) for k, w in late.items()})
     assert late_reach[junction] == pytest.approx(1)
 
 

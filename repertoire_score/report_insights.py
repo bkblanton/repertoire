@@ -29,7 +29,8 @@ def gap_priorities(metrics):
     repeat = sum(r['reach'] ** 2 for r in gaps)
     cumulative = 0.
     result = []
-    for row in sorted(gaps, key=lambda r: (-r['reach'], r['position'])):
+    # Reaches equal up to rounding noise rank by position, so the running share does not depend on summation order.
+    for row in sorted(gaps, key=lambda r: (-round(r['reach'], 15), r['position'])):
         share = row['reach'] ** 2 / repeat if repeat else 0.
         cumulative += share
         result.append(dict(position=row['position'], reach=row['reach'],
@@ -125,12 +126,12 @@ class LocalComparisons:
     def opponent(self, k, j):
         """Repertoire value before an opponent reply minus the value after it: mean and 95% interval."""
         posterior, branch = self.posterior, self.posterior.model[k].branches[j]
-        before = posterior.values[k][COMPLETED, 0]
+        before = posterior.values[k][COMPLETED]
         reach = self.influence[k]
         # The value before the reply already contains the reply's own share of the score after it.
         component, coefficient = None, posterior.sample[k][j][0] - 1
         if branch.target is not None:
-            after = posterior.values[branch.target][COMPLETED, 0]
+            after = posterior.values[branch.target][COMPLETED]
             downstream = self.influence[branch.target]
             variance = sum((reach.get(m, 0.) - downstream.get(m, 0.)) ** 2 * posterior.table_variance(m)
                            for m in sorted(set(reach) | set(downstream)))
@@ -155,7 +156,7 @@ class LocalComparisons:
         row = moves.index(move)
         selected, selected_variance = row_moments(alpha[row], self.owner)
         share = float(weights[row].sum())
-        after = self.posterior.values[target][COMPLETED, 0]
+        after = self.posterior.values[target][COMPLETED]
         after_variance = self.value_variance(target)
         drop = parent - after
         # Keep the skewed shape of whichever bounded score varies most: the parent's or a leaf continuation's.

@@ -21,8 +21,8 @@ def test_continuation_matches_core_scorer_and_depth(tmp_path):
     depth=summarize_depth(prepared_depth_values(model,order,raw),{g.roots[0]:1})
     evaluator=Evaluator(g,True,evidence,chess_facts(g,True,evidence))
     actual=evaluator.evaluate({g.roots[0]:1})
-    assert actual[0] == pytest.approx(values[g.roots[0]][KNOWN,0]) == pytest.approx(.22)
-    assert actual[1] == values[g.roots[0]][UNKNOWN,0]
+    assert actual[0] == pytest.approx(values[g.roots[0]][KNOWN]) == pytest.approx(.22)
+    assert actual[1] == values[g.roots[0]][UNKNOWN]
     assert actual[2] == pytest.approx(depth['expected_moves'])
     evaluator.reaches({g.roots[0]:1})
 
@@ -80,7 +80,7 @@ def test_transposition_scores_match_core(tmp_path,color):
     model=prepare(g,transitions,order,color,evidence)
     raw=empirical(model,color); v=backward(model,order,raw,30)
     actual=Evaluator(g,color,evidence,chess_facts(g,color,evidence)).evaluate({g.roots[0]:1})
-    assert actual[0] == pytest.approx(v[g.roots[0]][KNOWN,0])
+    assert actual[0] == pytest.approx(v[g.roots[0]][KNOWN])
 
 
 def test_representative_routes_keep_first_transposition_and_custom_root(tmp_path):

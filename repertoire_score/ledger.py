@@ -27,7 +27,7 @@ def events(graph, model, raw_sample, posterior, raw_flow, post_flow, color, prio
         raw_score = raw_sample[k][j][1]
         score_mean, interval = posterior.stop_interval(k, j)
         # Upstream reach and this table are independent, so the mean of their product is the product of means.
-        pmass = float(post_flow[(k, j)][0])
+        pmass = float(post_flow[(k, j)])
         sample = sum(b.counts)
         unresolved = b.fixed_score is None and sample == 0
         n = graph.nodes[k]
@@ -38,10 +38,10 @@ def events(graph, model, raw_sample, posterior, raw_flow, post_flow, color, prio
                        "representative_path_san": path, "chapters": sorted(n.chapters), "type": b.kind,
                        "unresolved": unresolved, "score_status": "prior-only; no direct observations" if unresolved else "deterministic" if b.fixed_score is not None else "observed",
                        "sample_count": sample, "counts_white_draw_black": b.counts,
-                       "probability": float(mass[0]), "posterior_probability_mean": pmass,
+                       "probability": float(mass), "posterior_probability_mean": pmass,
                        "raw_score": raw_score, "posterior_score_mean": score_mean,
                        "posterior_score_interval_95": interval,
-                       "contribution": float(mass[0]*raw_score) if raw_score is not None else None,
+                       "contribution": float(mass*raw_score) if raw_score is not None else None,
                        "posterior_contribution_mean": pmass*score_mean,
                        "uncertainty_priority": pmass*(interval[1]-interval[0]),
                        "prior_fraction": 0 if b.fixed_score is not None else

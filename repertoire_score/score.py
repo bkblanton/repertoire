@@ -247,7 +247,7 @@ def score_repertoire(graph, color, plan, evidence, provenance, prior, sparse_thr
             raw_flow, _ = forward(model, order, raw_sample, root_weights)
             post_flow, _ = forward(model, order, posterior.sample, root_weights)
             ledger = events(graph, model, raw_sample, posterior, raw_flow, post_flow, color, sum(prior))
-            if not np.isclose(sum(e['contribution'] or 0 for e in ledger), raw_root[KNOWN, 0], atol=1e-9):
+            if not np.isclose(sum(e['contribution'] or 0 for e in ledger), raw_root[KNOWN], atol=1e-9):
                 raise AssertionError('Raw weighted stopping contributions differ from root value')
             if not np.isclose(sum(e['posterior_contribution_mean'] for e in ledger), overall_posterior['mean'], atol=1e-9):
                 raise AssertionError('Posterior weighted stopping contributions differ from root value')

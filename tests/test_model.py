@@ -16,14 +16,14 @@ def test_forced_own_move_deviations_and_conservation(tmp_path):
     evidence = {e4:data(60,0,40,[('e7e5',40,0,40),('c7c5',20,0,0)]), leaf:data(50,0,50)}
     m,o,r,s,v,p = setup(g, True, evidence)
     root = g.roots[0]
-    assert v[root][KNOWN,0] == pytest.approx(.8*.5+.2*1)
+    assert v[root][KNOWN] == pytest.approx(.8*.5+.2*1)
     stops,_ = forward(m,o,r,{root:1})
-    assert sum(x[0] for x in stops.values()) == pytest.approx(1)
-    assert sum(stops[k,j][0]*(r[k][j][1] or 0) for k,j in stops) == pytest.approx(.6)
+    assert sum(stops.values()) == pytest.approx(1)
+    assert sum(stops[k,j]*(r[k][j][1] or 0) for k,j in stops) == pytest.approx(.6)
     assert np.allclose(p[root][UNKNOWN]+p[root][LEAF]+p[root][DEVIATION]+p[root][OTHER],1)
     assert np.allclose(sum(flow*s.sample[k][j][1] for (k,j),flow in forward(m,o,s.sample,{root:1})[0].items()),p[root][COMPLETED])
     evidence[e4] = data(40,0,60,[('e7e5',40,0,40),('c7c5',0,0,20)])
-    assert setup(g, True, evidence)[4][root][KNOWN,0] == pytest.approx(.4)
+    assert setup(g, True, evidence)[4][root][KNOWN] == pytest.approx(.4)
 
 
 def test_sparse_zero_leaf_and_zero_distribution(tmp_path):
@@ -35,7 +35,7 @@ def test_sparse_zero_leaf_and_zero_distribution(tmp_path):
     assert summary['conditional_bounds'] == pytest.approx([.1,.9])
     evidence[position('e4')] = data(0,0,0)
     m,o,r,s,v,p = setup(g, True, evidence)
-    assert v[g.roots[0]][UNKNOWN,0] == 1
+    assert v[g.roots[0]][UNKNOWN] == 1
     assert len(m[position('e4')].branches) == 1
     assert m[position('e4')].mode == 'stop'
 
@@ -43,7 +43,7 @@ def test_sparse_zero_leaf_and_zero_distribution(tmp_path):
 def test_unobserved_moves_have_posterior_mass(tmp_path):
     g = graph(tmp_path, '1. e4 e5 *')
     m,o,r,s,v,p = setup(g,True,{position('e4'):data(1,0,0,[('e7e5',1,0,0)]),position('e4 e5'):data(1,0,0)})
-    assert v[g.roots[0]][UNKNOWN,0] == 0
+    assert v[g.roots[0]][UNKNOWN] == 0
     assert p[g.roots[0]][UNKNOWN].mean() > 0
 
 
@@ -51,8 +51,8 @@ def test_residual_not_deviation_and_invalid_counts(tmp_path):
     g = graph(tmp_path,'1. e4 e5 *')
     e = {position('e4'):data(8,1,1,[('e7e5',5,1,1)]),position('e4 e5'):data(5,0,5)}
     m,o,r,s,v,p = setup(g,True,e)
-    assert v[g.roots[0]][OTHER,0] == pytest.approx(.3)
-    assert v[g.roots[0]][DEVIATION,0] == 0
+    assert v[g.roots[0]][OTHER] == pytest.approx(.3)
+    assert v[g.roots[0]][DEVIATION] == 0
     with pytest.raises(ValueError,match='Inconsistent'):
         validate(data(0,0,0,[('e7e5',1,0,0)]),position('e4'))
     with pytest.raises(ValueError):
@@ -68,7 +68,7 @@ def test_duplicate_chapters_and_transposing_pgn(tmp_path):
     assert len(g1.nodes) == len(g2.nodes)
     for g in [g1,g2]:
         model = setup(g,True,{position('Nf3'):data(10,0,0,[('d7d5',10,0,0)]),position('Nf3 d5 g3'):data(10,0,0,[('g8f6',10,0,0)]),position('Nf3 d5 g3 Nf6'):data(3,2,5)})
-        assert model[4][g.roots[0]][KNOWN,0] == pytest.approx(.4)
+        assert model[4][g.roots[0]][KNOWN] == pytest.approx(.4)
     # Same final position through another move order merges exactly.
     g = graph(tmp_path, '1. Nf3 d5 2. g3 Nf6 *\n\n1. g3 Nf6 2. Nf3 d5 3. Bg2 *')
     junction = position('Nf3 d5 g3 Nf6')
@@ -88,7 +88,7 @@ def test_transposition_incoming_mass_and_first_entry(tmp_path):
     m,o,r,s,v,p = setup(g,True,evidence,policy)
     flow,_ = forward(m,o,r,{root:1})
     leaf = position('Nf3 d5 g3 Nf6 Bg2')
-    assert sum(mass[0] for (k, _), mass in flow.items() if k == leaf) == pytest.approx(1)
+    assert sum(mass for (k, _), mass in flow.items() if k == leaf) == pytest.approx(1)
     chapter = chapter_score(m,o,r,v,{root:1},[position('Nf3'),position('g3'),leaf],s)
     assert chapter['entry_probability'] == pytest.approx(1)
     assert chapter['first_entry_weights'][leaf] == 0
@@ -115,8 +115,8 @@ def test_conflict_cycle_color_and_reproducibility(tmp_path):
     g = graph(tmp_path,'*')
     e = {g.roots[0]:data(7,2,1)}
     white,black = setup(g,True,e),setup(g,False,e)
-    assert white[4][g.roots[0]][KNOWN,0] == pytest.approx(.8)
-    assert black[4][g.roots[0]][KNOWN,0] == pytest.approx(.2)
+    assert white[4][g.roots[0]][KNOWN] == pytest.approx(.8)
+    assert black[4][g.roots[0]][KNOWN] == pytest.approx(.2)
     assert np.array_equal(white[5][g.roots[0]],setup(g,True,e)[5][g.roots[0]])
 
 
@@ -134,7 +134,7 @@ def test_terminal_outcome_no_evidence(tmp_path):
     for fen, expected in [('7k/6Q1/6K1/8/8/8/8/8 b - - 0 1',1),('7k/5Q2/6K1/8/8/8/8/8 b - - 0 1',.5),('7k/8/6K1/8/8/8/8/8 w - - 0 1',.5)]:
         g = graph(tmp_path,f'[SetUp "1"]\n[FEN "{fen}"]\n\n*')
         m,o,r,s,v,p = setup(g,True,{})
-        assert v[g.roots[0]][KNOWN,0] == expected
+        assert v[g.roots[0]][KNOWN] == expected
 
 
 def test_offline_cache_miss_is_error(tmp_path):
@@ -154,7 +154,7 @@ def test_reject_variant_and_malformed_pgn(tmp_path):
 def test_leaf_results_are_not_parent_move_results(tmp_path):
     g = graph(tmp_path,'1. e4 e5 *')
     evidence = {position('e4'):data(100,0,0,[('e7e5',100,0,0)]),position('e4 e5'):data(0,0,100)}
-    assert setup(g,True,evidence)[4][g.roots[0]][KNOWN,0] == 0
+    assert setup(g,True,evidence)[4][g.roots[0]][KNOWN] == 0
 
 
 def test_entry_ambiguity_and_explicit_exclusions(tmp_path):

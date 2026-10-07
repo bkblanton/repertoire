@@ -36,9 +36,9 @@ def test_cached_endpoint_replies_merge_transposed_gaps_and_scores(tmp_path):
     assert gaps[gap] == pytest.approx(row['reach'])
     assert sum(gaps.values()) == pytest.approx(1.)
     assert result['validation']['unanswered_reach_matches_first_gaps']
-    assert values[g.roots[0]][KNOWN, 0] == pytest.approx(.32)
+    assert values[g.roots[0]][KNOWN] == pytest.approx(.32)
     assert ev.values[g.roots[0]][0] == pytest.approx(.32)
-    assert sum(flow[0] for flow in forward(m, order, raw, root)[0].values()) == pytest.approx(1.)
+    assert sum(forward(m, order, raw, root)[0].values()) == pytest.approx(1.)
     opportunities = result['predictability']['positions']
     assert next(r for r in opportunities if r['position'] == endpoint)['reach'] == pytest.approx(.4)
 
@@ -76,11 +76,11 @@ def test_cached_endpoint_transposition_resumes_preparation_and_chapter_entry(tmp
     roots = {g.roots[0]: 1.}
     result = scope_metrics(ev, roots, position_lines(g))
     expected = .2 if color else .8
-    assert values[g.roots[0]][KNOWN, 0] == pytest.approx(expected)
+    assert values[g.roots[0]][KNOWN] == pytest.approx(expected)
     assert ev.values[g.roots[0]][0] == pytest.approx(expected)
     assert ev.reaches(roots)[target] == pytest.approx(1.)
     _, entries = forward(m, order, raw, roots, stop_at={target})
-    assert entries[target][0] == pytest.approx(1.)
+    assert entries[target] == pytest.approx(1.)
     assert result['gap_coverage']['gap_mass'] == pytest.approx(1.)
     assert result['reuse']['expected_encounters_per_game'] == pytest.approx(3.)
     assert result['validation']['unanswered_reach_matches_first_gaps']

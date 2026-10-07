@@ -56,7 +56,7 @@ def analyze_color(path, cache):
     depth = prepared_depth_values(model, order, raw)
     reach = reaches(model, order, raw, roots)
     root_score = sum(weight * values[position] for position, weight in roots.items())
-    if not np.allclose(root_score[[KNOWN, UNKNOWN], 0],
+    if not np.allclose(root_score[[KNOWN, UNKNOWN]],
                        [saved['overall']['resolved_contribution'], saved['overall']['unresolved_mass']], atol=1e-10):
         raise AssertionError('Correlation model differs from saved repertoire score')
     root_depth = sum(weight * depth[position][0] for position, weight in roots.items())
@@ -85,8 +85,8 @@ def analyze_color(path, cache):
             raise ValueError('Saved own decision differs from the selected overall policy')
         probability = branch.weight
         weight = float(reach[position] * probability)
-        after = float(values[target][KNOWN, 0])
-        if values[target][UNKNOWN, 0] != 0 or not np.isclose(after, row['move_score'], atol=1e-10):
+        after = float(values[target][KNOWN])
+        if values[target][UNKNOWN] != 0 or not np.isclose(after, row['move_score'], atol=1e-10):
             raise ValueError('Saved continuation score differs from the cached model')
         if not np.isclose(weight, row['branch_reach'], atol=1e-10):
             raise ValueError('Saved decision reach differs from the cached model')

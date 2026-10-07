@@ -51,7 +51,7 @@ def test_late_transposition_counts_once_and_reweights_score_and_baseline(tmp_pat
     expanded = chapter_score(m,o,r,v,{g.roots[0]:1},region,s)
     assert expanded['entry_probability'] == pytest.approx(result['entry_probability'])
     assert expanded['raw_empirical_score'] == pytest.approx(result['raw_empirical_score'])
-    assert sum(x[0] for x in forward(m,o,r,{g.roots[0]:1})[0].values()) == pytest.approx(1)
+    assert sum(forward(m,o,r,{g.roots[0]:1})[0].values()) == pytest.approx(1)
     with pytest.raises(ValueError, match='does not belong'):
         chapter_region(g,'quiet',[position('e4 e5 Nc3 Nf6 g3 Bc5')])
     with pytest.raises(ValueError, match='requires anchors'):
