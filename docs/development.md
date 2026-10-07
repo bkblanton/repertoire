@@ -19,6 +19,7 @@ Work from the repository root and preserve unrelated local changes. Use uv for P
 | Correlations | [position_correlations.py](../repertoire_score/position_correlations.py), [rating_correlations.py](../repertoire_score/rating_correlations.py), with shared helpers in [stats.py](../repertoire_score/stats.py) |
 | Summary, full report, chapter and opening pages, exit points, Lichess links, cross-page link resolution and nested contents | the [report](../repertoire_score/report) package: `format`, `markdown`, `bundle` (loading saved analyses), `links`, `derive`, `tables`, `sections`, `definitions`, `pages` and `generate`; [render.py](../repertoire_score/render.py) is its command line |
 | Lichess study export | [studies.py](../repertoire_score/studies.py) |
+| Fetching every Explorer table a build needs, before any stage runs | [fetch.py](../repertoire_score/fetch.py) |
 | Incremental stage orchestration | [build.py](../repertoire_score/build.py) |
 | Shared loading, evidence reads and companion manifests for the cache-only stages | [context.py](../repertoire_score/context.py) |
 | Saved JSON format and status values | [schema.py](../repertoire_score/schema.py) (TypedDicts), [status.py](../repertoire_score/status.py) |
@@ -27,7 +28,7 @@ Numerical analyses produce saved JSON; the `report` package combines matching sa
 
 The complete build follows this order:
 
-`scores -> vulnerabilities -> preparation -> character -> ratings -> openings -> report insights -> both correlations -> rendering`
+`export -> fetch -> scores -> vulnerabilities -> preparation -> character -> ratings -> openings -> report insights -> both correlations -> rendering`
 
 Ratings depend on preparation, character and vulnerabilities. Report insights depend on preparation, character, vulnerabilities and openings. Companion manifests contain source-score hashes and, where applicable, supporting-analysis hashes and cache provenance. A changed companion may require rebuilding its dependents even when the headline score is unchanged. Strict rendering checks provenance; do not edit hashes or numerical JSON by hand to bypass a mismatch. Standalone commands can render an intermediate report with pending analyses; the batch defers rendering until all stages succeed.
 

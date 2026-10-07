@@ -206,6 +206,17 @@ def required_positions(plan, color):
     return list(dict.fromkeys([STARTING_POSITION, *required, *baseline_positions]))
 
 
+def parent_positions(plan, color):
+    """Own-move parents: the tables the vulnerabilities stage compares each selected move against."""
+    parents = [
+        k
+        for profile in plan.profiles
+        for k in profile['order']
+        if owner_outcome(k, color) is None and profile['transitions'][k] and turn(k) == color
+    ]
+    return list(dict.fromkeys(parents))
+
+
 def evaluate_profiles(graph, color, plan, evidence, sparse_threshold):
     for profile in plan.profiles:
         profile['model'] = prepare(graph, profile['transitions'], profile['order'], color, evidence)

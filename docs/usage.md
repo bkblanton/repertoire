@@ -50,8 +50,9 @@ Everything runs through one command, `repertoire <command>`. `uv run repertoire 
 
 | Command | Purpose |
 | --- | --- |
-| `build` | Export the studies, score both colors and write every report. |
-| `fetch` | Export the studies without building. |
+| `build` | Export the studies, fetch the Explorer tables, score both colors and write every report. |
+| `export` | Export the studies without building. |
+| `fetch` | Fetch the Explorer tables both repertoires need, without building. |
 | `score` | Inspect or score one repertoire PGN. |
 | `report` | Render the Markdown reports from saved results, offline. |
 | `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. |
@@ -77,9 +78,9 @@ Create a personal token at [lichess.org/account/oauth/token](https://lichess.org
 
 The export step writes `studies/white.pgn` and `studies/black.pgn` with all chapters, variations and comments. Each download is validated by parsing it before the previous export is replaced, and a file is left untouched when only its `Date` headers changed, so an unchanged study reuses every saved stage. The exports are tracked in Git, so `git diff studies/` shows what changed in your preparation since the last commit.
 
-The build then scores both colors, generates the supporting analyses, and writes `reports/report.md`, `reports/summary.md`, and the chapter and opening pages under `reports/chapters/` and `reports/openings/`. Existing Explorer responses are reused; new or extended lines require only the missing tables. Network failures abort the build and retain completed work for a later retry.
+The build then fetches every Explorer table both repertoires need, in one pass with a count and time estimate up front. Every later stage runs offline: it scores both colors, generates the supporting analyses, and writes `reports/report.md`, `reports/summary.md`, and the chapter and opening pages under `reports/chapters/` and `reports/openings/`. Existing Explorer responses are reused; new or extended lines require only the missing tables. Network failures abort the build and retain completed work for a later retry.
 
-`uv run repertoire fetch` exports the studies without building. `repertoire build --no-fetch` builds from the last export without contacting the study API. `--sources` and `--studies` select a different study list and export folder.
+`uv run repertoire export` exports the studies without building, and `uv run repertoire fetch` fetches the Explorer tables for the last export (or for two PGN paths) without building; `fetch --dry-run` and `build --dry-run` print the count and estimate and stop. `repertoire build --no-export` builds from the last export without contacting the study API. `--sources` and `--studies` select a different study list and export folder.
 
 ## Analyze other PGN files
 
@@ -267,7 +268,7 @@ uv run repertoire vulnerabilities reports/data/white.json reports/data/black.jso
 
 This defaults to **cache-only** and requires no token. If own decision positions were not needed by an earlier score run, add `--fetch-missing` with `--token-file` or `LICHESS_TOKEN`. Only missing own-parent tables are fetched, once per canonical position and filter set. Every candidate reply or alternative is read from its parent's cached move rows. Candidate child endpoints are never requested for screening. Existing score evidence must match the saved report's cache keys and retrieval timestamps; a changed PGN or refreshed evaluation cache requires regenerating scores first.
 
-Outputs are `data/white.vulnerabilities.json` and `data/black.vulnerabilities.json`. The consolidated report has separate tables for unprepared opponent replies, prepared opponent replies, and selected own moves. Opponent replies rank by weighted drag; own moves rank by the direct deficit against the parent database score. Each category is filtered before its display limit. Set displayed ranking lengths with `repertoire report --top` and `--chapter-top`; JSON always retains all rankings and signed comparisons. `repertoire build` generates this analysis after scoring both colors, fetching missing parent tables unless `--offline` is set. Rendering alone does not recalculate vulnerabilities.
+Outputs are `data/white.vulnerabilities.json` and `data/black.vulnerabilities.json`. The consolidated report has separate tables for unprepared opponent replies, prepared opponent replies, and selected own moves. Opponent replies rank by weighted drag; own moves rank by the direct deficit against the parent database score. Each category is filtered before its display limit. Set displayed ranking lengths with `repertoire report --top` and `--chapter-top`; JSON always retains all rankings and signed comparisons. `repertoire build` generates this analysis after scoring both colors; its fetch step has already cached the parent tables unless `--offline` is set. Rendering alone does not recalculate vulnerabilities.
 
 The metrics behind these rankings are defined under [Strengths and vulnerabilities](metrics.md#strengths-and-vulnerabilities).
 

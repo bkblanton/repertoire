@@ -1,4 +1,5 @@
-"""Build both repertoires in one process, reusing verified unchanged analyses."""
+"""Build both repertoires in one process: fetch every Explorer table first, then run each stage offline,
+reusing verified unchanged analyses."""
 
 import argparse
 import hashlib
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 
 from . import (
     character,
+    fetch,
     openings,
     position_correlations,
     preparation,
@@ -83,8 +85,9 @@ def code_inputs(presentation=False):
     """Source files whose changes invalidate saved analyses, or with `presentation` also the rendered pages."""
     package = Path(__file__).parent
     rendering = [package / 'render.py', *sorted((package / 'report').glob('*.py'))]
-    # Study export code and the command dispatcher never affect analyses or rendering.
-    files = [p for p in sorted(package.glob('*.py')) if p.name not in ('studies.py', 'cli.py', 'render.py')]
+    # Study export, table fetching and the command dispatcher never affect analyses or rendering.
+    excluded = ('studies.py', 'fetch.py', 'cli.py', 'render.py')
+    files = [p for p in sorted(package.glob('*.py')) if p.name not in excluded]
     # Bundled opening names label the opening analyses.
     files += sorted((package / 'data').rglob('*.tsv'))
     if presentation:
@@ -157,6 +160,9 @@ def build(
     force=False,
 ):
     started = time.perf_counter()
+    if not offline:
+        # All network work happens here, so the stages below never wait on Lichess.
+        fetch.fetch(dict(white=white_pgn, black=black_pgn), dict(white=white_config, black=black_config), cache)
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     runner = Builder(directory / '.build-state.json', force)
@@ -166,7 +172,7 @@ def build(
     options = dict(
         command='run',
         cache=cache,
-        offline=offline,
+        offline=True,
         refresh=False,
         prior=[0.5, 0.5, 0.5],
         sparse_threshold=30,
@@ -202,8 +208,7 @@ def build(
                 required = [path] + [path.with_suffix(f'.{name}.json') for name in DEPENDENCIES.get(family, ())]
 
                 def analyze(path=path, family=family):
-                    kwargs = dict(fetch_missing=not offline) if family == 'vulnerabilities' else {}
-                    value = MODULES[family].analyze(path, cache, **kwargs)
+                    value = MODULES[family].analyze(path, cache)
                     write_json(path.with_suffix(f'.{family}.json'), value)
 
                 runner.step(
@@ -269,26 +274,35 @@ def main():
     parser.add_argument('black_pgn', nargs='?')
     parser.add_argument('--sources', default=studies.SOURCES, help='JSON file with white and black study URLs')
     parser.add_argument('--studies', default=studies.DIRECTORY, help='Folder for exported study PGNs')
-    parser.add_argument('--no-fetch', action='store_true', help='Use the previously exported study PGNs')
+    parser.add_argument('--no-export', action='store_true', help='Use the previously exported study PGNs')
     parser.add_argument('--white-config', default='configs/white.json')
     parser.add_argument('--black-config', default='configs/black.json')
     parser.add_argument('--directory', default='reports/data')
     parser.add_argument('--cache', default=DEFAULT_CACHE)
-    parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--offline', action='store_true', help='Use only cached Explorer tables and the last export')
     parser.add_argument('--force', action='store_true', help='Rebuild all analyses using existing cached evidence')
+    parser.add_argument(
+        '--dry-run', action='store_true', help='Export the studies, then count the tables to fetch and stop'
+    )
     add_token_option(parser)
     args = parser.parse_args()
     apply_token_file(parser, args)
     if (args.white_pgn is None) != (args.black_pgn is None):
         parser.error('give both PGN paths, or neither to use the exported studies')
     options = vars(args)
-    sources, folder, no_fetch = options.pop('sources'), options.pop('studies'), options.pop('no_fetch')
+    sources, folder, no_export = options.pop('sources'), options.pop('studies'), options.pop('no_export')
+    dry_run = options.pop('dry_run')
     options.pop('token_file')
     try:
         if args.white_pgn is None:
             # Offline builds never contact Lichess, so they reuse the last export.
-            paths = studies.default_paths(folder) if no_fetch or args.offline else studies.fetch(sources, folder)
+            paths = studies.default_paths(folder) if no_export or args.offline else studies.export(sources, folder)
             options.update(white_pgn=paths['white'], black_pgn=paths['black'])
+        if dry_run:
+            pgns = dict(white=options['white_pgn'], black=options['black_pgn'])
+            configs = dict(white=options['white_config'], black=options['black_config'])
+            fetch.fetch(pgns, configs, options['cache'], dry_run=True)
+            return
         build(**options)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         parser.exit(1, f'Batch failed: {exc}\nCompleted checkpoints and Explorer cache are preserved.\n')

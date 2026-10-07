@@ -46,21 +46,21 @@ def test_study_id_rejects_other_urls():
         studies.study_id('https://lichess.org/broadcast/abcd1234')
 
 
-def test_fetch_exports_whole_studies_and_ignores_export_date_changes(tmp_path, monkeypatch):
+def test_export_exports_whole_studies_and_ignores_export_date_changes(tmp_path, monkeypatch):
     monkeypatch.setenv('LICHESS_TOKEN', 'test')
     sources = dict(white='https://lichess.org/study/abcdEFGH', black='https://lichess.org/study/ijklMNOP/chap0001')
     seen = []
     first = [httpx.Response(200, text=CHAPTERS.format(date='2026.10.05')) for _ in range(2)]
-    paths = studies.fetch(sources, tmp_path, client=client(first, seen))
+    paths = studies.export(sources, tmp_path, client=client(first, seen))
     assert [r.url.path for r in seen] == ['/api/study/abcdEFGH.pgn', '/api/study/ijklMNOP.pgn']
     assert seen[0].url.params['variations'] == 'true'
     assert [c['id'] for c in parse(paths['white']).chapters] == ['chap0001', 'chap0002']
     original = paths['white'].read_text(encoding='utf-8')
     later = [httpx.Response(200, text=CHAPTERS.format(date='2026.10.06')) for _ in range(2)]
-    studies.fetch(sources, tmp_path, client=client(later, seen))
+    studies.export(sources, tmp_path, client=client(later, seen))
     assert paths['white'].read_text(encoding='utf-8') == original
     changed = [httpx.Response(200, text=CHAPTERS.format(date='2026.10.06').replace('Nf6', 'Nc6')) for _ in range(2)]
-    studies.fetch(sources, tmp_path, client=client(changed, seen))
+    studies.export(sources, tmp_path, client=client(changed, seen))
     assert 'Nc6' in paths['white'].read_text(encoding='utf-8')
     assert not list(tmp_path.glob('*.tmp'))
 
@@ -71,9 +71,9 @@ def test_failed_or_malformed_export_keeps_previous_file(tmp_path, monkeypatch):
     path = tmp_path / 'white.pgn'
     path.write_text('previous', encoding='utf-8')
     with pytest.raises(RuntimeError, match='study:read'):
-        studies.fetch(sources, tmp_path, client=client([httpx.Response(403)], []))
+        studies.export(sources, tmp_path, client=client([httpx.Response(403)], []))
     with pytest.raises(ValueError):
-        studies.fetch(sources, tmp_path, client=client([httpx.Response(200, text='1. e4 Ke7?? 2. Qxx *')], []))
+        studies.export(sources, tmp_path, client=client([httpx.Response(200, text='1. e4 Ke7?? 2. Qxx *')], []))
     assert path.read_text(encoding='utf-8') == 'previous'
     assert not list(tmp_path.glob('*.tmp'))
 
@@ -84,7 +84,7 @@ def test_export_waits_out_rate_limits_and_gives_up_on_long_outages(tmp_path, mon
     monkeypatch.setattr('repertoire_score.explorer.time.sleep', sleeps.append)
     text = CHAPTERS.format(date='2026.10.05')
     limited = [httpx.Response(429)] * 10 + [httpx.Response(200, text=text)] * 2
-    paths = studies.fetch(dict(white='abcdEFGH', black='ijklMNOP'), tmp_path, client=client(limited, []))
+    paths = studies.export(dict(white='abcdEFGH', black='ijklMNOP'), tmp_path, client=client(limited, []))
     assert sleeps == [60] * 10
     assert paths['white'].is_file()
     sleeps.clear()
@@ -93,11 +93,11 @@ def test_export_waits_out_rate_limits_and_gives_up_on_long_outages(tmp_path, mon
     assert sum(sleeps) == 100
 
 
-def test_fetch_requires_token(tmp_path, monkeypatch):
+def test_export_requires_token(tmp_path, monkeypatch):
     monkeypatch.delenv('LICHESS_TOKEN', raising=False)
     with pytest.raises(ValueError, match='LICHESS_TOKEN'):
-        studies.fetch(dict(white='abcdEFGH', black='ijklMNOP'), tmp_path)
+        studies.export(dict(white='abcdEFGH', black='ijklMNOP'), tmp_path)
 
 
 def test_export_code_does_not_invalidate_analyses():
-    assert not any(path.endswith('studies.py') for path in build.code_inputs(presentation=True))
+    assert not any(path.endswith(('studies.py', 'fetch.py')) for path in build.code_inputs(presentation=True))

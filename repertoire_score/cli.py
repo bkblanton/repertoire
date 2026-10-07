@@ -6,8 +6,9 @@ import sys
 
 # Subcommand, module, one-line help. Each module keeps its own main() and argument parser.
 COMMANDS = [
-    ('build', 'build', 'Export the studies, score both colors and write every report'),
-    ('fetch', 'studies', 'Export the White and Black Lichess studies to local PGN files'),
+    ('build', 'build', 'Export the studies, fetch Explorer tables, score both colors and write every report'),
+    ('export', 'studies', 'Export the White and Black Lichess studies to local PGN files'),
+    ('fetch', 'fetch', 'Fetch the Explorer tables both repertoires need; slow, resumable, and estimated'),
     ('score', 'score', 'Inspect or score one repertoire PGN'),
     ('report', 'render', 'Render the Markdown reports from saved results, offline'),
     ('vulnerabilities', 'vulnerabilities', 'Rank strengths and vulnerabilities from saved scores'),

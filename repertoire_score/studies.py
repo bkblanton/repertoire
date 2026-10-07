@@ -72,7 +72,7 @@ def download(client, study, patience=OUTAGE_PATIENCE):
         return response.text
 
 
-def fetch(sources=SOURCES, directory=DIRECTORY, client=None):
+def export(sources=SOURCES, directory=DIRECTORY, client=None):
     """Download both studies; leave a file untouched when only its export date changed."""
     studies = load_sources(sources) if isinstance(sources, (str, Path)) else sources
     token = os.environ.get('LICHESS_TOKEN', '').strip()
@@ -114,7 +114,7 @@ def main():
     args = parser.parse_args()
     apply_token_file(parser, args)
     try:
-        fetch(args.sources, args.directory)
+        export(args.sources, args.directory)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         parser.exit(1, f'Study export failed: {exc}\n')
 

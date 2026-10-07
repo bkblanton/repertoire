@@ -114,13 +114,17 @@ class Progress:
             print(f'{self.label}: {self.status()}{estimate}', flush=True)
 
 
-def collect(explorer, positions, label):
-    """Read every table in order, saying up front how many need the network and how long that may take."""
-    positions = list(dict.fromkeys(positions))
+def survey(explorer, positions, label, fetching=None):
+    """Say how many of `positions` are cached and, when they will be fetched, how long that may take.
+
+    Returns the tables that are not cached. `fetching` defaults to whether the Explorer is online.
+    """
     missing = [k for k in positions if not explorer.cached(k)]
+    if fetching is None:
+        fetching = not explorer.offline
     if not missing:
         print(f'{label}: {len(positions)} Explorer tables, all cached', flush=True)
-    elif explorer.offline:
+    elif not fetching:
         print(f'{label}: {len(missing)} of {len(positions)} Explorer tables are not cached', flush=True)
     else:
         # The request delay is a floor; rate limits make real runs slower.
@@ -130,6 +134,24 @@ def collect(explorer, positions, label):
             f'{len(missing)} to fetch (at least {floor})',
             flush=True,
         )
+    return missing
+
+
+def fetch_missing(explorer, positions, label):
+    """Request only the tables that are not cached, with progress; cached tables are not read."""
+    missing = survey(explorer, list(dict.fromkeys(positions)), label)
+    progress = Progress(len(missing), label)
+    for k in missing:
+        explorer.note = progress.status()
+        explorer.get(k)
+        progress.advance()
+    explorer.note = ''
+
+
+def collect(explorer, positions, label):
+    """Read every table in order, saying up front how many need the network and how long that may take."""
+    positions = list(dict.fromkeys(positions))
+    missing = survey(explorer, positions, label)
     progress, pending = Progress(len(missing), label), set(missing)
     evidence = {}
     for k in positions:
