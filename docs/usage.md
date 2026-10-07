@@ -177,7 +177,7 @@ Standalone scoring and analysis commands refresh the reports automatically. Duri
 | `reports/data/` | Score snapshots, companion JSON, correlation results, `.build-state.json` checkpoints and `.report-index.json` output registration. |
 | [reports/report.md](../reports/report.md), [reports/summary.md](../reports/summary.md) | The current generated full report and summary. |
 | `reports/chapters/`, `reports/openings/` | Generated chapter pages (`W1.md`, `B1.md`, ...) and per-color opening evidence pages, linked from the report and summary. |
-| `reports/comparisons/`, `reports/positions/` | Separate hypothetical comparisons and focused position reports; these can describe different snapshots. |
+| `reports/comparisons/`, `reports/positions/` | The opponent-rating comparison, plus static examples of hypothetical comparisons and focused position reports from earlier snapshots. |
 
 Explorer cache and generated analysis JSON are ignored by Git because they can grow very large. Readable Markdown reports remain tracked, so a fresh checkout may include reports without the local evidence needed to regenerate them. Preserve local data when changing Git tracking; clearing the cache is not a routine repair.
 
@@ -340,9 +340,9 @@ Every analysis command adds this attribution automatically.
 
 First rebuild the actual repertoire from its current PGN. Compare the candidate and actual preparation from the same entry board, for the same color, with matching filters and evidence. Report the conditional score at that entry separately from its full-repertoire reach and impact.
 
-Keep hypothetical results separate from the actual score snapshots and current reports. The comparison tools leave source PGNs unchanged, write hypothetical PGNs under `.cache/`, and put readable results under `reports/comparisons/`.
+Keep hypothetical results separate from the actual score snapshots and current reports: score a candidate from its own copy of the PGN (for example under `.cache/`), with the same color, filters, configuration and evidence as the actual repertoire, and leave the source PGNs unchanged. There is no generic candidate-comparison command.
 
-[scripts/compare_vienna.py](../scripts/compare_vienna.py) compares candidate Vienna chapters from `1.e4 e5 2.Nc3` and checks combinations of improving chapter blocks. [scripts/compare_french.py](../scripts/compare_french.py) is specifically the Schlechter `4.Bd3` comparison, not a generic French importer. Both expect matching saved actual results and support `--candidate`, `--offline`, and `--token-file`. Read their scenario definitions before adapting them to a different opening; chapter order changes the selected policy. There is no generic candidate-comparison CLI that automatically fits every study.
+The pages in `reports/comparisons/french-schlechter.md`, `reports/comparisons/vienna-gambit.md` and `reports/positions/` are static examples of such comparisons. The one-off scripts that produced them have been removed, so they are not regenerated and describe earlier snapshots.
 
 ## Troubleshooting
 
