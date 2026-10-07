@@ -26,7 +26,7 @@ Create `studies.json` in the repository root, pointing at your White and Black s
 }
 ```
 
-No other setup is needed. You can add move choices and chapter subjects later in `configs/white.json` and `configs/black.json`; see [Configuration](docs/usage.md#configuration).
+No other setup is needed. The first run creates `configs/white.json` and `configs/black.json` with no overrides; you can add move choices and chapter subjects there later; see [Configuration](docs/usage.md#configuration).
 
 Your repertoire stays on your computer: `studies.json`, the study exports in `studies/`, `configs/`, saved comparisons in `comparisons.json` and the generated `reports/` are all ignored by Git.
 

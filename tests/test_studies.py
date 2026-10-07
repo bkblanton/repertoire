@@ -53,14 +53,16 @@ def test_missing_study_list_explains_how_to_create_it(tmp_path):
         studies.load_sources(tmp_path / 'studies.json')
 
 
-def test_default_configs_are_optional(tmp_path, monkeypatch):
+def test_missing_default_configs_are_created_and_existing_ones_kept(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert score.config_path('white') is None
     (tmp_path / 'configs').mkdir()
-    (tmp_path / 'configs' / 'white.json').write_text('{}', encoding='utf-8')
+    (tmp_path / 'configs' / 'white.json').write_text('{"policy": {"x": "e4"}}', encoding='utf-8')
     assert score.config_path('white') == str(Path('configs/white.json'))
-    assert score.config_path('black') is None
+    assert score.load_config(score.config_path('white')) == {'policy': {'x': 'e4'}}
+    assert score.config_path('black') == str(Path('configs/black.json'))
+    assert score.load_config('configs/black.json') == {'policy': {}}
     assert score.config_path('black', 'other.json') == 'other.json'
+    assert not Path('other.json').exists()
 
 
 def test_export_exports_whole_studies_and_ignores_export_date_changes(tmp_path, monkeypatch):

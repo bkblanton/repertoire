@@ -211,7 +211,7 @@ Standalone scoring and analysis commands refresh the reports automatically. Duri
 | --- | --- |
 | `studies.json` | The White and Black Lichess study URLs exported by the default build. |
 | `studies/` | The latest study exports, `white.pgn` and `black.pgn`. |
-| `configs/white.json`, `configs/black.json` | Optional policy overrides and any entry overrides, keyed by Lichess chapter ID. Preserve explicit choices when importing newer PGNs. |
+| `configs/white.json`, `configs/black.json` | Policy overrides and any entry overrides, keyed by Lichess chapter ID; created empty when missing. Preserve explicit choices when importing newer PGNs. |
 | `.cache/explorer/` | Persistent raw Explorer responses, keyed by endpoint, canonical board and query filters. Each file wraps `identity`, `retrieved_at`, and `data`; score manifests identify the relevant cache keys. |
 | `reports/data/` | Score snapshots, companion JSON, correlation results, `.build-state.json` checkpoints and `.report-index.json` output registration. |
 | `reports/report.md`, `reports/summary.md` | The current generated full report and summary. |
@@ -230,7 +230,7 @@ Treat credentials as secrets: keep token files out of Git and never print their 
 
 ## Configuration
 
-Optional color settings go in `configs/white.json` and `configs/black.json`, which `build` and `fetch` use when they exist; `--white-config` and `--black-config` select other files. They define move overrides, any entry overrides and Explorer filters. Both are optional; without them, the defaults apply.
+Color settings go in `configs/white.json` and `configs/black.json`. `build` and `fetch` use them by default and create them with no overrides when they are missing; `--white-config` and `--black-config` select other files. They define move overrides, any entry overrides and Explorer filters.
 
 ### Explorer filters
 

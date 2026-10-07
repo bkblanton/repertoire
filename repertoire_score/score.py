@@ -103,11 +103,15 @@ def load_config(path):
 
 
 def config_path(color, path=None):
-    """An explicit configuration, else configs/<color>.json when it exists; None means no overrides."""
+    """An explicit configuration, else configs/<color>.json, created without overrides when missing."""
     if path:
         return path
     default = Path(CONFIG.format(color))
-    return str(default) if default.is_file() else None
+    if not default.is_file():
+        default.parent.mkdir(parents=True, exist_ok=True)
+        default.write_text(json.dumps({"policy": {}}, indent=2) + "\n", encoding="utf-8")
+        print(f"Created {default} with no overrides", flush=True)
+    return str(default)
 
 
 def inspect_repertoire(graph, color):
