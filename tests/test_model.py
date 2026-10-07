@@ -243,6 +243,10 @@ def test_cli_fixture_end_to_end(tmp_path, monkeypatch):
         def __init__(self, *args):
             self.filters = {}
             self.provenance = {}
+            self.offline, self.note = True, ''
+
+        def cached(self, k):
+            return True
 
         def get(self, k):
             self.provenance[k] = {'retrieved_at': 'synthetic', 'cache_key': 'synthetic'}

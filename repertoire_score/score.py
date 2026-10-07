@@ -18,7 +18,7 @@ from .board_cache import STARTING_POSITION, owner_outcome, turn
 from .context import DEFAULT_CACHE
 from .depth import chapter_prepared_depth, prepared_depth_values, summarize_depth
 from .evaluate import KNOWN, backward, chapter_score, forward, summarize
-from .explorer import DEFAULT_FILTERS, Explorer, add_token_option, apply_token_file
+from .explorer import DEFAULT_FILTERS, Explorer, add_token_option, apply_token_file, collect
 from .graph import (
     chapter_policy_overrides,
     chapter_region,
@@ -206,15 +206,6 @@ def required_positions(plan, color):
     return list(dict.fromkeys([STARTING_POSITION, *required, *baseline_positions]))
 
 
-def collect_evidence(explorer, positions):
-    evidence = {}
-    for i, k in enumerate(positions):
-        evidence[k] = explorer.get(k)
-        if i % 25 == 0 or i + 1 == len(positions):
-            print(f"Evidence {i + 1}/{len(positions)}", flush=True)
-    return evidence
-
-
 def evaluate_profiles(graph, color, plan, evidence, sparse_threshold):
     for profile in plan.profiles:
         profile['model'] = prepare(graph, profile['transitions'], profile['order'], color, evidence)
@@ -378,7 +369,7 @@ def analyze(args):
         )
     explorer = Explorer(args.cache, dict(DEFAULT_FILTERS, **config.get("filters", {})), args.offline, args.refresh)
     try:
-        evidence = collect_evidence(explorer, required_positions(plan, color))
+        evidence = collect(explorer, required_positions(plan, color), f"{args.color} scores")
     finally:
         explorer.close()
     scores = score_repertoire(graph, color, plan, evidence, explorer.provenance, args.prior, args.sparse_threshold)
@@ -443,11 +434,7 @@ def analyze(args):
     enrich(report, graph)
     output.with_suffix(".json").write_text(data_json(report), encoding="utf-8")
     update_report_outputs(output.with_suffix(".json"))
-    print(
-        json.dumps(
-            {"overall": report["overall"], "report": str((report_directory(output) / 'report.md').resolve())}, indent=2
-        )
-    )
+    return {"overall": report["overall"], "report": str((report_directory(output) / 'report.md').resolve())}
 
 
 def main():
@@ -469,7 +456,7 @@ def main():
     if min(args.prior) <= 0 or args.sparse_threshold < 1 or args.tolerance <= 0:
         parser.error("Require a positive prior, sparse threshold and tolerance")
     try:
-        analyze(args)
+        summary = analyze(args)
     except (ValueError, RuntimeError) as exc:
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -483,6 +470,8 @@ def main():
         output.with_suffix(".error.json").write_text(json.dumps(diagnostic, indent=2), encoding="utf-8")
         print(f"Analysis failed: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
+    if summary is not None:
+        print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":

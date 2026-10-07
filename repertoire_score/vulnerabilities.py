@@ -8,7 +8,7 @@ from .attribution import enrich
 from .board_cache import fen_number, move_text, route_line, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .evaluate import KNOWN, UNKNOWN, backward, best_routes, can_enter, forward, reaches
-from .explorer import Explorer, add_token_option, apply_token_file, counts
+from .explorer import Explorer, add_token_option, apply_token_file, collect, counts
 from .graph import resolve, topology
 from .model import empirical, prepare, score
 from .status import Status
@@ -207,10 +207,7 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
     if missing:
         online = Explorer(cache, manifest['filters'])
         try:
-            for i, k in enumerate(missing, 1):
-                evidence[k] = online.get(k)
-                if i % 10 == 0 or i == len(missing):
-                    print(f'{saved["color"]}: cached {i}/{len(missing)} missing parent tables', flush=True)
+            evidence.update(collect(online, missing, f'{saved["color"]} own-move parents'))
             analysis.provenance.update(online.provenance)
             analysis.missing.clear()
         finally:

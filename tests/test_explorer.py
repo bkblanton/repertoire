@@ -2,7 +2,7 @@ import chess
 import httpx
 import pytest
 
-from repertoire_score.explorer import DEFAULT_FILTERS, Explorer
+from repertoire_score.explorer import DEFAULT_FILTERS, Explorer, Progress, collect, duration
 from repertoire_score.graph import key
 
 
@@ -127,3 +127,66 @@ def test_client_errors_fail_immediately(tmp_path, monkeypatch):
         client.get(key(chess.Board()))
     assert not any(sleeps)
     client.close()
+
+
+def positions(n):
+    board, result = chess.Board(), []
+    for move in ['e2e4', 'e7e5', 'g1f3', 'b8c6', 'f1c4', 'g8f6', 'd2d3', 'f8c5'][:n]:
+        board.push_uci(move)
+        result.append(key(board))
+    return result
+
+
+def test_collect_counts_cached_and_missing_and_keeps_order(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
+    monkeypatch.setattr('repertoire_score.explorer.time.sleep', lambda _: None)
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json=EMPTY)
+
+    boards = positions(6)
+    client = mock_client(tmp_path, respond)
+    collect(client, boards[:2], 'warm')
+    capsys.readouterr()
+    assert not client.cached(boards[2]) and client.cached(boards[0])
+    evidence = collect(client, [boards[3], boards[0], boards[2], boards[1], boards[3]], 'white scores')
+    assert list(evidence) == [boards[3], boards[0], boards[2], boards[1]]
+    assert len(requests) == 4
+    out = capsys.readouterr().out
+    assert 'white scores: 4 Explorer tables: 2 cached, 2 to fetch' in out
+    assert 'white scores: 2/2 fetched' in out
+    collect(client, boards[:4], 'again')
+    assert capsys.readouterr().out.splitlines() == ['again: 4 Explorer tables, all cached']
+    client.close()
+
+
+def test_progress_estimates_from_recent_rate(monkeypatch, capsys):
+    clock = iter([0, 10, 20, 30, 40])
+    monkeypatch.setattr('repertoire_score.explorer.time.monotonic', lambda: next(clock))
+    progress = Progress(100, 'black scores')
+    progress.INTERVAL = 0
+    progress.advance()
+    progress.advance()
+    progress.advance()
+    lines = capsys.readouterr().out.splitlines()
+    # Three tables in 30s: ten seconds each, so 97 left take about 16 minutes.
+    assert lines[-1] == 'black scores: 3/100 fetched, ~16m left'
+    assert lines[0] == 'black scores: 1/100 fetched'
+
+
+def test_backoff_messages_say_how_far_the_run_has_got(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
+    monkeypatch.setattr('repertoire_score.explorer.time.sleep', lambda _: None)
+    responses = iter([httpx.Response(200, json=EMPTY), httpx.Response(429), httpx.Response(200, json=EMPTY)])
+    client = mock_client(tmp_path, lambda _: next(responses))
+    collect(client, positions(2), 'white scores')
+    assert 'rate-limited (HTTP 429); waiting 60s (1/2 fetched)' in capsys.readouterr().out
+    assert client.note == ''
+    client.close()
+
+
+@pytest.mark.parametrize(('seconds', 'text'), [(0, '0s'), (45, '45s'), (90, '2m'), (3599, '1h 00m'), (11100, '3h 05m')])
+def test_duration(seconds, text):
+    assert duration(seconds) == text
