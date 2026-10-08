@@ -2,14 +2,21 @@
 
 import math
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, cast
 
 from .board_cache import children, fen_number, move_text, next_number, san
+from .evaluate import Weights
+from .schema import JsonObject, Position
 from .status import Status
+
+if TYPE_CHECKING:
+    from .preparation import Evaluator
 
 ENDING_TYPES = ('prepared_endpoint', 'unprepared_reply', 'game_over', 'other_stop', 'unresolved_distribution')
 
 
-def depth_distribution(evaluator, starts):
+def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonObject:
     """Propagate board AND elapsed own-move count, retaining transposed histories.
 
     Missing leaf scores do not obscure depth. Missing reply distributions leave
@@ -30,16 +37,18 @@ def depth_distribution(evaluator, starts):
         sum(starts.values()), 1.0, abs_tol=1e-10
     ):
         raise ValueError('Depth distribution requires normalized nonnegative starting weights')
+    evaluator = cast('Evaluator', evaluator)
     value = evaluator.evaluate(starts)
-    mass = {k: defaultdict(float) for k in evaluator.values}
+    mass: dict[Position, defaultdict[int, float]] = {k: defaultdict(float) for k in evaluator.values}
     for k, weight in starts.items():
         if weight:
             mass[k][0] += weight
-    endings = defaultdict(lambda: dict.fromkeys(ENDING_TYPES, 0.0))
-    unknown = []
-    lengths, active = {}, set()
+    endings: defaultdict[int, dict[str, float]] = defaultdict(lambda: dict.fromkeys(ENDING_TYPES, 0.0))
+    unknown: list[tuple[int, int, float]] = []
+    lengths: dict[Position, int] = {}
+    active: set[Position] = set()
 
-    def remaining(k):
+    def remaining(k: Position) -> int:
         if k in lengths:
             return lengths[k]
         if k in active:
@@ -87,7 +96,7 @@ def depth_distribution(evaluator, starts):
         raise AssertionError('Prepared-depth distribution does not conserve probability')
     known = {d: sum(v for kind, v in row.items() if kind != 'unresolved_distribution') for d, row in endings.items()}
     maximum = max([*endings, *[high for _, high, _ in unknown]], default=0)
-    survival = []
+    survival: list[JsonObject] = []
     for depth in range(maximum + 1):
         completed = sum(p for d, p in known.items() if d >= depth)
         low = completed + sum(p for d, _, p in unknown if d >= depth)
@@ -98,7 +107,7 @@ def depth_distribution(evaluator, starts):
     if not math.isclose(low, float(value[2]), abs_tol=1e-10):
         raise AssertionError('Survival curve does not reproduce expected prepared depth')
 
-    def median(upper):
+    def median(upper: bool) -> int | None:
         distribution = defaultdict(float, known)
         for minimum, maximum, p in unknown:
             distribution[maximum if upper else minimum] += p
@@ -123,7 +132,13 @@ def depth_distribution(evaluator, starts):
     )
 
 
-def first_entry_examples(evaluator, roots, entries, expected_probability=None, expected_weights=None):
+def first_entry_examples(
+    evaluator: 'Evaluator',
+    roots: Weights,
+    entries: Iterable[Position],
+    expected_probability: float | None = None,
+    expected_weights: Mapping[Position, float] | None = None,
+) -> JsonObject:
     """Sum ALL first arrivals; retain the most likely genuine route to each board.
 
     Example-route mass is only a subset of its entry-position mass. Paths stop
@@ -142,11 +157,12 @@ def first_entry_examples(evaluator, roots, entries, expected_probability=None, e
         for k in set(arrivals) | set(expected_weights):
             if not math.isclose(arrivals.get(k, 0.0) / total, expected_weights.get(k, 0.0), abs_tol=1e-10):
                 raise AssertionError('First-entry examples differ from saved entry weights')
-    rows = []
+    rows: list[JsonObject] = []
     for k, arrival in sorted(arrivals.items(), key=lambda item: (-item[1], item[0])):
         probability, root, path = witnesses[k]
         position, number = root, fen_number(evaluator.graph.nodes[root].fen)
-        sans, text = [], []
+        sans: list[str] = []
+        text: list[str] = []
         for uci in path:
             if position in entries:
                 raise AssertionError('Example route passes through an earlier chapter entry')

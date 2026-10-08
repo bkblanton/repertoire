@@ -4,16 +4,20 @@ import hashlib
 import json
 import os
 import time
+from argparse import ArgumentParser, Namespace
 from collections import deque
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import chess
 import httpx
 
 from .board_cache import children
+from .schema import JsonObject, Position
 
 ENDPOINT = "https://explorer.lichess.org/lichess"
 DEFAULT_FILTERS = {
@@ -24,13 +28,13 @@ DEFAULT_FILTERS = {
     "until": "3000-12",
 }
 
-_cache_observer = ContextVar('explorer_cache_observer', default=None)
+_cache_observer: ContextVar[set[Path] | None] = ContextVar('explorer_cache_observer', default=None)
 
 
 @contextmanager
-def observe_cache():
+def observe_cache() -> Iterator[set[Path]]:
     """Track actual table dependencies, including misses, without storing data."""
-    paths = set()
+    paths: set[Path] = set()
     token = _cache_observer.set(paths)
     try:
         yield paths
@@ -53,17 +57,17 @@ class Backoff:
     """Waits between attempts at one request. Rate limits are temporary by definition, so they are
     retried indefinitely; outages are retried with exponential waits until `patience` seconds."""
 
-    def __init__(self, label, patience=OUTAGE_PATIENCE, note=''):
+    def __init__(self, label: str, patience: int = OUTAGE_PATIENCE, note: str = '') -> None:
         self.label, self.patience = label, patience
         self.note = f' ({note})' if note else ''
         self.attempt, self.waited = 0, 0
 
-    def rate_limited(self, retry_after=''):
+    def rate_limited(self, retry_after: str = '') -> None:
         wait = max(RATE_LIMIT_WAIT, int(retry_after) if retry_after.isdigit() else 0)
         print(f'{self.label}: rate-limited (HTTP 429); waiting {wait}s{self.note}', flush=True)
         time.sleep(wait)
 
-    def unavailable(self, reason, retry_after=''):
+    def unavailable(self, reason: str, retry_after: str = '') -> None:
         if self.waited >= self.patience:
             raise RuntimeError(f'{self.label} still unavailable after {self.waited // 60} minutes of retries: {reason}')
         wait = max(min(60, 2**self.attempt), int(retry_after) if retry_after.isdigit() else 0)
@@ -74,7 +78,7 @@ class Backoff:
         time.sleep(wait)
 
 
-def duration(seconds):
+def duration(seconds: float) -> str:
     """A rough human duration: 45s, 12m, 3h 05m."""
     seconds = max(0, round(seconds))
     if seconds < 60:
@@ -89,21 +93,21 @@ class Progress:
     WINDOW = 50
     INTERVAL = 15
 
-    def __init__(self, total, label):
+    def __init__(self, total: int, label: str) -> None:
         self.total, self.label, self.done = total, label, 0
         self.finished = deque([time.monotonic()], maxlen=self.WINDOW + 1)
         self.printed = self.finished[0]
 
-    def status(self):
+    def status(self) -> str:
         return f'{self.done}/{self.total} fetched'
 
-    def remaining(self):
+    def remaining(self) -> float | None:
         elapsed = self.finished[-1] - self.finished[0]
         if self.done < 2 or elapsed <= 0:
             return None
         return (self.total - self.done) * elapsed / (len(self.finished) - 1)
 
-    def fetch(self, explorer, position):
+    def fetch(self, explorer: 'Explorer', position: Position) -> JsonObject:
         """One network fetch. If it is interrupted or fails, say how far the run got before stopping."""
         explorer.note = self.status()
         try:
@@ -116,7 +120,7 @@ class Progress:
         self.advance()
         return data
 
-    def advance(self):
+    def advance(self) -> None:
         self.done += 1
         now = time.monotonic()
         self.finished.append(now)
@@ -127,7 +131,9 @@ class Progress:
             print(f'{self.label}: {self.status()}{estimate}', flush=True)
 
 
-def survey(explorer, positions, label, fetching=None):
+def survey(
+    explorer: 'Explorer', positions: Collection[Position], label: str, fetching: bool | None = None
+) -> list[Position]:
     """Say how many of `positions` are cached and, when they will be fetched, how long that may take.
 
     Returns the tables that are not cached. `fetching` defaults to whether the Explorer is online.
@@ -150,7 +156,7 @@ def survey(explorer, positions, label, fetching=None):
     return missing
 
 
-def fetch_missing(explorer, positions, label):
+def fetch_missing(explorer: 'Explorer', positions: Iterable[Position], label: str) -> None:
     """Request only the tables that are not cached, with progress; cached tables are not read."""
     missing = survey(explorer, list(dict.fromkeys(positions)), label)
     progress = Progress(len(missing), label)
@@ -158,25 +164,25 @@ def fetch_missing(explorer, positions, label):
         progress.fetch(explorer, k)
 
 
-def collect(explorer, positions, label):
+def collect(explorer: 'Explorer', positions: Iterable[Position], label: str) -> dict[Position, JsonObject]:
     """Read every table in order, saying up front how many need the network and how long that may take."""
     positions = list(dict.fromkeys(positions))
     missing = survey(explorer, positions, label)
     progress, pending = Progress(len(missing), label), set(missing)
-    evidence = {}
+    evidence: dict[Position, JsonObject] = {}
     for k in positions:
         fetching = k in pending and not explorer.offline
         evidence[k] = progress.fetch(explorer, k) if fetching else explorer.get(k)
     return evidence
 
 
-def add_token_option(parser):
+def add_token_option(parser: ArgumentParser) -> None:
     parser.add_argument(
         '--token-file', help='File containing a Lichess API token; overrides LICHESS_TOKEN for this run'
     )
 
 
-def apply_token_file(parser, args):
+def apply_token_file(parser: ArgumentParser, args: Namespace) -> None:
     """Load --token-file into this process's environment; the token is never written anywhere."""
     if not args.token_file:
         return
@@ -189,14 +195,14 @@ def apply_token_file(parser, args):
     os.environ['LICHESS_TOKEN'] = token
 
 
-def counts(row):
+def counts(row: Mapping[str, Any]) -> list[int]:
     result = [row.get(k) for k in ("white", "draws", "black")]
     if any(type(v) is not int or v < 0 for v in result):
         raise ValueError("Missing, negative, or noninteger Explorer result counts")
-    return result
+    return cast(list[int], result)
 
 
-def validate(data, position):
+def validate(data: JsonObject, position: Position) -> list[int]:
     parent = counts(data)
     legal = children(position)
     if not isinstance(data.get("moves"), list):
@@ -223,7 +229,15 @@ def validate(data, position):
 
 
 class Explorer:
-    def __init__(self, cache, filters=None, offline=False, refresh=False, delay=1.0, patience=OUTAGE_PATIENCE):
+    def __init__(
+        self,
+        cache: str | Path,
+        filters: Mapping[str, str] | None = None,
+        offline: bool = False,
+        refresh: bool = False,
+        delay: float = 1.0,
+        patience: int = OUTAGE_PATIENCE,
+    ) -> None:
         self.cache = Path(cache)
         self.cache.mkdir(parents=True, exist_ok=True)
         self.filters = dict(DEFAULT_FILTERS if filters is None else filters)
@@ -236,22 +250,22 @@ class Explorer:
             for leftover in self.cache.glob("*.tmp"):
                 leftover.unlink(missing_ok=True)
         self.client = httpx.Client(headers={"Authorization": f"Bearer {token}"} if token else {}, timeout=45)
-        self.provenance = {}
-        self.last_request = 0
+        self.provenance: dict[Position, dict[str, str]] = {}
+        self.last_request: float = 0
         # Shown with backoff messages, so a long rate-limit wait still says how far the run has got.
         self.note = ''
 
-    def locate(self, position):
+    def locate(self, position: Position) -> tuple[dict[str, Any], dict[str, Any], str, Path]:
         query = dict(self.filters, fen=position + " 0 1", moves=len(children(position)), topGames=0, recentGames=0)
         identity = {"endpoint": ENDPOINT, "query": query}
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         return query, identity, digest, self.cache / (digest + ".json")
 
-    def cached(self, position):
+    def cached(self, position: Position) -> bool:
         """Whether `get` would be answered without a request."""
         return not self.refresh and self.locate(position)[3].exists()
 
-    def get(self, position):
+    def get(self, position: Position) -> JsonObject:
         query, identity, digest, path = self.locate(position)
         observer = _cache_observer.get()
         if observer is not None:
@@ -292,5 +306,5 @@ class Explorer:
             self.provenance[position] = {"cache_key": digest, "retrieved_at": entry["retrieved_at"]}
             return data
 
-    def close(self):
+    def close(self) -> None:
         self.client.close()

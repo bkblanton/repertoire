@@ -9,9 +9,10 @@ uv sync --locked
 uv run pytest -q
 uv run ruff check
 uv run ruff format --check
+uv run mypy
 ```
 
-`uv run ruff format` applies the formatting; it keeps each string's existing quote style. GitHub Actions runs all three checks on Ubuntu and Windows for every push to `main` and every pull request. Tests use synthetic PGNs and Explorer tables, so they need no token or network access.
+`uv run ruff format` applies the formatting; it keeps each string's existing quote style. mypy requires every function to be annotated. The saved score file is described by TypedDicts in `repertoire/schema.py`; companion analyses and the rows the report renders are plain JSON objects, typed as `JsonObject`, and a loaded color is a `report.bundle.Bundle`. GitHub Actions runs all four checks on Ubuntu and Windows for every push to `main` and every pull request. Tests use synthetic PGNs and Explorer tables, so they need no token or network access.
 
 `.git-blame-ignore-revs` lists the commit that reformatted the code base. GitHub skips it in blame views; locally, run `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
 

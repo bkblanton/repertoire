@@ -1,13 +1,16 @@
 """Report sections shared by the full report, the summary and the chapter pages."""
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, TypedDict, cast
 
 from ..preparation import line_text
+from ..schema import JsonObject
 from ..stats import cell
 from ..status import Status
-from .bundle import scope_by_id
+from .bundle import Bundle, scope_by_id
 from .derive import (
     combined_overall,
     exit_points,
@@ -37,8 +40,8 @@ from .format import (
     score_points,
     spread_display,
 )
-from .links import analysis_url, bundle_refs, exit_reply, linked_line
-from .markdown import about, drop_uniform, section, table
+from .links import Chapters, analysis_url, bundle_refs, exit_reply, linked_line
+from .markdown import Cell, about, drop_uniform, section, table
 from .tables import (
     opening_table,
     own_move_table,
@@ -49,12 +52,12 @@ from .tables import (
 )
 
 
-def evidence_snapshot(bundles):
-    rows = []
+def evidence_snapshot(bundles: Sequence[Bundle]) -> list[str]:
+    rows: list[list[str]] = []
     for bundle in bundles:
         overall = bundle['report']['overall']
 
-        def score_range(bounds):
+        def score_range(bounds: Sequence[float] | None) -> str:
             return ' to '.join(percentage(v) for v in bounds) if bounds else 'unavailable'
 
         rows.append(
@@ -78,14 +81,14 @@ def evidence_snapshot(bundles):
     ]
 
 
-def overview(bundles, headline_only=False):
+def overview(bundles: Sequence[Bundle], headline_only: bool = False) -> list[str]:
     """Headline rows; the delta keeps its CP translation and Elo uses one fewer decimal than scores."""
     elo_digits = max(0, _display.get()['digits'] - 1)
 
-    def elo_text(value):
+    def elo_text(value: float | None) -> str:
         return 'unavailable' if value is None else number(value, elo_digits, signed=True)
 
-    rows = []
+    rows: list[list[Cell]] = []
     for b in bundles:
         r = b['report']
         o = r['overall']
@@ -134,7 +137,7 @@ def overview(bundles, headline_only=False):
     return table(headers, rows)
 
 
-def overview_notes(bundles):
+def overview_notes(bundles: Sequence[Bundle]) -> str:
     text = (
         'Delta is the repertoire score minus the database score from the starting '
         'position, in percentage points; its cp and Elo equivalents put it on familiar scales but are not engine '
@@ -149,8 +152,8 @@ def overview_notes(bundles):
     return text + f'Prepared depth counts your own moves before preparation ends. {about("score", "Definitions")}.'
 
 
-def snapshot_notes(bundles):
-    text = []
+def snapshot_notes(bundles: Sequence[Bundle]) -> list[str]:
+    text: list[str] = []
     for b in bundles:
         r = b['report']
         color = r['color'].title()
@@ -178,7 +181,13 @@ def snapshot_notes(bundles):
     return text
 
 
-def gap_section(scope, level='###', refs=None, top=10, anchor=None):
+def gap_section(
+    scope: JsonObject | None,
+    level: str = '###',
+    refs: Chapters | None = None,
+    top: int = 10,
+    anchor: str | None = None,
+) -> list[str]:
     metrics = (scope or {}).get('gap_coverage')
     if not metrics:
         return [
@@ -202,8 +211,8 @@ def gap_section(scope, level='###', refs=None, top=10, anchor=None):
     positions = {r['position']: r for r in (scope or {}).get('positions', [])}
     selected = priorities.get('priorities', [])[:top]
     if selected and refs is not None:
-        refs = refs.for_scope(scope.get('id'))
-        rows = []
+        refs = refs.for_scope(cast(JsonObject, scope).get('id'))
+        rows: list[list[str]] = []
         for priority in selected:
             row = positions[priority['position']]
             rows.append(
@@ -224,7 +233,7 @@ def gap_section(scope, level='###', refs=None, top=10, anchor=None):
                 [
                     'First-gap position',
                     'Chapter source',
-                    position_reach_label(scope),
+                    position_reach_label(cast(JsonObject, scope)),
                     'Repeat-gap share',
                     'Database score',
                     'Games',
@@ -241,7 +250,7 @@ def gap_section(scope, level='###', refs=None, top=10, anchor=None):
     return text
 
 
-def branch_spread_section(scope, level='###', anchor=None):
+def branch_spread_section(scope: JsonObject | None, level: str = '###', anchor: str | None = None) -> list[str]:
     spread = (scope or {}).get('branch_score_spread')
     if not spread:
         return []
@@ -279,7 +288,9 @@ def branch_spread_section(scope, level='###', anchor=None):
     ]
 
 
-def character_section(scope, refs, top, level='###', anchor=None):
+def character_section(
+    scope: JsonObject | None, refs: Chapters, top: int, level: str = '###', anchor: str | None = None
+) -> list[str]:
     if not scope or 'reuse' not in scope:
         return []
     refs = refs.for_scope(scope.get('id'))
@@ -331,7 +342,7 @@ def character_section(scope, refs, top, level='###', anchor=None):
         ],
     )
     text += ['The positions where preparation ends:', '']
-    features = []
+    features: list[list[str]] = []
     for name in ('queens', 'king_placement'):
         features.extend(
             [escape(r['value']).capitalize(), percentage(r['probability'])]
@@ -369,13 +380,15 @@ def character_section(scope, refs, top, level='###', anchor=None):
     return text
 
 
-def _common_reply(reply):
+def _common_reply(reply: JsonObject) -> str:
     text = escape(reply['san']) + ' (' + percentage(reply['probability_given_recorded_reply']) + ')'
     difference = rating_difference(reply.get('opponent_rating'))
     return text if difference.startswith(('n/a', 'unavailable')) else f'{text}<br>{difference} rating vs parent'
 
 
-def vulnerabilities_section(scope, refs, top, level='###', anchor=None):
+def vulnerabilities_section(
+    scope: JsonObject | None, refs: Chapters, top: int, level: str = '###', anchor: str | None = None
+) -> list[str]:
     if not scope:
         return []
     refs = refs.for_scope(scope.get('id'))
@@ -412,7 +425,15 @@ def vulnerabilities_section(scope, refs, top, level='###', anchor=None):
     return text
 
 
-def strengths_section(moves, positions, refs, top, level='###', sparse_threshold=30, anchor=None):
+def strengths_section(
+    moves: JsonObject | None,
+    positions: JsonObject | None,
+    refs: Chapters,
+    top: int,
+    level: str = '###',
+    sparse_threshold: int = 30,
+    anchor: str | None = None,
+) -> list[str]:
     if not moves and not positions:
         return []
     text = section(f'{level} Strengths', anchor)
@@ -424,7 +445,7 @@ def strengths_section(moves, positions, refs, top, level='###', sparse_threshold
             'Gain = repertoire score after your move − database score of the position.',
             '',
         ]
-        text += own_move_table(rows, moves, refs, strongest=True)
+        text += own_move_table(rows, cast(JsonObject, moves), refs, strongest=True)
     rows = non_sparse_rows(position_contributions(positions, refs.color, sparse_threshold))[:top]
     if rows:
         text += [
@@ -434,7 +455,7 @@ def strengths_section(moves, positions, refs, top, level='###', sparse_threshold
             f'Rows overlap, so do not add them. {about("contribution")}.',
             '',
         ]
-        text += position_contribution_table(rows, positions, refs)
+        text += position_contribution_table(rows, cast(JsonObject, positions), refs)
     elif positions is not None and 'positions' not in positions:
         text += [
             'Position contributions are unavailable in the saved results. '
@@ -444,9 +465,11 @@ def strengths_section(moves, positions, refs, top, level='###', sparse_threshold
     return text
 
 
-def alternatives_section(report, refs, level='###', anchor=None):
+def alternatives_section(
+    report: JsonObject, refs: Chapters, level: str = '###', anchor: str | None = None
+) -> list[str]:
     """Boards where chapters compete: every alternative's score there, and which one the repertoire plays."""
-    rows = []
+    rows: list[list[str]] = []
     for alternative in report.get('alternatives', []):
         played = next(o for o in alternative['options'] if o['move'] == alternative['selected'])
         route = line_text(alternative['path'])
@@ -492,12 +515,12 @@ def alternatives_section(report, refs, level='###', anchor=None):
     ]
 
 
-def load_comparisons(bundles):
+def load_comparisons(bundles: Sequence[Bundle]) -> list[JsonObject]:
     """Saved comparison results beside the scores, each marked current when made from the same score file."""
     if not bundles:
         return []
     digests = {b['report']['color']: b['digest'] for b in bundles}
-    result = []
+    result: list[JsonObject] = []
     for path in sorted((bundles[0]['path'].parent / 'comparisons').glob('*.json')):
         try:
             data = json.loads(path.read_text(encoding='utf-8'))
@@ -510,11 +533,11 @@ def load_comparisons(bundles):
     return result
 
 
-def comparisons_section(bundles, level='##'):
+def comparisons_section(bundles: Sequence[Bundle], level: str = '##') -> list[str]:
     """One row per saved comparison: its verdict and what the improving choice would change."""
     from .comparison import headline, verdict
 
-    rows = []
+    rows: list[list[str]] = []
     for data in load_comparisons(bundles):
         scenarios = data['scenarios']
         status = (
@@ -542,7 +565,7 @@ def comparisons_section(bundles, level='##'):
     ]
 
 
-def correlations_section(result, reason):
+def correlations_section(result: JsonObject | None, reason: str | None) -> list[str]:
     text = section('### Future preparation gain', 'preparation-correlation')
     if not result:
         return text + [f'Correlation analysis unavailable: {reason}.', '']
@@ -619,7 +642,7 @@ def correlations_section(result, reason):
     return text
 
 
-def rating_correlations_section(result, reason):
+def rating_correlations_section(result: JsonObject | None, reason: str | None) -> list[str]:
     from ..rating_correlations import cell as rating_cell
 
     text = section('### Opponent rating and score improvement', 'rating-correlations')
@@ -645,7 +668,7 @@ def rating_correlations_section(result, reason):
     ]
     headers = ['Repertoire', 'Replies / parent positions', 'Linear correlation', 'Score Δ per +100 rating']
 
-    def row(color, estimate):
+    def row(color: str, estimate: JsonObject) -> list[str]:
         return [
             color.title(),
             f"{estimate['replies']:,} / {estimate['parents']:,}",
@@ -681,7 +704,9 @@ def rating_correlations_section(result, reason):
     return text
 
 
-def common_positions_for_scope(scope, refs, limit=20, level='###', anchor=None):
+def common_positions_for_scope(
+    scope: JsonObject | None, refs: Chapters, limit: int = 20, level: str = '###', anchor: str | None = None
+) -> list[str]:
     scope = scope or {}
     refs = refs.for_scope(scope.get('id'))
     color = refs.color
@@ -766,8 +791,8 @@ def common_positions_for_scope(scope, refs, limit=20, level='###', anchor=None):
     return text
 
 
-def common_positions_section(bundles, limit=20):
-    text = []
+def common_positions_section(bundles: Sequence[Bundle], limit: int = 20) -> list[str]:
+    text: list[str] = []
     for bundle in bundles:
         report = bundle['report']
         scope = scope_by_id(bundle.get('character')).get('overall', {})
@@ -777,7 +802,9 @@ def common_positions_section(bundles, limit=20):
     return text
 
 
-def exits_section(scope, refs, top, level='###', anchor=None):
+def exits_section(
+    scope: JsonObject | None, refs: Chapters, top: int, level: str = '###', anchor: str | None = None
+) -> list[str]:
     scope = scope or {}
     refs = refs.for_scope(scope.get('id'))
     color = refs.color
@@ -794,7 +821,7 @@ def exits_section(scope, refs, top, level='###', anchor=None):
         f'Every game leaves preparation once, so unlike other tables these rows do not overlap. {about("exits")}.',
         '',
     ]
-    values = []
+    values: list[list[str]] = []
     for row in shown:
         route = refs.route(row['position'], row['line'])
         if row['is_starting_position']:
@@ -842,13 +869,20 @@ def exits_section(scope, refs, top, level='###', anchor=None):
     return text
 
 
-def position_tree(scope, refs, limit=12):
+class _Node(TypedDict):
+    row: JsonObject
+    tokens: list[str]
+    children: list['_Node']
+    parent: NotRequired['_Node | None']
+
+
+def position_tree(scope: JsonObject | None, refs: Chapters, limit: int = 12) -> list[str]:
     """Most common prepared positions as a nested list; each node shows only the moves since its parent."""
     scope = scope or {}
     refs = refs.for_scope(scope.get('id'))
     rows = [r for r in visible_positions(scope) if not unanswered_position(r, refs.color)][:limit]
-    nodes = [dict(row=r, tokens=refs.route(r['position'], r['line']).split(), children=[]) for r in rows]
-    roots = []
+    nodes: list[_Node] = [dict(row=r, tokens=refs.route(r['position'], r['line']).split(), children=[]) for r in rows]
+    roots: list[_Node] = []
     # Assign parents from shorter routes first, so a transposition with more reach still nests under its prefix.
     for node in sorted(nodes, key=lambda n: len(n['tokens'])):
         parent = max(
@@ -863,9 +897,9 @@ def position_tree(scope, refs, limit=12):
         node['parent'] = parent
         (parent['children'] if parent else roots).append(node)
     order = {id(n): i for i, n in enumerate(nodes)}
-    text = []
+    text: list[str] = []
 
-    def visit(node, depth):
+    def visit(node: _Node, depth: int) -> None:
         row = node['row']
         start = len(node['parent']['tokens']) if node['parent'] else 0
         moves = line(' '.join(node['tokens'][start:]))
@@ -883,12 +917,12 @@ def position_tree(scope, refs, limit=12):
     return text + ['']
 
 
-def depth_section(scope, level='###', anchor=None):
+def depth_section(scope: JsonObject | None, level: str = '###', anchor: str | None = None) -> list[str]:
     text = section(f'{level} Prepared-depth distribution', anchor)
     distribution = (scope or {}).get('depth_distribution', {})
     if not distribution.get('survival'):
         return text + ['Depth distribution is unavailable; refresh the cache-only preparation analysis.', '']
-    overall = scope.get('id', 'overall') == 'overall'
+    overall = cast(JsonObject, scope).get('id', 'overall') == 'overall'
     text += [
         (
             'How many of your own moves games stay in preparation for. '
@@ -908,7 +942,7 @@ def depth_section(scope, level='###', anchor=None):
     median = distribution.get('median_moves')
     text += [f'Average **{mean} own moves**; median **{median if median is not None else "unresolved"}**.', '']
     endings = {r['own_moves']: r for r in distribution['endings']}
-    rows = []
+    rows: list[list[Cell]] = []
     for r in distribution['survival']:
         stop = endings.get(r['own_moves'], {})
         probability = (
@@ -939,7 +973,7 @@ def depth_section(scope, level='###', anchor=None):
     return text + table(headers, rows)
 
 
-def entry_routes_section(chapter, scope, refs, level='##'):
+def entry_routes_section(chapter: JsonObject, scope: JsonObject | None, refs: Chapters, level: str = '##') -> list[str]:
     refs = refs.for_scope(chapter['id'])
     text = [
         *section(f'{level} Exact first-entry positions', f'{refs.anchor(chapter["id"])}-entries'),
@@ -951,7 +985,7 @@ def entry_routes_section(chapter, scope, refs, level='##'):
     routes = (scope or {}).get('entry_routes', {})
     entries = {e['position']: e for e in chapter['entries']}
     if routes.get('status') == Status.RESOLVED:
-        rows = []
+        rows: list[list[str]] = []
         for r in routes['positions']:
             original = entries[r['position']]
             example = r['example']
@@ -997,7 +1031,7 @@ def entry_routes_section(chapter, scope, refs, level='##'):
     )
 
 
-def openings_section(bundle, refs):
+def openings_section(bundle: Bundle, refs: Chapters) -> list[str]:
     """Opening table for the full report; per-opening evidence lives on its own page."""
     data = bundle.get('openings')
     color = bundle['report']['color']

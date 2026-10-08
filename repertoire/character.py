@@ -1,8 +1,12 @@
 """Cache-only preparation reuse, reply predictability and boundary board profiles."""
 
 import math
+from argparse import ArgumentParser, Namespace
 from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from functools import lru_cache
+from pathlib import Path
+from typing import cast
 
 import chess
 import numpy as np
@@ -10,10 +14,12 @@ import numpy as np
 from .attribution import enrich
 from .board_cache import STARTING_POSITION, children, fen_number, route_line, san, turn
 from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
+from .evaluate import Weights
 from .explorer import counts
 from .gaps import distribution as gap_distribution
 from .model import score
-from .preparation import Evaluators, chess_facts, position_lines, stopping_rows
+from .preparation import Evaluator, Evaluators, chess_facts, position_lines, stopping_rows
+from .schema import JsonObject, Position
 from .sharpness import recursive_wdl, scope_outcomes, stopping_wdl
 from .sharpness import summarize as summarize_outcomes
 from .status import Status
@@ -32,11 +38,11 @@ FEATURE_LABELS = {
 }
 
 
-def entropy(probabilities):
+def entropy(probabilities: Iterable[float]) -> float:
     return -sum(p * math.log2(p) for p in probabilities if p > 0)
 
 
-def exposure(probability, games):
+def exposure(probability: float, games: int) -> float:
     """Stable probability of at least one encounter in independent games."""
     if not 0 <= probability <= 1 or games < 0:
         raise ValueError('Invalid encounter probability or game count')
@@ -47,11 +53,11 @@ def exposure(probability, games):
     return -math.expm1(games * math.log1p(-probability))
 
 
-def reuse_metrics(decisions, games=DEFAULT_GAMES):
+def reuse_metrics(decisions: Sequence[JsonObject], games: Sequence[int] = DEFAULT_GAMES) -> JsonObject:
     if len({(r['position'], r['move']) for r in decisions}) != len(decisions):
         raise ValueError('Duplicate canonical decisions would inflate reuse')
     encounters = sum(r['reach'] for r in decisions)
-    curve = []
+    curve: list[JsonObject] = []
     for n in games:
         distinct = sum(exposure(r['reach'], n) for r in decisions)
         total = n * encounters
@@ -73,8 +79,10 @@ def reuse_metrics(decisions, games=DEFAULT_GAMES):
     )
 
 
-def predictability_metrics(evaluator, reach, lines):
-    rows = []
+def predictability_metrics(
+    evaluator: Evaluator, reach: Mapping[Position, float], lines: Mapping[Position, str]
+) -> JsonObject:
+    rows: list[JsonObject] = []
     opportunities = recorded_opportunities = bits = sparse_opportunities = 0.0
     for k, mass in reach.items():
         if mass <= 0 or evaluator.facts[k]['turn'] == evaluator.color or evaluator.facts[k]['outcome'] is not None:
@@ -127,7 +135,7 @@ def predictability_metrics(evaluator, reach, lines):
     )
 
 
-def pawn_properties(board, color):
+def pawn_properties(board: chess.Board, color: bool) -> dict[str, bool]:
     pawns = list(board.pieces(chess.PAWN, color))
     files = {chess.square_file(s) for s in pawns}
     isolated = [s for s in pawns if not ({chess.square_file(s) - 1, chess.square_file(s) + 1} & files)]
@@ -150,18 +158,20 @@ def pawn_properties(board, color):
     )
 
 
-def board_fingerprint(position, color):
+def board_fingerprint(position: Position, color: bool) -> tuple[dict[str, str], dict[str, bool]]:
     categories, features = _board_fingerprint(position, color)
     return dict(categories), dict(features)
 
 
 @lru_cache(maxsize=32768)
-def _board_fingerprint(position, color):
+def _board_fingerprint(
+    position: Position, color: bool
+) -> tuple[tuple[tuple[str, str], ...], tuple[tuple[str, bool], ...]]:
     board = chess.Board(position + ' 0 1')
     own, opponent = pawn_properties(board, color), pawn_properties(board, not color)
     queens = (bool(board.pieces(chess.QUEEN, color)), bool(board.pieces(chess.QUEEN, not color)))
 
-    def wing(c):
+    def wing(c: bool) -> str:
         square = board.king(c)
         if square is None:
             return 'missing'
@@ -177,10 +187,10 @@ def _board_fingerprint(position, color):
         else 'at least one central king'
     )
 
-    def skeleton(c):
+    def skeleton(c: bool) -> str:
         return ' '.join(chess.square_name(s) for s in sorted(board.pieces(chess.PAWN, c))) or 'none'
 
-    def material(c):
+    def material(c: bool) -> str:
         return ' '.join(
             f'{chess.piece_symbol(t).upper()}{len(board.pieces(t, c))}'
             for t in (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT, chess.PAWN)
@@ -211,8 +221,11 @@ def _board_fingerprint(position, color):
     return tuple(categories.items()), tuple(features.items())
 
 
-def position_profile(stops, color):
+def position_profile(stops: Sequence[JsonObject], color: bool) -> JsonObject:
     mass = sum(r['reach'] for r in stops)
+    categories: defaultdict[str, defaultdict[str, float]]
+    features: defaultdict[str, float]
+    examples: dict[tuple[str, str], JsonObject]
     categories, features, examples = defaultdict(lambda: defaultdict(float)), defaultdict(float), {}
     for row in stops:
         cats, flags = board_fingerprint(row['position'], color)
@@ -255,13 +268,19 @@ def position_profile(stops, color):
     )
 
 
-def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
+def position_reach_rows(
+    evaluator: Evaluator,
+    starts: Weights,
+    reach: Mapping[Position, float],
+    lines: Mapping[Position, str],
+    wdl_values: dict[Position, np.ndarray] | None = None,
+) -> list[JsonObject]:
     """Canonical reached boards, including the first unprepared opponent reply."""
     if wdl_values is None:
         wdl_values = recursive_wdl(evaluator)
     routes = evaluator.routes(starts, replies=True)
 
-    def line(k):
+    def line(k: Position) -> str:
         # Each route keeps its own full-move number: transposed routes can differ in length.
         _, root, moves = routes[k]
         text, position, _ = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
@@ -270,7 +289,7 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
         prefix = '' if lines[root] == '(PGN root)' else lines[root]
         return (prefix + ' ' + text).strip() or '(PGN root)'
 
-    rows = {}
+    rows: dict[Position, JsonObject] = {}
     for k, mass in reach.items():
         if mass <= 0:
             continue
@@ -301,14 +320,14 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
         )
     # The cached parent table supplies both the reply and its probability. No
     # evidence for the reached child board, or for its next moves, is requested.
-    deviation_wdl = {}
+    deviation_wdl: dict[Position, np.ndarray] = {}
     for k, mass in reach.items():
         if mass <= 0:
             continue
         for move, probability, kind, sample, fixed in evaluator.stops[k]:
             if kind != 'deviation' or probability <= 0:
                 continue
-            target = children(k)[move]
+            target = children(k)[cast(str, move)]
             assert target not in evaluator.graph.nodes
             row = rows.setdefault(
                 target,
@@ -358,11 +377,18 @@ def position_reach_rows(evaluator, starts, reach, lines, wdl_values=None):
     return sorted(rows.values(), key=lambda r: (-r['reach'], len(r['line'].split()), r['line'], r['position']))
 
 
-def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probability=1.0, wdl_values=None):
+def scope_metrics(
+    evaluator: Evaluator,
+    starts: Weights,
+    lines: dict[Position, str],
+    games: Sequence[int] = DEFAULT_GAMES,
+    entry_probability: float | None = 1.0,
+    wdl_values: dict[Position, np.ndarray] | None = None,
+) -> JsonObject:
     """Character metrics for one scope. `wdl_values` is a WDL table for this evaluator to extend and reuse."""
     reach = evaluator.reaches(starts)
     value = evaluator.evaluate(starts)
-    decisions = []
+    decisions: list[JsonObject] = []
     for k, mass in reach.items():
         if mass <= 0 or evaluator.facts[k]['turn'] != evaluator.color:
             continue
@@ -412,7 +438,7 @@ def scope_metrics(evaluator, starts, lines, games=DEFAULT_GAMES, entry_probabili
     )
 
 
-def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
+def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, games: Sequence[int] = DEFAULT_GAMES) -> JsonObject:
     analysis = AnalysisContext(path)
     graph, color, manifest = analysis.graph, analysis.color, analysis.manifest
     evidence = analysis.read_evidence(cache)
@@ -420,7 +446,7 @@ def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
     lines = position_lines(graph)
     scopes = analysis.scopes()
     evaluators = Evaluators(graph, color, evidence, facts, selected_policy(manifest), manifest['sparse_threshold'])
-    wdl_tables = {}  # one WDL table per shared evaluator
+    wdl_tables: dict[Evaluator, dict[Position, np.ndarray]] = {}  # one WDL table per shared evaluator
     for scope in scopes:
         expected = scope.pop('score')
         if not scope['starts']:
@@ -445,7 +471,7 @@ def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
             else Status.RESOLVED
         )
     analysis.require_source('character analysis')
-    result = dict(
+    result: JsonObject = dict(
         color=analysis.saved['color'],
         scopes=scopes,
         manifest=analysis.companion_manifest(
@@ -471,11 +497,11 @@ def analyze(path, cache=DEFAULT_CACHE, games=DEFAULT_GAMES):
     return enrich(result, graph)
 
 
-def main():
-    def configure(parser):
+def main() -> None:
+    def configure(parser: ArgumentParser) -> None:
         parser.add_argument('--games', nargs='+', type=int, default=list(DEFAULT_GAMES))
 
-    def options(parser, args):
+    def options(parser: ArgumentParser, args: Namespace) -> dict[str, list[int]]:
         if any(n <= 0 for n in args.games):
             parser.error('Games must be positive')
         return dict(games=sorted(set(args.games)))

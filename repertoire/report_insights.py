@@ -3,7 +3,10 @@
 import json
 import math
 from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, TypedDict, cast
 
 import numpy as np
 
@@ -11,10 +14,11 @@ from .board_cache import children
 from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
 from .evaluate import COMPLETED
 from .explorer import counts, validate
-from .graph import resolve, topology
-from .model import prepare
+from .graph import Graph, resolve, topology
+from .model import Evidence, prepare
 from .openings import name_flow
 from .preparation import Evaluator, chess_facts
+from .schema import JsonObject, Position
 from .spread import assert_outcomes, recursive_spread, stopping_counts, stopping_spread
 from .spread import mixture as spread_mixture
 from .status import Status
@@ -22,14 +26,20 @@ from .uncertainty import METHOD as UNCERTAINTY_METHOD
 from .uncertainty import Posterior, comparison_interval, dirichlet_variance, row_moments
 
 
-def gap_priorities(metrics):
-    combined = defaultdict(float)
+class OwnComparison(TypedDict):
+    drop: tuple[float, list[float]]
+    database_gain: list[float]
+    continuation_gain: list[float]
+
+
+def gap_priorities(metrics: JsonObject | None) -> JsonObject:
+    combined: defaultdict[Position, float] = defaultdict(float)
     for row in (metrics or {}).get('gaps', []):
         combined[row['position']] += row['reach']
-    gaps = [dict(position=k, reach=p) for k, p in combined.items()]
+    gaps: list[JsonObject] = [dict(position=k, reach=p) for k, p in combined.items()]
     repeat = sum(r['reach'] ** 2 for r in gaps)
     cumulative = 0.0
-    result = []
+    result: list[JsonObject] = []
     # Reaches equal up to rounding noise rank by position, so the running share does not depend on summation order.
     for row in sorted(gaps, key=lambda r: (-round(r['reach'], 15), r['position'])):
         share = row['reach'] ** 2 / repeat if repeat else 0.0
@@ -50,7 +60,7 @@ def gap_priorities(metrics):
     )
 
 
-def branch_score_spread(stops, expected=None):
+def branch_score_spread(stops: Iterable[JsonObject], expected: float | None = None) -> JsonObject:
     """Retain incoming evidence cohorts, and separate within-board variation."""
     stops = [r for r in stops if r['reach'] > 0]
     mass = sum(r['reach'] for r in stops)
@@ -67,7 +77,7 @@ def branch_score_spread(stops, expected=None):
     mean = sum(r['reach'] * r['score'] for r in stops)
     if expected is not None and not math.isclose(mean, expected, abs_tol=1e-10):
         raise AssertionError('Branch-score mean does not reproduce repertoire score')
-    groups = defaultdict(list)
+    groups: defaultdict[tuple[Any, ...], list[JsonObject]] = defaultdict(list)
     for row in stops:
         # Residual buckets have no exact next board, and stay separate.
         identity = (
@@ -99,7 +109,10 @@ def branch_score_spread(stops, expected=None):
     )
 
 
-def move_decomposition(row):
+def move_decomposition(row: JsonObject) -> JsonObject:
+    parent: Any
+    move: Any
+    continuation: Any
     parent, move, continuation = (row.get(k) for k in ('reference_score', 'move_database_score', 'move_score'))
     if any(v is None for v in (parent, move, continuation)):
         return dict(database_move_gain_pp=None, continuation_gain_pp=None, total_gain_pp=None)
@@ -109,7 +122,9 @@ def move_decomposition(row):
     return dict(database_move_gain_pp=a, continuation_gain_pp=b, total_gain_pp=total)
 
 
-def database_table(data, position, color, prior):
+def database_table(
+    data: JsonObject, position: Position, color: bool, prior: Sequence[float]
+) -> tuple[list[str], np.ndarray]:
     """Legal moves and Dirichlet parameters for one cached position; reusable across sampling batches."""
     moves = sorted(children(position))
     rows = {r['uci']: counts(r) for r in data['moves']}
@@ -129,29 +144,32 @@ class LocalComparisons:
     keeps that score's skewed shape, which matters for replies with only a few games.
     """
 
-    def __init__(self, posterior, database, owner):
+    def __init__(
+        self, posterior: Posterior, database: Mapping[Position, tuple[list[str], np.ndarray]], owner: np.ndarray
+    ) -> None:
         self.posterior, self.database, self.owner = posterior, database, owner
         self.influence = posterior.influence()
-        self._variance = {}
+        self._variance: dict[Position, float] = {}
 
-    def value_variance(self, k):
+    def value_variance(self, k: Position) -> float:
         if k not in self._variance:
             self._variance[k] = self.posterior.value_variance({k: 1.0})
         return self._variance[k]
 
-    def leaf(self, k):
+    def leaf(self, k: Position) -> tuple[float, float] | None:
         """A position whose value is one table's own result score, or None."""
         node = self.posterior.model[k]
         if node.mode == 'stop' and k in self.posterior.alpha:
             return row_moments(self.posterior.alpha[k][0], self.owner)
         return None
 
-    def opponent(self, k, j):
+    def opponent(self, k: Position, j: int) -> tuple[float, list[float]]:
         """Repertoire value before an opponent reply minus the value after it: mean and 95% interval."""
         posterior, branch = self.posterior, self.posterior.model[k].branches[j]
         before = posterior.values[k][COMPLETED]
         reach = self.influence[k]
         # The value before the reply already contains the reply's own share of the score after it.
+        component: tuple[float, float] | None
         component, coefficient = None, posterior.sample[k][j][0] - 1
         if branch.target is not None:
             after = posterior.values[branch.target][COMPLETED]
@@ -172,7 +190,7 @@ class LocalComparisons:
         drop = before - after
         return drop, comparison_interval(drop, variance, component, coefficient)
 
-    def own(self, k, move, target):
+    def own(self, k: Position, move: str, target: Position) -> OwnComparison:
         """Parent database score, the selected move's database score and the continuation after it."""
         moves, alpha = self.database[k]
         weights = alpha / alpha.sum()
@@ -204,7 +222,14 @@ class LocalComparisons:
         )
 
 
-def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None):
+def add_recursive_spreads(
+    value: JsonObject,
+    saved: JsonObject,
+    supporting: Mapping[str, JsonObject],
+    graph: Graph,
+    evidence: Evidence,
+    facts: dict[Position, JsonObject] | None = None,
+) -> JsonObject:
     """Add position, reply, chapter and opening spreads to one matching snapshot."""
     color = saved['color'] == 'white'
     manifest = saved['manifest']
@@ -215,7 +240,7 @@ def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None)
     comparisons = supporting['vulnerabilities']
     moves = {'overall': comparisons['overall'], **{s['id']: s for s in comparisons['chapters']}}
     insights = {s['id']: s for s in value['scopes']}
-    profiles = defaultdict(list)
+    profiles: defaultdict[str, list[str]] = defaultdict(list)
     profiles['{}'].append('overall')
     for chapter in saved['chapters']:
         profiles[json.dumps(chapter.get('policy_overrides', {}), sort_keys=True)].append(chapter['id'])
@@ -238,7 +263,7 @@ def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None)
             if characters[sid].get('outcomes'):
                 assert_outcomes(result, characters[sid]['outcomes'])
             previous.update(result, recursive=True)
-            positions = {}
+            positions: dict[Position, JsonObject] = {}
             for row in characters[sid].get('positions', []):
                 metric = position_values.get(row['position'])
                 if metric is None:
@@ -261,8 +286,10 @@ def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None)
                     reference_spread=position_values[row['position']] if row['kind'] == 'opponent' else None,
                 )
         if identity == '{}':
-            opening_spreads = {}
+            opening_spreads: dict[str, JsonObject] = {}
             for row in supporting['openings']['openings']:
+                all_parts: list[tuple[float, JsonObject]]
+                entries: dict[Position, JsonObject]
                 all_parts, entries = [], {}
                 for entry in row['entries']:
                     parts = [
@@ -305,13 +332,13 @@ def add_recursive_spreads(value, saved, supporting, graph, evidence, facts=None)
     return value
 
 
-def analyze(path, cache=DEFAULT_CACHE):
+def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     analysis = AnalysisContext(path, ('preparation', 'character', 'vulnerabilities', 'openings'))
     saved, manifest, supporting = analysis.saved, analysis.manifest, analysis.companions
     char = {s['id']: s for s in supporting['character']['scopes']}
     prep = {s['id']: s for s in supporting['preparation']['scopes']}
     moves = supporting['vulnerabilities']
-    scopes = [
+    scopes: list[JsonObject] = [
         dict(id='overall', score=saved['overall'], moves=moves['overall'], overrides={}),
         *[
             dict(
@@ -323,7 +350,7 @@ def analyze(path, cache=DEFAULT_CACHE):
             for c in saved['chapters']
         ],
     ]
-    results = {}
+    results: dict[str, JsonObject] = {}
     for scope in scopes:
         sid = scope['id']
         results[sid] = dict(
@@ -340,7 +367,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     evidence = analysis.read_evidence(cache, list(dict(manifest['evidence'], **compared)), required=True)
     if any(analysis.provenance[k] != original for k, original in compared.items()):
         raise ValueError('Cached evidence changed since the vulnerability analysis; rebuild it first')
-    chosen = defaultdict(set)
+    chosen: defaultdict[Position, set[str]] = defaultdict(set)
     for scope in scopes:
         for row in scope['moves'].get('all_signed_rows', []):
             if row['kind'] == 'own':
@@ -350,7 +377,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     facts = chess_facts(graph, color, evidence)
     exact = {k: r['exact_name'] for k, r in supporting['openings']['positions'].items() if r.get('exact_name')}
     chapters = {c['id']: c for c in saved['chapters']}
-    profiles = defaultdict(list)
+    profiles: defaultdict[str, list[JsonObject]] = defaultdict(list)
     for scope in scopes:
         profiles[json.dumps(scope['overrides'], sort_keys=True)].append(scope)
     roots = [*manifest['root_weights'], *[e['position'] for c in saved['chapters'] for e in c['entries']]]
@@ -372,7 +399,7 @@ def analyze(path, cache=DEFAULT_CACHE):
                 chapter = chapters[scope['id']]
                 entries = [e['position'] for e in chapter['entries']]
                 flows = name_flow(evaluator, manifest['root_weights'], exact, stop_at=entries)
-                entry_sources = {}
+                entry_sources: dict[Position, list[JsonObject]] = {}
                 for entry in chapter['entries']:
                     weights = flows.get(entry['position'], {})
                     total = sum(weights.values())
@@ -387,7 +414,7 @@ def analyze(path, cache=DEFAULT_CACHE):
                 k, move = row['position'], row['move']
                 j = branches[k][move]
                 if row['kind'] == 'own':
-                    parts = comparisons.own(k, move, model[k].branches[j].target)
+                    parts = comparisons.own(k, move, cast(Position, model[k].branches[j].target))
                     _, drop = parts['drop']
                 else:
                     _, drop = comparisons.opponent(k, j)
@@ -401,7 +428,7 @@ def analyze(path, cache=DEFAULT_CACHE):
                 results[scope['id']]['moves'][row['id']] = entry
         del comparisons, model
     analysis.require_source('report insight analysis')
-    result = dict(
+    result: JsonObject = dict(
         color=saved['color'],
         scopes=list(results.values()),
         manifest=analysis.companion_manifest(
@@ -430,7 +457,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     return add_recursive_spreads(result, saved, supporting, graph, evidence, facts)
 
 
-def main():
+def main() -> None:
     stage_main('insights', analyze, __doc__)
 
 

@@ -1,8 +1,11 @@
 """The comparison page: whether a candidate study's alternatives improve your repertoire, rendered from saved JSON."""
 
 import os
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any, Literal
 
+from ..schema import JsonObject, Position
 from .format import (
     centipawn_delta,
     display,
@@ -19,30 +22,33 @@ from .markdown import section, table
 # Opponent-rating gaps at least this large between compared moves get a caveat.
 RATING_GAP = 100
 
+# The two candidate scenarios that mark one option per decision as chosen.
+Plan = Literal['improving', 'all']
 
-def relative(target, page):
+
+def relative(target: str | Path, page: str | Path) -> str:
     try:
         return Path(os.path.relpath(target, Path(page).parent)).as_posix()
     except ValueError:
         return Path(target).as_posix()
 
 
-def linked(route, position):
+def linked(route: str, position: Position) -> str:
     return f'[{line(route)}]({analysis_url(position, route)})' if route else '(starting position)'
 
 
-def last_move(route):
+def last_move(route: str) -> str:
     return line(route.split()[-1]) if route.split() else 'the start'
 
 
-def change(value, digits=2):
+def change(value: float | None, digits: int = 2) -> str:
     """A score difference in percentage points; whole-repertoire changes are often tiny, so they get a digit more."""
     if value is not None and digits == 2 and abs(100 * value) < 0.1:
         digits = 3
     return score_points(None if value is None else 100 * value, digits, signed=True)
 
 
-def headline(after, before):
+def headline(after: float | None, before: float | None) -> str:
     """A whole-repertoire change, with its centipawn translation as in the main report's headlines."""
     cp = centipawn_delta(after, before)
     return change(None if after is None or before is None else after - before) + (
@@ -50,20 +56,20 @@ def headline(after, before):
     )
 
 
-def bounds(interval):
+def bounds(interval: Sequence[float] | None) -> str:
     return ' to '.join(score_points(v, 2, signed=True) for v in interval) if interval else 'unavailable'
 
 
-def reply_label(route):
+def reply_label(route: str) -> str:
     """The opponent move a decision answers, such as 2...Nf6."""
     return escape(route.split()[-1]) if route.split() else 'the start'
 
 
-def uncertain(bounds):
+def uncertain(bounds: Sequence[float] | None) -> bool:
     return bounds is not None and bounds[0] <= 0 <= bounds[1]
 
 
-def option_name(option, page):
+def option_name(option: JsonObject, page: str | Path) -> str:
     """The move, then where it comes from: your chapter pages or the candidate's Lichess chapters."""
     if option['source'] == 'repertoire':
         sources = ', '.join(
@@ -77,13 +83,14 @@ def option_name(option, page):
     return f"{escape(option['label'])} ({names})"
 
 
-def chosen(decision, plan):
+def chosen(decision: JsonObject, plan: Plan) -> JsonObject:
     return next(o for o in decision['options'] if o[plan])
 
 
-def verdict(data):
+def verdict(data: JsonObject) -> str:
     """One sentence: which alternatives to adopt and where to keep your moves, grouped by move."""
-    adopt, keep = {}, {}
+    adopt: dict[str, list[str]] = {}
+    keep: dict[str, list[str]] = {}
     for d in sorted(data['decisions'], key=lambda d: -(d['reach'] or 0)):
         if d['parent'] is not None:
             continue
@@ -108,7 +115,7 @@ def verdict(data):
     return text
 
 
-def join(items):
+def join(items: Sequence[str]) -> str:
     if len(items) == 1:
         return items[0]
     # Items that already contain "and" need a serial comma to stay readable.
@@ -116,7 +123,7 @@ def join(items):
     return ', '.join(items[:-1]) + last + items[-1]
 
 
-def scenario_table(data):
+def scenario_table(data: JsonObject) -> list[str]:
     scenarios, color = data['scenarios'], data['color'].title()
     entry = data['entry']
     has_entry = bool(entry['line'])
@@ -146,16 +153,16 @@ def scenario_table(data):
     return table(headers, rows)
 
 
-def decision_rows(data, page):
+def decision_rows(data: JsonObject, page: str | Path) -> list[str]:
     rows = []
     order = sorted([d for d in data['decisions'] if d['parent'] is None], key=lambda d: (-(d['reach'] or 0), d['line']))
-    nested = {}
+    nested: dict[int, list[JsonObject]] = {}
     for d in data['decisions']:
         if d['parent'] is not None:
             nested.setdefault(d['parent'][0], []).append(d)
-    sequence = []
+    sequence: list[tuple[JsonObject, int]] = []
 
-    def add(d, depth):
+    def add(d: JsonObject, depth: int) -> None:
         sequence.append((d, depth))
         for child in nested.get(d['id'], []):
             add(child, depth + 1)
@@ -206,7 +213,7 @@ def decision_rows(data, page):
     )
 
 
-def preparation_table(data):
+def preparation_table(data: JsonObject) -> list[str]:
     scenarios = data['scenarios']
     metrics = [scenarios[k]['entry_metrics'] or {} for k in ('current', 'improving', 'all')]
     return table(
@@ -222,8 +229,10 @@ def preparation_table(data):
     )
 
 
-def caveats(data):
-    notes, weaker, stronger = [], [], []
+def caveats(data: JsonObject) -> list[str]:
+    notes: list[str] = []
+    weaker: list[str] = []
+    stronger: list[str] = []
     for d in sorted(data['decisions'], key=lambda d: -(d['reach'] or 0)):
         options = d['options']
         yours = (options[0]['metrics'] or {}).get('opponent_rating') or {}
@@ -274,7 +283,7 @@ def caveats(data):
     return [item for note in notes for item in (f'- {note}', '')]
 
 
-def decision_section(d, data, page):
+def decision_section(d: JsonObject, data: JsonObject, page: str | Path) -> list[str]:
     color = data['color'].title()
     yours = d['options'][0]
     text = section(f"### After {line(d['line'])}", f"decision-{d['id'] + 1}")
@@ -301,7 +310,7 @@ def decision_section(d, data, page):
         text += [sentence, '']
     options = d['options']
 
-    def metric(key, fmt):
+    def metric(key: str, fmt: Callable[[Any], str]) -> list[str]:
         return [fmt((o['metrics'] or {}).get(key)) for o in options]
 
     text += table(
@@ -363,7 +372,7 @@ def decision_section(d, data, page):
     return text
 
 
-def source_argument(source):
+def source_argument(source: JsonObject) -> str:
     """How to name a candidate on the command line, without publishing local folders outside the repository."""
     if source['kind'] == 'lichess':
         return source['input']
@@ -376,7 +385,7 @@ def source_argument(source):
     return f'"{value}"' if ' ' in value else value
 
 
-def method_section(data, page):
+def method_section(data: JsonObject, page: str | Path) -> list[str]:
     evidence, validation = data['evidence'], data['validation']
     sources = []
     for s in data['sources']:
@@ -443,12 +452,12 @@ def method_section(data, page):
     ]
 
 
-def render(data, page):
+def render(data: JsonObject, page: str | Path) -> str:
     with display(digits=1):
         return '\n'.join(_render(data, page))
 
 
-def _render(data, page):
+def _render(data: JsonObject, page: str | Path) -> list[str]:
     color = data['color'].title()
     entry = data['entry']
     sources = ', '.join(

@@ -11,12 +11,16 @@ positions (a path visits a position at most once), so:
 """
 
 import math
+from collections.abc import Iterable, Sequence
 from functools import lru_cache
+from typing import TypedDict, cast, overload
 
 import numpy as np
 
-from .evaluate import COMPLETED, DEVIATION, KNOWN, LEAF, OTHER, UNKNOWN, backward, can_enter
-from .schema import Posterior
+from .evaluate import COMPLETED, DEVIATION, KNOWN, LEAF, OTHER, UNKNOWN, Weights, backward, can_enter
+from .model import Model, Sampled
+from .schema import Position
+from .schema import Posterior as PosteriorSummary
 
 Z95 = 1.959963984540054
 METHOD = (
@@ -25,7 +29,18 @@ METHOD = (
 )
 
 
-def dirichlet_variance(alpha, gradient):
+class Gradient(TypedDict):
+    mean: np.ndarray
+    entry_probability: float
+    cells: dict[Position, np.ndarray]
+
+
+class ChapterPosterior(TypedDict):
+    entry_probability: float
+    summary: PosteriorSummary | None
+
+
+def dirichlet_variance(alpha: np.ndarray, gradient: np.ndarray) -> float:
     """Variance of sum(theta * gradient) when theta ~ Dirichlet(alpha)."""
     total = alpha.sum()
     weights = alpha / total
@@ -33,7 +48,7 @@ def dirichlet_variance(alpha, gradient):
     return max(0.0, (float((weights * gradient * gradient).sum()) - mean * mean) / (total + 1))
 
 
-def _continued_fraction(a, b, x):
+def _continued_fraction(a: float, b: float, x: float) -> float:
     tiny, c, d = 1e-300, 1.0, 1.0 - (a + b) * x / (a + 1)
     d = 1.0 / (d if abs(d) > tiny else tiny)
     result = d
@@ -52,7 +67,7 @@ def _continued_fraction(a, b, x):
     return result
 
 
-def beta_cdf(x, a, b):
+def beta_cdf(x: float, a: float, b: float) -> float:
     """Regularized incomplete beta function I_x(a, b)."""
     if x <= 0:
         return 0.0
@@ -65,7 +80,7 @@ def beta_cdf(x, a, b):
 
 
 @lru_cache(maxsize=65536)
-def beta_quantile(p, a, b):
+def beta_quantile(p: float, a: float, b: float) -> float:
     """The p-quantile of Beta(a, b): Newton steps from the mean, kept inside a shrinking bisection bracket."""
     log_norm = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b)
     low, high, x = 0.0, 1.0, a / (a + b)
@@ -84,7 +99,7 @@ def beta_quantile(p, a, b):
     return x
 
 
-def score_interval(mean, variance):
+def score_interval(mean: float, variance: float) -> list[float]:
     """Approximate 95% interval for a score between 0 and 1 with the given mean and variance."""
     if variance <= 0 or not 0 < mean < 1:
         return [mean, mean]
@@ -100,13 +115,13 @@ def score_interval(mean, variance):
     return [beta_quantile(0.025, a, b), beta_quantile(0.975, a, b)]
 
 
-def difference_interval(mean, variance, scale=100.0):
+def difference_interval(mean: float, variance: float, scale: float = 100.0) -> list[float]:
     """Approximate 95% interval for a difference of scores, in points of `scale`."""
     sd = math.sqrt(max(variance, 0.0))
     return [scale * (mean - Z95 * sd), scale * (mean + Z95 * sd)]
 
 
-def row_moments(row, owner):
+def row_moments(row: np.ndarray, owner: np.ndarray) -> tuple[float, float]:
     """Mean and exact variance of one row's owner score, given its Dirichlet parameters (white/draw/black)."""
     total = row.sum()
     weights = row / total
@@ -114,7 +129,13 @@ def row_moments(row, owner):
     return mean, max(0.0, (float(weights @ (owner * owner)) - mean * mean) / (total + 1))
 
 
-def comparison_interval(mean, variance, component=None, coefficient=1.0, scale=100.0):
+def comparison_interval(
+    mean: float,
+    variance: float,
+    component: tuple[float, float] | None = None,
+    coefficient: float = 1.0,
+    scale: float = 100.0,
+) -> list[float]:
     """95% interval for a difference of scores, in points of `scale`.
 
     `component` is (mean, variance) of one bounded score whose fluctuations enter the difference times
@@ -131,7 +152,7 @@ def comparison_interval(mean, variance, component=None, coefficient=1.0, scale=1
     return [scale * (mean - math.sqrt(below * below + rest)), scale * (mean + math.sqrt(above * above + rest))]
 
 
-def summary(mean, variance) -> Posterior:
+def summary(mean: np.ndarray, variance: float) -> PosteriorSummary:
     """The saved `posterior` block for a score: mean component vector (see evaluate) and score variance."""
     unresolved = float(mean[UNKNOWN])
     return {
@@ -159,7 +180,15 @@ def summary(mean, variance) -> Posterior:
 class Posterior:
     """Posterior means and first-order variances for one policy's model (see model.prepare)."""
 
-    def __init__(self, model, order, color, prior, sparse_threshold):
+    alpha: dict[Position, np.ndarray]
+    sample: Sampled
+    _cells: dict[Position, np.ndarray]
+    _variance: dict[Position, float]
+    _influence: dict[Position, dict[Position, float]] | None
+
+    def __init__(
+        self, model: Model, order: list[Position], color: bool, prior: Sequence[float], sparse_threshold: int
+    ) -> None:
         self.model, self.order = model, order
         self.owner = np.array([1.0, 0.5, 0.0] if color else [0.0, 0.5, 1.0])
         # The prior is in owner win/draw/loss order; tables use white/draw/black.
@@ -168,7 +197,7 @@ class Posterior:
         for k in order:
             node = model[k]
             if node.mode == 'own':
-                self.sample[k] = [(b.weight, None) for b in node.branches]
+                self.sample[k] = [(cast(float, b.weight), None) for b in node.branches]
             elif node.mode == 'opponent':
                 # The prior's total strength is shared across all legal moves and any residual bucket.
                 alpha = np.asarray([b.counts for b in node.branches], dtype=float) + table_prior / len(node.branches)
@@ -193,7 +222,7 @@ class Posterior:
         self.values = backward(model, order, self.sample, sparse_threshold)
         self._cells, self._variance, self._influence = {}, {}, None
 
-    def cells(self, k):
+    def cells(self, k: Position) -> np.ndarray:
         """The value each cell of table k contributes, at posterior means (rows x white/draw/black)."""
         if k not in self._cells:
             node = self.model[k]
@@ -213,15 +242,15 @@ class Posterior:
             self._cells[k] = cells
         return self._cells[k]
 
-    def table_variance(self, k):
+    def table_variance(self, k: Position) -> float:
         if k not in self._variance:
             self._variance[k] = dirichlet_variance(self.alpha[k], self.cells(k))
         return self._variance[k]
 
-    def influence(self):
+    def influence(self) -> dict[Position, dict[Position, float]]:
         """For each position, the mean probability of reaching each table position from it."""
         if self._influence is None:
-            result = {}
+            result: dict[Position, dict[Position, float]] = {}
             for k in self.order:
                 reach = {k: 1.0} if k in self.alpha else {}
                 for b, (p, _) in zip(self.model[k].branches, self.sample[k]):
@@ -232,22 +261,29 @@ class Posterior:
             self._influence = result
         return self._influence
 
-    def combined_influence(self, starts):
+    def combined_influence(self, starts: Weights) -> dict[Position, float]:
+        total: dict[Position, float]
         influence, total = self.influence(), {}
         for k, weight in starts.items():
             for m, value in influence[k].items():
                 total[m] = total.get(m, 0.0) + weight * value
         return total
 
-    def value_variance(self, starts):
+    def value_variance(self, starts: Weights) -> float:
         """Variance of a fixed mixture of position values, such as the repertoire root."""
         return sum(c * c * self.table_variance(m) for m, c in self.combined_influence(starts).items())
 
-    def mixture(self, starts):
+    def mixture(self, starts: Weights) -> PosteriorSummary:
         mean = sum((w * self.values[k] for k, w in starts.items()), np.zeros(8))
         return summary(mean, self.value_variance(starts))
 
-    def gradient(self, roots, entries=None):
+    @overload
+    def gradient(self, roots: Weights, entries: None = None) -> Gradient: ...
+
+    @overload
+    def gradient(self, roots: Weights, entries: Iterable[Position]) -> Gradient | None: ...
+
+    def gradient(self, roots: Weights, entries: Iterable[Position] | None = None) -> Gradient | None:
         """A score's posterior mean and its sensitivity to every table, as cell arrays.
 
         Without `entries`, the score is the fixed mixture `roots` of position values. With `entries`, it
@@ -276,6 +312,8 @@ class Posterior:
         mean = sum((w * self.values[k] for k, w in starts.items()), np.zeros(8)) / probability
         score = mean[COMPLETED]
         # Value carried through the first entry (G) and probability of entering (H) from each position.
+        carried: dict[Position, float]
+        enters: dict[Position, float]
         carried, enters = {}, {}
         for k in self.order:
             if not entering[k]:
@@ -305,10 +343,10 @@ class Posterior:
             cells[m] = gradient / probability
         return dict(mean=mean, entry_probability=probability, cells=cells)
 
-    def variance(self, gradient):
+    def variance(self, gradient: Gradient) -> float:
         return sum(dirichlet_variance(self.alpha[m], g) for m, g in gradient['cells'].items())
 
-    def chapter(self, roots, entries):
+    def chapter(self, roots: Weights, entries: Iterable[Position]) -> ChapterPosterior:
         """Score conditional on first entering one of `entries`, whose weights are themselves uncertain."""
         gradient = self.gradient(roots, entries)
         if gradient is None:
@@ -317,7 +355,7 @@ class Posterior:
             entry_probability=gradient['entry_probability'], summary=summary(gradient['mean'], self.variance(gradient))
         )
 
-    def stop_interval(self, k, j):
+    def stop_interval(self, k: Position, j: int) -> tuple[float, list[float]]:
         """Posterior mean and 95% interval of one stopping event's score, from its own result row."""
         branch = self.model[k].branches[j]
         if branch.fixed_score is not None:
@@ -326,7 +364,14 @@ class Posterior:
         return mean, score_interval(mean, variance)
 
 
-def paired_variance(a, a_gradient, b, b_gradient, a_scale=1.0, b_scale=1.0):
+def paired_variance(
+    a: Posterior,
+    a_gradient: Gradient,
+    b: Posterior,
+    b_gradient: Gradient,
+    a_scale: float = 1.0,
+    b_scale: float = 1.0,
+) -> float:
     """Variance of b_scale * (score b) - a_scale * (score a) for two policies over the same cached tables.
 
     The scales allow a transformed difference, such as a logit (centipawn) change, by the delta method.
@@ -336,7 +381,7 @@ def paired_variance(a, a_gradient, b, b_gradient, a_scale=1.0, b_scale=1.0):
         alpha = b.alpha[m] if m in b.alpha else a.alpha[m]
         if m in a.alpha and m in b.alpha and not np.array_equal(a.alpha[m], b.alpha[m]):
             raise ValueError('Paired scores use different evidence for the same position')
-        gradient = 0.0
+        gradient: float | np.ndarray = 0.0
         if m in b_gradient['cells']:
             gradient = gradient + b_scale * b_gradient['cells'][m]
         if m in a_gradient['cells']:

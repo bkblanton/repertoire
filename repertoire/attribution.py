@@ -3,9 +3,13 @@
 import os
 import tempfile
 import time
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Any, TypedDict
 
 from .board_cache import children
+from .graph import Graph
+from .schema import JsonObject, Position
 
 ATTRIBUTION_NOTE = (
     'Chapter attribution follows the exact position or final recorded '
@@ -15,7 +19,14 @@ ATTRIBUTION_NOTE = (
 )
 
 
-def write_text(path, text):
+class ChapterAttribution(TypedDict):
+    source_ids: list[str]
+    context_ids: list[str]
+    transposition_ids: list[str]
+    basis: str
+
+
+def write_text(path: str | Path, text: str) -> None:
     """Replace complete outputs atomically, tolerating brief Windows sync locks."""
     path = Path(path)
     with tempfile.NamedTemporaryFile(
@@ -37,22 +48,24 @@ def write_text(path, text):
 
 
 class Attribution:
-    def __init__(self, graph):
+    def __init__(self, graph: Graph) -> None:
         self.graph = graph
-        self.catalog = [{k: c.get(k) for k in ('id', 'name', 'url')} for c in graph.chapters]
+        self.catalog: list[JsonObject] = [{k: c.get(k) for k in ('id', 'name', 'url')} for c in graph.chapters]
         self.order = {c['id']: i for i, c in enumerate(graph.chapters)}
-        self.cache = {}
+        self.cache: dict[tuple[Position, str | None], ChapterAttribution] = {}
 
-    def ordered(self, ids):
+    def ordered(self, ids: Iterable[str]) -> list[str]:
         return sorted(set(ids), key=lambda cid: (self.order.get(cid, len(self.order)), cid))
 
-    def position_or_move(self, position, move=None):
+    def position_or_move(self, position: str, move: str | None = None) -> ChapterAttribution:
         position = ' '.join(position.split()[:4])
         identity = position, move
         if identity in self.cache:
             return self.cache[identity]
         node = self.graph.nodes.get(position)
         context = self.ordered(node.chapters) if node else []
+        sources: list[str]
+        transpositions: list[str]
         sources, transpositions = [], []
         if move is None:
             sources, basis = context, 'position'
@@ -64,12 +77,14 @@ class Attribution:
                 target = self.graph.nodes.get(children(position)[move])
                 if target:
                     transpositions, basis = self.ordered(target.chapters), 'transposition'
-        result = dict(source_ids=sources, context_ids=context, transposition_ids=transpositions, basis=basis)
+        result: ChapterAttribution = dict(
+            source_ids=sources, context_ids=context, transposition_ids=transpositions, basis=basis
+        )
         self.cache[identity] = result
         return result
 
 
-def enrich(report, graph):
+def enrich(report: JsonObject, graph: Graph) -> JsonObject:
     """Add provenance only; leave every score, probability and ordering unchanged."""
     attribution = Attribution(graph)
     report['chapter_catalog'] = attribution.catalog
@@ -115,9 +130,9 @@ def enrich(report, graph):
                         row['example_chapter_attribution'] = examples[row['example_position'], row['example_line']]
     else:
         # Rankings reuse the row objects of all_signed_rows; visit each object once.
-        seen = set()
+        seen: set[int] = set()
 
-        def visit(item):
+        def visit(item: Any) -> None:
             if id(item) in seen:
                 return
             seen.add(id(item))
@@ -139,13 +154,13 @@ def enrich(report, graph):
     return report
 
 
-def chapter_text(row, catalog):
+def chapter_text(row: Mapping[str, Any], catalog: Iterable[Mapping[str, Any]]) -> str:
     attribution = row.get('chapter_attribution')
     if attribution is None:
         return 'Not attributed'
     lookup = {c['id']: c for c in catalog}
 
-    def names(ids):
+    def names(ids: Iterable[str]) -> str:
         result = []
         for cid in ids:
             chapter = lookup.get(cid, {'name': cid})

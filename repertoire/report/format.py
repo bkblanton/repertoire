@@ -4,23 +4,28 @@ import html
 import math
 import os
 import re
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 
 from ..explorer import DEFAULT_FILTERS
 from ..layout import report_directory
+from ..schema import JsonObject
 
 LICHESS_WIN_CHANCE_COEFFICIENT = 0.00368208
 
 
 # Every page shows one decimal and compact game counts; scores are rarely known more precisely than that.
-_display = ContextVar('display', default=MappingProxyType({'digits': 1, 'compact_counts': True}))
+_display: ContextVar[Mapping[str, int | bool]] = ContextVar(
+    'display', default=MappingProxyType({'digits': 1, 'compact_counts': True})
+)
 
 
 @contextmanager
-def display(**options):
+def display(**options: int | bool) -> Iterator[None]:
     token = _display.set(dict(_display.get(), **options))
     try:
         yield
@@ -28,7 +33,7 @@ def display(**options):
         _display.reset(token)
 
 
-def percentage(value, digits=None):
+def percentage(value: float | None, digits: int | None = None) -> str:
     if value is None:
         return 'unresolved'
     if digits is None:
@@ -40,7 +45,7 @@ def percentage(value, digits=None):
     return f'<{smallest:.{digits}f}%' if 0 < 100 * value < smallest / 2 else f'{100 * value:.{digits}f}%'
 
 
-def number(value, digits=2, signed=False):
+def number(value: float | None, digits: int = 2, signed: bool = False) -> str:
     if value is None:
         return 'unresolved'
     if signed and 0 < abs(value) < 0.5 * 10**-digits:
@@ -48,13 +53,13 @@ def number(value, digits=2, signed=False):
     return format(value, f'{"+" if signed else ""}.{digits}f')
 
 
-def score_points(value, digits=None, signed=False):
+def score_points(value: float | None, digits: int | None = None, signed: bool = False) -> str:
     """Display an already percentage-scaled score difference or contribution."""
     digits = _display.get()['digits'] if digits is None else digits
     return 'unresolved' if value is None else number(value, digits, signed) + '%'
 
 
-def per_thousand(value_pp, signed=False):
+def per_thousand(value_pp: float | None, signed: bool = False) -> str:
     """Reach-weighted percentage points as score points per 1,000 games with that color or scope."""
     if value_pp is None:
         return 'unresolved'
@@ -63,7 +68,7 @@ def per_thousand(value_pp, signed=False):
     return number(value, digits, signed)
 
 
-def count(value):
+def count(value: int | None) -> str:
     if value is None:
         return 'unavailable'
     if not _display.get()['compact_counts'] or value < 10_000:
@@ -74,12 +79,12 @@ def count(value):
     return f'{value / 1e3:.0f}k'
 
 
-def plies(route):
+def plies(route: str | None) -> int:
     route = (route or '').strip()
     return 0 if route in ('', '(PGN root)') else len(route.split())
 
 
-def games_per_encounter(probability):
+def games_per_encounter(probability: float | None) -> str:
     """Mean waiting interval in independent games with the displayed reach basis."""
     if probability is None:
         return 'unavailable'
@@ -89,7 +94,7 @@ def games_per_encounter(probability):
     return f'{value:,.0f}' if value >= 10 else f'{value:.1f}'
 
 
-def encounters(probability, color=''):
+def encounters(probability: float | None, color: str = '') -> str:
     """How often a reach comes up, in words: 1 in 43 games, or 1 in 43 White games."""
     noun = f'{color} game'.strip()
     if probability is not None and probability > 0.995:
@@ -98,15 +103,15 @@ def encounters(probability, color=''):
     return games if games in ('unavailable', 'never') else f'1 in {games} {noun}s'
 
 
-def reach_cell(probability):
+def reach_cell(probability: float | None) -> str:
     return percentage(probability) + '<br>' + encounters(probability)
 
 
-def escape(value):
+def escape(value: object) -> str:
     return html.escape(str(value), quote=False).replace('|', '&#124;').replace('\n', ' ')
 
 
-def line(value):
+def line(value: str) -> str:
     """Display repeated PGN move numbers as conventional paired moves."""
     value = ' '.join(value.split())
     value = re.sub(r'(?<!\S)(\d+)\.(?!\.)(\S+)\s+\1\.\.\.(\S+)', r'\1. \2 \3', value)
@@ -115,41 +120,41 @@ def line(value):
     return escape(' '.join(value.split()) or '(starting position)')
 
 
-def elo_equivalent(score, baseline):
+def elo_equivalent(score: float | None, baseline: float | None) -> float | None:
     """Difference of logistic Elo score equivalents; boundaries are undefined."""
     if score is None or baseline is None or not (0 < score < 1 and 0 < baseline < 1):
         return None
     return 400 * (math.log10(score / (1 - score)) - math.log10(baseline / (1 - baseline)))
 
 
-def centipawn_equivalent(score):
+def centipawn_equivalent(score: float | None) -> float | None:
     """Direct inverse Lichess score equivalent, from the repertoire owner's view."""
     if score is None or not 0 < score < 1:
         return None
     return math.log(score / (1 - score)) / LICHESS_WIN_CHANCE_COEFFICIENT
 
 
-def centipawn_delta(after, before):
+def centipawn_delta(after: float | None, before: float | None) -> float | None:
     """Convert both scores first, then subtract before from after."""
     converted = [centipawn_equivalent(p) for p in (after, before)]
-    return None if any(p is None for p in converted) else converted[0] - converted[1]
+    return None if any(p is None for p in converted) else cast(float, converted[0]) - cast(float, converted[1])
 
 
-def cp(score):
+def cp(score: float | None) -> str:
     value = centipawn_equivalent(score)
     return 'unavailable' if value is None else number(value, signed=True)
 
 
-def cp_change(after, before):
+def cp_change(after: float | None, before: float | None) -> str:
     value = centipawn_delta(after, before)
     return 'unavailable' if value is None else number(value, signed=True)
 
 
-def cp_interval(bounds):
+def cp_interval(bounds: Sequence[float | None] | None) -> str:
     return ' to '.join(map(cp, bounds)) if bounds else 'unavailable'
 
 
-def spread_display(spread, immediate=True):
+def spread_display(spread: JsonObject | None, immediate: bool = True) -> str:
     if not spread:
         return 'unavailable'
     result = percentage(spread.get('standard_deviation'))
@@ -160,31 +165,31 @@ def spread_display(spread, immediate=True):
     return result
 
 
-def score_cell(value):
+def score_cell(value: float | None) -> str:
     return percentage(value) + ' (' + cp(value) + ' cp)'
 
 
-def delta_cell(after, before, *, drag=False):
+def delta_cell(after: float | None, before: float | None, *, drag: bool = False) -> str:
     delta = None if after is None or before is None else 100 * (before - after if drag else after - before)
     return score_points(delta, signed=True) + ' (' + cp_change(after, before) + ' cp)'
 
 
-def delta_points(after, before, *, drag=False):
+def delta_points(after: float | None, before: float | None, *, drag: bool = False) -> str:
     delta = None if after is None or before is None else 100 * (before - after if drag else after - before)
     return score_points(delta, signed=True)
 
 
-def headline_delta(after, before):
+def headline_delta(after: float | None, before: float | None) -> str:
     """Headline deltas alone keep a centipawn-scale translation; other tables show percentages only."""
     value = centipawn_delta(after, before)
     return delta_points(after, before) + ('' if value is None else f' ({number(value, 0, signed=True)} cp)')
 
 
-def interval_cell(bounds):
+def interval_cell(bounds: Sequence[float | None] | None) -> str:
     return ' to '.join(score_points(v, signed=True) for v in bounds) if bounds else 'unavailable'
 
 
-def gain_split(row):
+def gain_split(row: JsonObject) -> str:
     if row.get('database_move_gain_pp') is None:
         return 'unavailable'
     return (
@@ -193,7 +198,7 @@ def gain_split(row):
     )
 
 
-def population_text(report):
+def population_text(report: JsonObject) -> str:
     filters = report['manifest']['filters']
     speeds = filters.get('speeds', 'configured speeds').replace(',', ', ')
     ratings = filters.get('ratings', '')
@@ -207,7 +212,7 @@ def population_text(report):
     return f"Lichess rated {speeds}; {bands}; {dates}."
 
 
-def evidence_date(report):
+def evidence_date(report: JsonObject) -> str:
     dates = sorted(
         {
             p['retrieved_at'][:10]
@@ -222,7 +227,7 @@ def evidence_date(report):
     )
 
 
-def display_source(source, result_path):
+def display_source(source: str | Path, result_path: str | Path) -> str:
     """Show the PGN relative to the report folder, so published reports carry no local absolute path."""
     try:
         return Path(os.path.relpath(source, report_directory(result_path))).as_posix()
@@ -231,7 +236,7 @@ def display_source(source, result_path):
         return Path(source).name
 
 
-def opponent_rating(context):
+def opponent_rating(context: JsonObject | None) -> str:
     if not context or context.get('mean') is None:
         if context and context.get('reason') == 'no_preceding_opponent_move':
             return 'n/a (no preceding opponent move)'
@@ -242,7 +247,7 @@ def opponent_rating(context):
     return result
 
 
-def rating_difference(context):
+def rating_difference(context: JsonObject | None) -> str:
     if context and context.get('reason') == 'no_preceding_opponent_move':
         return 'n/a (no preceding opponent move)'
     if context and context.get('basis') == 'current opponent response rows' and 'difference_vs_parent' not in context:
@@ -258,7 +263,7 @@ def rating_difference(context):
     return result + (' (' + '; '.join(notes) + ')' if notes else '')
 
 
-def rating_cell(context):
+def rating_cell(context: JsonObject | None) -> str:
     """Average opponent rating, with its difference from the parent position when there is one."""
     rating = opponent_rating(context)
     difference = rating_difference(context)
@@ -268,7 +273,7 @@ def rating_cell(context):
     return f'{rating}<br>{value} vs parent' + (f' ({notes}' if notes else '')
 
 
-def gap_percentage(metrics, weighted=False):
+def gap_percentage(metrics: JsonObject | None, weighted: bool = False) -> str:
     metrics = metrics or {}
     prefix = 'weighted_' if weighted else ''
     value = metrics.get(prefix + 'equivalent_gap_reach')
@@ -278,11 +283,11 @@ def gap_percentage(metrics, weighted=False):
     return ' to '.join(map(percentage, bounds)) + ' (bounds)' if bounds is not None else 'unavailable'
 
 
-def position_reach_label(scope):
+def position_reach_label(scope: JsonObject) -> str:
     """Board reach combines every transposed arrival."""
     return 'Position reach' if scope.get('id', 'overall') == 'overall' else 'Position reach after chapter entry'
 
 
-def move_reach_label(scope):
+def move_reach_label(scope: JsonObject) -> str:
     """Move reach counts only arrivals at the parent that continue with this move."""
     return 'Move reach' if scope.get('id', 'overall') == 'overall' else 'Move reach after chapter entry'

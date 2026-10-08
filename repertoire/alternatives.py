@@ -12,16 +12,24 @@ Nothing here reads the network; evidence is supplied by the caller.
 
 import itertools
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
 
 import chess.pgn
 
 from .board_cache import canonical, terminal_white, turn
-from .graph import alternative_transitions, parse_games, reachable
+from .graph import Graph, Policy, Transitions, alternative_transitions, parse_games, reachable
+from .schema import Position
+
+if TYPE_CHECKING:
+    from .compare import Scenario
 
 # Scenario games carry these chapter IDs, so candidate chapters never collide with the repertoire's own IDs,
 # which its configuration uses.
 CANDIDATE_PREFIX = 'candidate-'
+
+Reference = str | tuple[str, ...] | None  # the repertoire's move at a board (see repertoire_reference)
 
 
 @dataclass
@@ -40,7 +48,14 @@ class Decision:
     nested: list[int] = field(default_factory=list)
 
 
-def walk(graph, color, cid, starts, reference, passed):
+def walk(
+    graph: Graph,
+    color: bool,
+    cid: str,
+    starts: Sequence[Position],
+    reference: Callable[[Position], Reference],
+    passed: Mapping[Position, list[str]],
+) -> Iterator[tuple[Position, str]]:
     """Follow one chapter's first moves and recorded replies; yield (board, move) where it first differs."""
     seen, pending = set(), list(reversed(starts))
     while pending:
@@ -62,11 +77,19 @@ def walk(graph, color, cid, starts, reference, passed):
             pending.extend(reversed([node.edges[m] for m in moves]))
 
 
-def find_decisions(graph, color, reference):
+def find_decisions(graph: Graph, color: bool, reference: Callable[[Position], Reference]) -> list[Decision]:
     """Every decision point of a candidate graph against `reference(board)`, the repertoire's move there."""
-    decisions = []
+    decisions: list[Decision] = []
 
-    def explore(chapters, starts, ref, parent, lead=None):
+    def explore(
+        chapters: Sequence[str],
+        starts: Mapping[str, Sequence[Position]],
+        ref: Callable[[Position], Reference],
+        parent: tuple[int, int] | None,
+        lead: str | None = None,
+    ) -> None:
+        found: dict[Position, dict[str, list[str]]]
+        passed: defaultdict[Position, list[str]]
         found, passed = {}, defaultdict(list)
         for cid in chapters:
             for k, move in walk(graph, color, cid, starts[cid], ref, passed):
@@ -95,9 +118,11 @@ def find_decisions(graph, color, reference):
                 if len(option.chapters) > 1:
                     # Inside a pooled option the earliest chapter is the reference for the others.
                     first, rest = option.chapters[0], option.chapters[1:]
-                    target = graph.nodes[k].edges[option.move]
+                    target = graph.nodes[k].edges[cast(str, option.move)]
 
-                    def nested_reference(x, first=first, ref=ref):
+                    def nested_reference(
+                        x: Position, first: str = first, ref: Callable[[Position], Reference] = ref
+                    ) -> Reference:
                         recorded = graph.nodes[x].chapter_moves.get(first)
                         return recorded[0] if recorded else ref(x)
 
@@ -107,10 +132,10 @@ def find_decisions(graph, color, reference):
     return decisions
 
 
-def repertoire_reference(transitions):
+def repertoire_reference(transitions: Transitions) -> Callable[[Position], Reference]:
     """The repertoire's move at a board: one UCI move, None without preparation, or a tuple for a mixed policy."""
 
-    def reference(k):
+    def reference(k: Position) -> Reference:
         selected = transitions.get(k, {})
         if not selected:
             return None
@@ -121,10 +146,10 @@ def repertoire_reference(transitions):
     return reference
 
 
-class Choice(dict):
+class Choice(dict[int, int]):
     """Decision id -> option index; missing decisions keep option 0."""
 
-    def active(self, decisions):
+    def active(self, decisions: Sequence[Decision]) -> list[Decision]:
         """Decisions that apply: top-level ones, and nested ones whose parent option is chosen."""
         result = []
         for d in decisions:
@@ -135,11 +160,18 @@ class Choice(dict):
                 result.append(d)
         return result
 
-    def key(self):
+    def key(self) -> tuple[tuple[int, int], ...]:
         return tuple(sorted((d, i) for d, i in self.items() if i))
 
 
-def copy_lines(source, target, board, keep, cid, inside):
+def copy_lines(
+    source: chess.pgn.GameNode,
+    target: chess.pgn.GameNode,
+    board: chess.Board,
+    keep: Mapping[Position, tuple[set[str], bool]],
+    cid: str,
+    inside: bool,
+) -> bool:
     """Copy `source`'s variations into `target`, keeping candidate lines the scenario adopts.
 
     `keep` maps decision boards to (chapters allowed past it, whether those lines are adopted). Outside adopted
@@ -169,15 +201,23 @@ def copy_lines(source, target, board, keep, cid, inside):
 class Scenarios:
     """Hypothetical repertoires: candidate chapters, trimmed to the chosen options, before your own chapters."""
 
-    def __init__(self, candidate, candidate_games, decisions, repertoire_games, color, exclusions=()):
+    def __init__(
+        self,
+        candidate: Graph,
+        candidate_games: Sequence[chess.pgn.Game],
+        decisions: list[Decision],
+        repertoire_games: Sequence[chess.pgn.Game],
+        color: bool,
+        exclusions: Iterable[str] = (),
+    ) -> None:
         self.candidate, self.games, self.decisions = candidate, candidate_games, decisions
         self.repertoire_games, self.color, self.exclusions = repertoire_games, color, list(exclusions)
         self.ids = [c['id'] for c in candidate.chapters]
 
-    def keep(self, choice):
+    def keep(self, choice: Choice) -> dict[Position, tuple[set[str], bool]]:
         """Decision board -> (candidate chapters allowed past it, whether their lines there are adopted)."""
         active = {d.id for d in choice.active(self.decisions)}
-        result = {}
+        result: dict[Position, tuple[set[str], bool]] = {}
         for d in self.decisions:
             index = choice.get(d.id, 0) if d.id in active else 0
             option = d.options[index]
@@ -187,7 +227,7 @@ class Scenarios:
             result[d.position] = (set(option.chapters), adopted and d.id in active)
         return result
 
-    def candidate_games_for(self, choice, namespaced=True):
+    def candidate_games_for(self, choice: Choice, namespaced: bool = True) -> list[chess.pgn.Game]:
         """The candidate chapters trimmed to the chosen options; chapters with nothing adopted are dropped."""
         keep = self.keep(choice)
         result = []
@@ -202,19 +242,19 @@ class Scenarios:
                 result.append(copy)
         return result
 
-    def graph(self, choice):
+    def graph(self, choice: Choice) -> Graph:
         return parse_games([*self.candidate_games_for(choice), *self.repertoire_games], self.exclusions)
 
-    def fixed(self, choice):
+    def fixed(self, choice: Choice) -> dict[Position, str]:
         """The move each active decision plays; the scorer must not reconsider these boards."""
-        result = {}
+        result: dict[Position, str] = {}
         for d in choice.active(self.decisions):
             move = d.options[choice.get(d.id, 0)].move
             if isinstance(move, str):
                 result[d.position] = move
         return result
 
-    def superset(self, policy, roots):
+    def superset(self, policy: Policy, roots: Iterable[Position]) -> tuple[Graph, Transitions, list[Position]]:
         """Every board any scenario can reach, with every candidate line included, for planning evidence."""
         graph = parse_games(
             [*(self._full(cid, game) for cid, game in zip(self.ids, self.games)), *self.repertoire_games],
@@ -224,7 +264,7 @@ class Scenarios:
         return graph, transitions, reachable(transitions, [*roots, *graph.roots])
 
     @staticmethod
-    def _full(cid, game):
+    def _full(cid: str, game: chess.pgn.Game) -> chess.pgn.Game:
         copy = chess.pgn.Game()
         copy.headers.update(game.headers)
         copy.headers['ChapterURL'] = CANDIDATE_PREFIX + cid
@@ -233,7 +273,9 @@ class Scenarios:
         return copy
 
 
-def required_tables(graph, transitions, positions, color):
+def required_tables(
+    graph: Graph, transitions: Transitions, positions: Iterable[Position], color: bool
+) -> list[Position]:
     """Tables a scenario may need: every opponent turn, and own turns some chapter leaves without a move."""
     result = []
     for k in positions:
@@ -247,17 +289,19 @@ def required_tables(graph, transitions, positions, color):
     return result
 
 
-def descendants(transitions, starts):
+def descendants(transitions: Transitions, starts: Iterable[Position]) -> set[Position]:
     return set(reachable(transitions, [k for k in starts if k in transitions]))
 
 
-def changed(scenario, baseline):
+def changed(scenario: 'Scenario', baseline: 'Scenario') -> set[Position]:
     """Boards whose moves or replies differ between two evaluated scenarios."""
     keys = set(scenario.transitions) | set(baseline.transitions)
     return {k for k in keys if scenario.transitions.get(k) != baseline.transitions.get(k)}
 
 
-def groups(decisions, footprints, transitions):
+def groups(
+    decisions: Sequence[Decision], footprints: Mapping[int, set[Position]], transitions: Transitions
+) -> list[list[int]]:
     """Decision points whose options can affect each other, as lists of ids.
 
     `footprints[d]` is the union over d's options of the boards that option changes. Two decisions are linked
@@ -265,13 +309,13 @@ def groups(decisions, footprints, transitions):
     """
     parent = list(range(len(decisions)))
 
-    def find(i):
+    def find(i: int) -> int:
         while parent[i] != i:
             parent[i] = parent[parent[i]]
             i = parent[i]
         return i
 
-    def union(i, j):
+    def union(i: int, j: int) -> None:
         parent[find(i)] = find(j)
 
     below = {d.id: descendants(transitions, footprints[d.id]) for d in decisions}
@@ -281,18 +325,20 @@ def groups(decisions, footprints, transitions):
     for a, b in itertools.combinations(decisions, 2):
         if footprints[a.id] & below[b.id] or footprints[b.id] & below[a.id]:
             union(a.id, b.id)
-    result = defaultdict(list)
+    result: defaultdict[int, list[int]] = defaultdict(list)
     for d in decisions:
         result[find(d.id)].append(d.id)
     return sorted(result.values())
 
 
-def assignments(decisions, members, allowed):
+def assignments(
+    decisions: Sequence[Decision], members: Iterable[Any], allowed: Callable[[Decision], Iterable[int]]
+) -> Iterator[Choice]:
     """Every valid choice within a group: nested decisions vary only when their parent option is chosen."""
     members = [decisions[i] for i in members]
     top = [d for d in members if d.parent is None or d.parent[0] not in {m.id for m in members}]
 
-    def expand(pending, choice):
+    def expand(pending: list[Decision], choice: dict[int, int]) -> Iterator[Choice]:
         if not pending:
             yield Choice(choice)
             return
@@ -305,7 +351,9 @@ def assignments(decisions, members, allowed):
     yield from expand(top, {})
 
 
-def count_assignments(decisions, members, allowed, limit):
+def count_assignments(
+    decisions: Sequence[Decision], members: Iterable[int], allowed: Callable[[Decision], Iterable[int]], limit: int
+) -> int:
     count = 0
     for _ in assignments(decisions, members, allowed):
         count += 1

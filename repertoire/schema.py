@@ -5,11 +5,14 @@ validates files against them at run time. Scores are owner-relative expected poi
 `*_pp` fields are percentage points. Fields that cannot be resolved from the evidence are None.
 """
 
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from .status import Status
 
 Position = str  # canonical four-field FEN: pieces, side to move, castling, legal en passant
+# A JSON object read from or written to a saved analysis. Companion analyses and the rows the report
+# renders are typed this way; the score file itself is described by the TypedDicts below.
+JsonObject = dict[str, Any]
 
 
 class Masses(TypedDict):
@@ -54,9 +57,21 @@ class ScoreSummary(TypedDict):
     prepared_depth: NotRequired[PreparedDepth]
 
 
-class ChapterScore(ScoreSummary, total=False):
-    """A chapter's score conditional on first entry; `status` replaces the score when it cannot be resolved."""
+class ChapterScore(TypedDict, total=False):
+    """A chapter's score conditional on first entry: the ScoreSummary fields plus entry probabilities.
 
+    When the score cannot be resolved, `status` is set and the ScoreSummary fields are absent.
+    """
+
+    raw_empirical_score: float | None
+    resolved_contribution: float
+    unresolved_mass: float
+    conditional_bounds: list[float]
+    sparse_mass: float
+    sparse_sensitivity: list[float]
+    masses: Masses
+    posterior: Posterior
+    prepared_depth: PreparedDepth
     status: Status
     entry_probability: float | None
     posterior_entry_probability_mean: float | None
@@ -66,6 +81,8 @@ class ChapterScore(ScoreSummary, total=False):
     overall_policy_entry_probability_bounds: list[float] | None
     entry_probability_basis: str
     conditional_basis: str
+    conditional_score_bounds: list[float]  # with UNRESOLVED_ENTRY_WEIGHTS
+    probability_conditional_on_custom_root: float | None
 
 
 class EntryBaseline(TypedDict, total=False):

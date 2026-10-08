@@ -1,21 +1,25 @@
 """Board labels, Lichess analysis links and chapter attribution cells."""
 
+from collections.abc import Mapping
+from typing import Self, cast
+
 import chess
 
-from .bundle import scope_by_id
+from ..schema import JsonObject, Position
+from .bundle import Bundle, scope_by_id
 from .format import escape, line, percentage, plies
 from .markdown import SourceCell
 
 LICHESS_ANALYSIS = 'https://lichess.org/analysis/standard/'
 
 
-def analysis_url(position, route=''):
+def analysis_url(position: Position, route: str = '') -> str:
     """Open an exact canonical board on the Lichess analysis board and opening explorer."""
     fields = position.split()[:4]
     return LICHESS_ANALYSIS + '_'.join(fields + ['0', str(plies(route) // 2 + 1)])
 
 
-def linked_line(route, position):
+def linked_line(route: str, position: Position | None) -> str:
     text = line(route)
     return f'[{text}]({analysis_url(position, route)})' if position else text
 
@@ -23,38 +27,40 @@ def linked_line(route, position):
 class Chapters:
     """Compact clickable references preserve every source without giant cells."""
 
-    def __init__(self, report, openings=None, boards=None):
-        self.color = report['color']
-        self.catalog = report['chapters']
-        self.entries = {c['id']: (i, c) for i, c in enumerate(self.catalog, 1)}
-        self.openings = openings or {}
+    def __init__(
+        self, report: JsonObject, openings: JsonObject | None = None, boards: Mapping[Position, str] | None = None
+    ) -> None:
+        self.color: str = report['color']
+        self.catalog: list[JsonObject] = report['chapters']
+        self.entries: dict[str, tuple[int, JsonObject]] = {c['id']: (i, c) for i, c in enumerate(self.catalog, 1)}
+        self.openings: JsonObject = openings or {}
         # One representative overall-policy route per exact board keeps labels identical across tables.
-        self.boards = boards or {}
-        self.scope = 'overall'
-        self.source_scopes = {s['id']: s for s in self.openings.get('source_scopes', [])}
-        self.opening_anchors = {
+        self.boards: Mapping[Position, str] = boards or {}
+        self.scope: str = 'overall'
+        self.source_scopes: dict[str, JsonObject] = {s['id']: s for s in self.openings.get('source_scopes', [])}
+        self.opening_anchors: dict[str, str] = {
             r['id']: f'{self.color}-opening-{i}' for i, r in enumerate(self.openings.get('openings', []), 1)
         }
 
-    def route(self, position, fallback=''):
-        return self.boards.get(position, fallback)
+    def route(self, position: Position | None, fallback: str = '') -> str:
+        return self.boards.get(cast(Position, position), fallback)
 
-    def position_cell(self, row, route=None):
+    def position_cell(self, row: JsonObject, route: str | None = None) -> str:
         """Board label linked to the Lichess analysis board at that exact position."""
         route = self.route(row.get('position'), row.get('line', '')) if route is None else route
         return linked_line(route, row.get('position'))
 
-    def move_route(self, row):
+    def move_route(self, row: JsonObject) -> str:
         """The parent board's shared label plus this move, so a board reads the same in every table."""
         parent, san = row.get('position'), row.get('move_san')
         if parent not in self.boards or not san:
             return row['line']
-        prefix = self.boards[parent]
+        prefix = self.boards[cast(Position, parent)]
         number = plies(prefix) // 2 + 1
-        token = f'{number}.{san}' if parent.split()[1] == 'w' else f'{number}...{san}'
+        token = f'{number}.{san}' if cast(Position, parent).split()[1] == 'w' else f'{number}...{san}'
         return token if plies(prefix) == 0 else f'{prefix} {token}'
 
-    def move_cell(self, row):
+    def move_cell(self, row: JsonObject) -> str:
         """Links open the board where the repertoire owner chooses: before our move, after their reply."""
         route = self.move_route(row)
         if row.get('kind') == 'opponent' and row.get('target'):
@@ -63,25 +69,25 @@ class Chapters:
         text = line(route)
         return f'[{text}]({analysis_url(row["position"], parent_route)})' if row.get('position') else text
 
-    def page(self, cid):
+    def page(self, cid: str) -> str:
         return f'{self.color[0].upper()}{self.entries[cid][0]}.md'
 
-    def study_link(self, cid, text='Lichess study'):
+    def study_link(self, cid: str, text: str = 'Lichess study') -> str:
         url = self.entries.get(cid, (None, {}))[1].get('url')
         return f'[{text}]({url})' if url else ''
 
-    def for_scope(self, scope):
+    def for_scope(self, scope: str | None) -> Self:
         import copy
 
         result = copy.copy(self)
         result.scope = scope or 'overall'
         return result
 
-    def opening_source(self, row):
+    def opening_source(self, row: JsonObject) -> str:
         if not self.openings:
             return 'unavailable'
 
-        def canonical(position):
+        def canonical(position: object) -> str | None:
             return ' '.join(position.split()[:4]) if isinstance(position, str) else None
 
         position = canonical(row.get('position') or row.get('example_position'))
@@ -106,7 +112,7 @@ class Chapters:
             return 'unavailable'
         return self.opening_label(source)
 
-    def opening_label(self, source):
+    def opening_label(self, source: JsonObject) -> str:
         """Opening link, with its arrival share only when other sources also contribute."""
         identity = source['id']
         label = escape(identity) if identity else 'Unclassified'
@@ -114,20 +120,20 @@ class Chapters:
             label = f'[{label}](#{self.opening_anchors[identity]})'
         return label if source['share'] >= 1 - 1e-9 else f"{label} ({percentage(source['share'])})"
 
-    def anchor(self, cid):
+    def anchor(self, cid: str) -> str:
         return f'{self.color}-chapter-{self.entries[cid][0]}'
 
-    def label(self, cid, full=False):
+    def label(self, cid: str, full: bool = False) -> str:
         if cid not in self.entries:
             return escape(cid)
         index, chapter = self.entries[cid]
         text = escape(chapter['name']) if full else f'{self.color[0].upper()}{index}'
         return f'[{text}](#{self.anchor(cid)})'
 
-    def sources(self, row):
+    def sources(self, row: JsonObject) -> SourceCell:
         return SourceCell(self.chapter_sources(row), self.opening_source(row))
 
-    def chapter_sources(self, row):
+    def chapter_sources(self, row: JsonObject) -> str:
         """Chapters holding the position, as ranges such as W1-W3; replies off preparation name their chapters."""
         attribution = row.get('chapter_attribution') or {}
         ids, prefix = attribution.get('source_ids', []), ''
@@ -142,7 +148,7 @@ class Chapters:
         if set(ids) == set(self.entries) and len(ids) > 2:
             return prefix + f'[all {len(ids)} {self.color.title()} chapters](#{self.color}-chapters)'
         ordered = sorted(ids, key=lambda cid: self.entries.get(cid, (float('inf'),))[0])
-        groups = []
+        groups: list[list[str]] = []
         for cid in ordered:
             if (
                 groups
@@ -160,17 +166,17 @@ class Chapters:
         )
 
 
-def board_routes(bundle):
+def board_routes(bundle: Bundle) -> dict[Position, str]:
     """Overall-policy route per exact board, shared by every table that labels that board."""
     scope = scope_by_id(bundle.get('character')).get('overall', {})
     return {r['position']: r['line'] for r in scope.get('positions', [])}
 
 
-def bundle_refs(bundle):
+def bundle_refs(bundle: Bundle) -> Chapters:
     return Chapters(bundle['report'], bundle.get('openings'), board_routes(bundle))
 
 
-def exit_reply(stop, parent_route):
+def exit_reply(stop: JsonObject, parent_route: str) -> str:
     """Linked reply label numbered from the parent board's shared route."""
     try:
         board = chess.Board(stop['parent_position'] + ' 0 1')

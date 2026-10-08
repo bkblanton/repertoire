@@ -1,12 +1,17 @@
 """Display rows derived from saved analyses: combined colors, exit points and position contributions."""
 
+from collections.abc import Iterable, Sequence
+from typing import cast
+
+from ..schema import JsonObject, Position
 from ..sharpness import FIELDS as OUTCOME_FIELDS
 from ..sharpness import summarize as summarize_outcomes
 from ..spread import mixture as spread_mixture
+from .bundle import Bundle
 from .format import centipawn_delta, centipawn_equivalent, elo_equivalent
 
 
-def combined_overall(bundles):
+def combined_overall(bundles: Iterable[Bundle]) -> JsonObject | None:
     """A 50/50 color mixture, averaging scores before applying conversions."""
     reports = {b['report']['color']: b['report'] for b in bundles}
     if set(reports) != {'white', 'black'}:
@@ -17,14 +22,14 @@ def combined_overall(bundles):
     if any(r['manifest'].get('overall_basis') != 'standard starting position' for r in (white, black)):
         return {'unavailable': 'both colors must be evaluated from the standard starting position'}
 
-    def average(values):
-        return None if any(v is None for v in values) else sum(values) / 2
+    def average(values: Sequence[float | None]) -> float | None:
+        return None if any(v is None for v in values) else sum(cast('Sequence[float]', values)) / 2
 
     score = average([r['overall'].get('raw_empirical_score') for r in (white, black)])
     baseline = average([r.get('starting_position_reference', {}).get('owner_score') for r in (white, black)])
     outcomes = [r['overall'].get('outcomes') for r in (white, black)]
     combined_outcomes = (
-        summarize_outcomes([average([o[field] for o in outcomes]) for field in OUTCOME_FIELDS])
+        summarize_outcomes(cast('list[float]', [average([o[field] for o in outcomes]) for field in OUTCOME_FIELDS]))
         if all(outcomes)
         else None
     )
@@ -52,7 +57,7 @@ def combined_overall(bundles):
     }
 
 
-def non_sparse_rows(rows):
+def non_sparse_rows(rows: Iterable[JsonObject]) -> list[JsonObject]:
     """Filter local, parent, and immediate endpoint evidence before display limits."""
     return [
         r
@@ -61,7 +66,7 @@ def non_sparse_rows(rows):
     ]
 
 
-def own_priorities(rows, strongest=False):
+def own_priorities(rows: Iterable[JsonObject], strongest: bool = False) -> list[JsonObject]:
     field = 'local_gain_pp' if strongest else 'local_drop_pp'
     return sorted(
         [r for r in non_sparse_rows(rows) if r.get(field) is not None and r[field] > 0 and r['branch_reach'] > 0],
@@ -69,7 +74,7 @@ def own_priorities(rows, strongest=False):
     )
 
 
-def visible_positions(scope):
+def visible_positions(scope: JsonObject | None) -> list[JsonObject]:
     """Keep one board after a guaranteed own reply, plus unanswered boards."""
     rows = [
         r
@@ -79,7 +84,7 @@ def visible_positions(scope):
     return sorted(rows, key=lambda r: (-r['reach'], len(r['line'].split()), r['line'], r['position']))
 
 
-def unanswered_position(row, color):
+def unanswered_position(row: JsonObject, color: str) -> bool:
     return (
         bool(row.get('unprepared_origins'))
         or row['kind'] == 'unprepared_reply'
@@ -87,9 +92,9 @@ def unanswered_position(row, color):
     )
 
 
-def position_contributions(scope, color, sparse_threshold=30):
+def position_contributions(scope: JsonObject | None, color: str, sparse_threshold: int = 30) -> list[JsonObject]:
     """Score carried through every reached board; nested rows are not additive."""
-    rows = []
+    rows: list[JsonObject] = []
     for row in visible_positions(scope):
         unanswered = unanswered_position(row, color)
         value = row.get('database_score' if unanswered else 'repertoire_score')
@@ -111,13 +116,13 @@ def position_contributions(scope, color, sparse_threshold=30):
     )
 
 
-def exit_points(scope):
+def exit_points(scope: JsonObject | None) -> list[JsonObject]:
     """Group first unprepared positions by the last prepared board, so one study task is one row.
 
     Every modeled game stops once, so these groups partition the stopping mass and do not overlap.
     """
     positions = {r['position']: r for r in (scope or {}).get('positions', [])}
-    groups = {}
+    groups: dict[Position, JsonObject] = {}
     for stop in (scope or {}).get('stopping_outcomes', []):
         # Finished games and missing opponent data are not places where preparation runs out.
         finished = stop['type'] == 'theory_leaf' and (
@@ -144,7 +149,7 @@ def exit_points(scope):
         if stop.get('score') is not None:
             group['known'] += stop['reach']
             group['score_mass'] += stop['reach'] * stop['score']
-    rows = []
+    rows: list[JsonObject] = []
     for group in groups.values():
         board = positions.get(group['position'], {})
         node = board.get('reach')

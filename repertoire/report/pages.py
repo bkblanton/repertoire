@@ -1,6 +1,10 @@
 """The full report, the summary, and the chapter and opening pages."""
 
-from .bundle import scope_by_id
+from collections.abc import Sequence
+from typing import Any
+
+from ..schema import JsonObject
+from .bundle import Bundle, scope_by_id
 from .definitions import methods
 from .derive import combined_overall, non_sparse_rows, own_priorities, unanswered_position, visible_positions
 from .format import (
@@ -19,8 +23,8 @@ from .format import (
     reach_cell,
     spread_display,
 )
-from .links import bundle_refs, linked_line
-from .markdown import SourceCell, about, drop_uniform, report_navigation, section, table
+from .links import Chapters, bundle_refs, linked_line
+from .markdown import Cell, SourceCell, about, drop_uniform, report_navigation, section, table
 from .sections import (
     alternatives_section,
     branch_spread_section,
@@ -51,7 +55,7 @@ LINKS_NOTE = (
 )
 
 
-def opening_details_page(bundle, refs, warnings=()):
+def opening_details_page(bundle: Bundle, refs: Chapters, warnings: Sequence[str] = ()) -> list[str]:
     """One page per color with each opening's first entries and the positions reached through it."""
     data = bundle.get('openings') or {}
     color = bundle['report']['color']
@@ -82,7 +86,7 @@ def opening_details_page(bundle, refs, warnings=()):
                 'Part of ' + ', '.join(f"[{escape(catalog[p]['name'])}](#{anchors[p]})" for p in parents) + '.',
                 '',
             ]
-        values = []
+        values: list[list[Cell]] = []
         for entry in row['entries']:
             labels = data['positions'][entry['position']]
             games = (
@@ -126,7 +130,7 @@ def opening_details_page(bundle, refs, warnings=()):
             ],
             values,
         )
-        origins = []
+        origins: list[tuple[JsonObject, float, float]] = []
         for position in positions:
             origin = data['positions'].get(position['position'], {})
             contribution = origin.get('opening_reach_contributions', {}).get(row['id'], 0.0)
@@ -159,7 +163,14 @@ def opening_details_page(bundle, refs, warnings=()):
     return text
 
 
-def chapter_page(bundle, chapter, refs, warnings, chapter_top, position_top):
+def chapter_page(
+    bundle: Bundle,
+    chapter: JsonObject,
+    refs: Chapters,
+    warnings: Sequence[str],
+    chapter_top: int,
+    position_top: int,
+) -> list[str]:
     """Everything about one chapter on its own page; scores are conditional on first entry."""
     r = bundle['report']
     color = r['color']
@@ -239,7 +250,7 @@ def chapter_page(bundle, chapter, refs, warnings, chapter_top, position_top):
         f'everything else on this page counts only those games. {about("entry")}.',
         '',
     ]
-    facts = []
+    facts: list[str] = []
     ratings = chapter.get('opponent_ratings', {})
     evidence, entry = ratings.get('score_evidence') or {}, ratings.get('entry_baseline') or {}
     coverage = [
@@ -325,20 +336,20 @@ def chapter_page(bundle, chapter, refs, warnings, chapter_top, position_top):
 
 
 def full_report(
-    bundles,
-    correlations,
-    correlation_reason,
-    top=10,
-    chapter_top=5,
-    position_top=20,
-    rating_correlations=None,
-    rating_correlation_reason='not generated',
-):
+    bundles: Sequence[Bundle],
+    correlations: JsonObject | None,
+    correlation_reason: str | None,
+    top: int = 10,
+    chapter_top: int = 5,
+    position_top: int = 20,
+    rating_correlations: JsonObject | None = None,
+    rating_correlation_reason: str | None = 'not generated',
+) -> dict[str, str]:
     """The full report index plus one page per chapter and one opening page per color, keyed by relative path."""
     combined = combined_overall(bundles)
     has_combined = combined is not None and 'unavailable' not in combined
     warnings = [row for row in snapshot_notes(bundles) if row.startswith('**')]
-    pages = {}
+    pages: dict[str, Any] = {}
     text = [
         '# Repertoire report',
         '',
@@ -475,7 +486,7 @@ def full_report(
     return pages
 
 
-def summary_report(bundles):
+def summary_report(bundles: Sequence[Bundle]) -> str:
     """Headline, then what to work on: where preparation ends and own moves to review; the rest collapses."""
     snapshot = snapshot_notes(bundles)
     warnings = [row for row in snapshot if row.startswith('**')]

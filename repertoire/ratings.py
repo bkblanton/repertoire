@@ -6,16 +6,27 @@ as opponent ratings, or average repeatedly over the visited decision points.
 
 import math
 from collections import defaultdict
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from .board_cache import STARTING_POSITION, children, turn
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256, selected_policy, stage_main
+from .evaluate import Weights
 from .explorer import counts
-from .preparation import Evaluators, chess_facts
+from .model import Evidence
+from .preparation import Evaluator, Evaluators, chess_facts
+from .schema import JsonObject, Position
 from .status import Status
 
+if TYPE_CHECKING:
+    from .report.bundle import Bundle, Family
 
-def rating(known=0.0, moment=0.0, *, basis, **details):
+Rating = JsonObject  # mean, known_coverage, missing_coverage, weighted_rating_sum, basis and details
+Arrival = tuple[float, Rating, Position | None, str | None]  # (probability, rating, parent, move)
+
+
+def rating(known: float = 0.0, moment: float = 0.0, *, basis: str, **details: Any) -> Rating:
     if not -1e-9 <= known <= 1 + 1e-9:
         raise AssertionError('Rating coverage outside [0, 1]')
     known = min(1.0, max(0.0, float(known)))
@@ -29,11 +40,11 @@ def rating(known=0.0, moment=0.0, *, basis, **details):
     )
 
 
-def usable(value):
+def usable(value: Any) -> bool:
     return type(value) in (int, float) and math.isfinite(value) and value > 0
 
 
-def reply_rating(data, move):
+def reply_rating(data: JsonObject | None, move: str) -> Rating:
     """The specific preceding opponent move, with no child lookup."""
     row = next((r for r in (data or {}).get('moves', []) if r['uci'] == move), None)
     n = sum(counts(row)) if row else 0
@@ -41,14 +52,14 @@ def reply_rating(data, move):
     known = float(n > 0 and usable(value))
     return rating(
         known,
-        value if known else 0.0,
+        cast(float, value) if known else 0.0,
         basis='preceding opponent move row',
         rated_observations=n if known else 0,
         observations=n,
     )
 
 
-def response_rating(data):
+def response_rating(data: JsonObject | None) -> Rating:
     """Opponent to move: games weight the move-maker ratings in this table."""
     total = sum(counts(data)) if data else 0
     known, moment = 0, 0.0
@@ -66,7 +77,7 @@ def response_rating(data):
     )
 
 
-def mixture(parts, basis, *, origins=None):
+def mixture(parts: Iterable[tuple[float, Rating]], basis: str, *, origins: list[JsonObject] | None = None) -> Rating:
     """Mix normalized rating contexts by model probability, never sample count."""
     parts = list(parts)
     mass = sum(p for p, _ in parts)
@@ -82,21 +93,22 @@ def mixture(parts, basis, *, origins=None):
     return result
 
 
-def unavailable(basis='unavailable opponent rating'):
+def unavailable(basis: str = 'unavailable opponent rating') -> Rating:
     return rating(basis=basis)
 
 
-def stop_key(row):
+def stop_key(row: Mapping[str, Any]) -> str:
     return '|'.join(str(row.get(k) or '') for k in ('parent_position', 'move', 'type'))
 
 
 class ReplyRatings:
     """Ratings of individual opponent move rows, computed once per stage. Each call returns a fresh copy."""
 
-    def __init__(self, evidence):
+    def __init__(self, evidence: Evidence) -> None:
+        self.cache: dict[tuple[Position, str], Rating]
         self.evidence, self.cache = evidence, {}
 
-    def __call__(self, k, move):
+    def __call__(self, k: Position, move: str) -> Rating:
         if (k, move) not in self.cache:
             self.cache[k, move] = reply_rating(self.evidence.get(k), move)
         return dict(self.cache[k, move])
@@ -105,13 +117,19 @@ class ReplyRatings:
 class Context:
     """Flow-aware local ratings and once-per-game stopping-evidence moments."""
 
-    def __init__(self, evaluator, starts, initial=None, replies=None):
+    def __init__(
+        self,
+        evaluator: Evaluator,
+        starts: Weights,
+        initial: Mapping[Position, Rating] | None = None,
+        replies: ReplyRatings | None = None,
+    ) -> None:
         self.evaluator = evaluator
         self.reply = replies or ReplyRatings(evaluator.evidence)
         self.starts = starts
         self.initial = initial or {}
         self.reach = evaluator.reaches(starts)
-        arrivals = defaultdict(list)
+        arrivals: defaultdict[Position, list[Arrival]] = defaultdict(list)
         for k, p in starts.items():
             if p > 0:
                 arrivals[k].append((p, (initial or {}).get(k, unavailable('no preceding opponent move')), None, None))
@@ -121,7 +139,7 @@ class Context:
             for move, p, target in evaluator.edges[k]:
                 if evaluator.facts[k]['turn'] != evaluator.color:
                     arrivals[target].append((mass * p, self.reply(k, move), k, move))
-        self.local = {}
+        self.local: dict[Position, Rating] = {}
         for k, mass in self.reach.items():
             if mass <= 0:
                 continue
@@ -149,16 +167,16 @@ class Context:
                 )
                 if k == STARTING_POSITION:
                     self.local[k]['reason'] = 'no_preceding_opponent_move'
-        self.moments = {}
+        self.moments: dict[Position, Rating] = {}
 
-    def stop(self, k, move, kind):
+    def stop(self, k: Position, move: str | None, kind: str) -> Rating:
         if kind in ('no_recorded_continuation', 'unresolved_distribution'):
             return unavailable('unidentified continuation or missing distribution')
         if move:
             return self.reply(k, move)
         return self.local.get(k, unavailable())
 
-    def continuation(self, k, incoming=None):
+    def continuation(self, k: Position, incoming: Rating | None = None) -> Rating:
         """Own-turn stopping ratings depend on the exact incoming opponent edge."""
         if self.evaluator.facts[k]['turn'] == self.evaluator.color and not self.evaluator.edges[k]:
             return incoming or self.local.get(k, unavailable())
@@ -173,7 +191,7 @@ class Context:
         self.moments[k] = mixture(parts, 'continuation stopping evidence')
         return self.moments[k]
 
-    def score_evidence(self):
+    def score_evidence(self) -> Rating:
         return mixture(
             [
                 (p, self.continuation(k, self.initial.get(k, unavailable('no preceding opponent move'))))
@@ -182,14 +200,15 @@ class Context:
             'scope stopping evidence',
         )
 
-    def inventory(self):
+    def inventory(self) -> JsonObject:
         # A starting-board row is still an individual position. Keep its local
         # response average, without creating a whole-repertoire rating mean.
         positions = {
             k: dict(local=r, **({'continuation': self.continuation(k)} if k != STARTING_POSITION else {}))
             for k, r in self.local.items()
         }
-        stops, deviations = {}, defaultdict(list)
+        stops: dict[str, Rating] = {}
+        deviations: defaultdict[Position, list[Arrival]] = defaultdict(list)
         for k, mass in self.reach.items():
             if mass <= 0:
                 continue
@@ -213,10 +232,12 @@ class Context:
         return dict(positions=positions, stops=stops)
 
 
-def first_entries(evaluator, roots, entries):
+def first_entries(
+    evaluator: Evaluator, roots: Weights, entries: Collection[Position]
+) -> tuple[dict[Position, float], dict[Position, Rating]]:
     """Stop flow at its first entry and retain the last opponent move mixture."""
     flow = evaluator.reaches(roots, stop_at=entries)
-    incoming = defaultdict(list)
+    incoming: defaultdict[Position, list[Arrival]] = defaultdict(list)
     for k, p in roots.items():
         if k in entries:
             incoming[k].append((p, unavailable('entry is a PGN root'), None, None))
@@ -233,7 +254,7 @@ def first_entries(evaluator, roots, entries):
                 incoming[target].append((flow[k] * p, r, k, move))
     entry_mass = sum(flow.get(k, 0) for k in entries)
     weights = {k: flow.get(k, 0) / entry_mass for k in entries if flow.get(k, 0) > 0} if entry_mass else {}
-    initial = {}
+    initial: dict[Position, Rating] = {}
     for k in entries:
         if evaluator.facts[k]['turn'] != evaluator.color:
             initial[k] = response_rating(evaluator.evidence.get(k))
@@ -258,13 +279,13 @@ def first_entries(evaluator, roots, entries):
     return weights, initial
 
 
-def move_context(evidence, color, position, move):
+def move_context(evidence: Evidence, color: bool, position: Position, move: str) -> Rating:
     if turn(position) != color:
         return reply_rating(evidence.get(position), move)
     return response_rating(evidence.get(children(position)[move]))
 
 
-def comparison_fields(reply, parent):
+def comparison_fields(reply: Rating, parent: Rating) -> JsonObject:
     """Compare the opponent move maker with the same player's parent cohort."""
     available = reply.get('mean') is not None and parent.get('mean') is not None
     return dict(
@@ -275,13 +296,13 @@ def comparison_fields(reply, parent):
     )
 
 
-def comparison_mixture(parts):
+def comparison_mixture(parts: Iterable[tuple[float, JsonObject]]) -> JsonObject:
     """Paired differences use arrival flow; both cohorts must be available."""
     parts = list(parts)
     total = sum(p for p, _ in parts)
     paired = sum(p * r['comparison_coverage'] for p, r in parts)
 
-    def average(field):
+    def average(field: str) -> float | None:
         return (
             (sum(p * r['comparison_coverage'] * r[field] for p, r in parts if r['comparison_coverage'] > 0) / paired)
             if paired
@@ -296,19 +317,19 @@ def comparison_mixture(parts):
     )
 
 
-def add_reply_differences(result, evidence):
+def add_reply_differences(result: JsonObject, evidence: Evidence) -> JsonObject:
     """Enrich individual replies using cached parents without changing ratings."""
-    parents = {}
+    parents: dict[Position, Rating] = {}
     color = result['color'] == 'white'
 
-    def direct(parent, move):
+    def direct(parent: Position | None, move: str) -> JsonObject:
         if parent is None:
             return comparison_fields(unavailable(), unavailable())
         if parent not in parents:
             parents[parent] = response_rating(evidence.get(parent))
         return comparison_fields(reply_rating(evidence.get(parent), move), parents[parent])
 
-    def arrivals(origins):
+    def arrivals(origins: Iterable[JsonObject]) -> JsonObject:
         return comparison_mixture(
             [
                 (
@@ -345,7 +366,7 @@ def add_reply_differences(result, evidence):
     return result
 
 
-def analyze(path, cache=DEFAULT_CACHE):
+def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     analysis = AnalysisContext(path, ('preparation', 'character', 'vulnerabilities'))
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     supporting = analysis.companions
@@ -373,6 +394,8 @@ def analyze(path, cache=DEFAULT_CACHE):
     for sid, prep in prep_scopes.items():
         cid = None if sid == 'overall' else sid
         evaluator = evaluators(cid)
+        initial: dict[Position, Rating]
+        entry_weights: dict[Position, float]
         initial, entry_weights = {}, {}
         if cid:
             chapter = chapters[cid]
@@ -390,7 +413,7 @@ def analyze(path, cache=DEFAULT_CACHE):
             output.append(scope)
             continue
         context = Context(evaluator, prep['starts'], initial, replies)
-        value = evaluator.evaluate(prep['starts'])
+        value: Any = evaluator.evaluate(prep['starts'])
         expected = saved['overall'] if not cid else chapters[cid]['score']
         if not math.isclose(value[0], expected['resolved_contribution'], abs_tol=1e-10) or not math.isclose(
             value[1], expected['unresolved_mass'], abs_tol=1e-10
@@ -466,19 +489,20 @@ def analyze(path, cache=DEFAULT_CACHE):
     )
 
 
-def attach(bundle):
+def attach(bundle: 'Bundle') -> None:
     """Attach display-only contexts to loaded rows without rewriting analyses."""
     scopes = {s['id']: s for s in bundle['ratings']['scopes']}
 
-    def position(row, scope, field='position'):
+    def position(row: JsonObject, scope: JsonObject, field: str = 'position') -> None:
         row['opponent_rating'] = scope.get('positions', {}).get(row.get(field), {}).get('local')
 
-    def stops(row, scope):
+    def stops(row: JsonObject, scope: JsonObject) -> None:
         identity = dict(row)
         if identity.get('type') in ('leaf', 'terminal'):
             identity['type'] = 'theory_leaf'
         row['opponent_rating'] = scope.get('stops', {}).get(stop_key(identity))
 
+    family: Family
     for family in ('character', 'preparation', 'vulnerabilities'):
         data = bundle.get(family, {})
         items = (
@@ -526,7 +550,7 @@ def attach(bundle):
             row['opponent_rating'] = scope.get('entries', {}).get(row['position'])
 
 
-def main():
+def main() -> None:
     stage_main('ratings', analyze, __doc__)
 
 

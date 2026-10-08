@@ -3,6 +3,7 @@
 import argparse
 import importlib
 import sys
+from collections.abc import Iterable
 
 # Subcommand, module, one-line help. Each module keeps its own main() and argument parser.
 COMMANDS = [
@@ -23,7 +24,7 @@ COMMANDS = [
 ]
 
 
-def parser():
+def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         prog='repertoire',
         description='Analyze chess opening repertoires with Lichess Opening Explorer statistics.',
@@ -36,7 +37,7 @@ def parser():
     return result
 
 
-def main(argv=None):
+def main(argv: Iterable[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else list(argv)
     modules = {name: module for name, module, _ in COMMANDS}
     if not argv or argv[0] not in modules:

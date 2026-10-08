@@ -2,16 +2,42 @@
 
 import hashlib
 import json
+from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import Literal, NotRequired, TypedDict
 
 from .. import SCHEMA_VERSION
+from ..schema import JsonObject
 from ..sharpness import stopping_wdl
 from ..sharpness import summarize as summarize_outcomes
 
-FAMILIES = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights')
+Family = Literal['vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights']
+FAMILIES: tuple[Family, ...] = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights')
 
 
-def load(paths, strict=True, require_complete=False):
+class Bundle(TypedDict):
+    """One color's saved score and the companion analyses that match it, as loaded for rendering.
+
+    `report` is the score JSON (see schema.ScoreResult) with display fields attached after loading.
+    A companion is present only when it matches the score snapshot; otherwise `unavailable` says why.
+    """
+
+    path: Path
+    report: JsonObject
+    digest: str
+    current_source: bool
+    unavailable: dict[str, str]
+    vulnerabilities: NotRequired[JsonObject]
+    preparation: NotRequired[JsonObject]
+    character: NotRequired[JsonObject]
+    ratings: NotRequired[JsonObject]
+    openings: NotRequired[JsonObject]
+    insights: NotRequired[JsonObject]
+
+
+def load(paths: Iterable[str | Path], strict: bool = True, require_complete: bool = False) -> list[Bundle]:
+    bundles: list[Bundle]
+    seen: set[str]
     bundles, seen = [], set()
     for value in paths:
         path = Path(value)
@@ -30,10 +56,10 @@ def load(paths, strict=True, require_complete=False):
         manifest = report['manifest']
         source = Path(manifest['input_path'])
         current = source.exists() and hashlib.sha256(source.read_bytes()).hexdigest() == manifest['input_sha256']
-        bundle = dict(path=path, report=report, digest=digest, current_source=current, unavailable={})
+        bundle: Bundle = dict(path=path, report=report, digest=digest, current_source=current, unavailable={})
         for family in FAMILIES:
             companion = path.with_suffix(f'.{family}.json')
-            reason = None
+            reason: str | None = None
             if not companion.exists():
                 reason = 'not generated'
             else:
@@ -110,7 +136,9 @@ def load(paths, strict=True, require_complete=False):
     return sorted(bundles, key=lambda b: b['report']['color'] != 'white')
 
 
-def load_correlations(bundles, strict=True, require_complete=False):
+def load_correlations(
+    bundles: Sequence[Bundle], strict: bool = True, require_complete: bool = False
+) -> tuple[JsonObject | None, str | None]:
     path = bundles[0]['path'].parent / 'prepared-depth-gain-correlation.json'
     if not path.exists():
         if require_complete:
@@ -140,7 +168,7 @@ def load_correlations(bundles, strict=True, require_complete=False):
     return result, None
 
 
-def load_rating_correlations(bundles, strict=True):
+def load_rating_correlations(bundles: Sequence[Bundle], strict: bool = True) -> tuple[JsonObject | None, str | None]:
     path = bundles[0]['path'].parent / 'opponent-rating-score-correlation.json'
     if not path.exists():
         return None, 'not generated'
@@ -172,7 +200,7 @@ def load_rating_correlations(bundles, strict=True):
     return result, None
 
 
-def attach_outcomes(bundle):
+def attach_outcomes(bundle: Bundle) -> None:
     """Join saved recursive position WDL to comparison rows without new queries."""
     character = scope_by_id(bundle.get('character'))
     vulnerabilities = bundle.get('vulnerabilities', {})
@@ -194,7 +222,7 @@ def attach_outcomes(bundle):
                 row['move_outcomes'] = summarize_outcomes(stopping_wdl(row['counts_white_draw_black'], color, fixed))
 
 
-def attach_insights(bundle):
+def attach_insights(bundle: Bundle) -> None:
     insights = scope_by_id(bundle.get('insights'))
     characters = scope_by_id(bundle.get('character'))
     bundle['report']['overall']['branch_score_spread'] = insights.get('overall', {}).get('branch_score_spread')
@@ -224,5 +252,5 @@ def attach_insights(bundle):
             row.update(added.get(row['id'], {}))
 
 
-def scope_by_id(data, key='scopes'):
+def scope_by_id(data: JsonObject | None, key: str = 'scopes') -> dict[str, JsonObject]:
     return {s['id']: s for s in data.get(key, [])} if data else {}

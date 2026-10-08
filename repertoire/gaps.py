@@ -7,21 +7,28 @@ absorbing Markov chain; a closed component remains unresolved.
 
 import math
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from .evaluate import Weights
 from .explorer import counts
+from .schema import JsonObject, Position
 from .status import Status
 
+if TYPE_CHECKING:
+    from .preparation import Evaluator
 
-def components(edges):
+
+def components(edges: Mapping[Position, Iterable[Position]]) -> list[list[Position]]:
     """Strongly connected components in source-to-target order, without recursion."""
     seen, finished = set(), []
     for root in edges:
         if root in seen:
             continue
         seen.add(root)
-        pending = [(root, iter(edges[root]))]
+        pending: list[Any] = [(root, iter(edges[root]))]
         while pending:
             node, children = pending[-1]
             target = next(children, None)
@@ -52,7 +59,7 @@ def components(edges):
     return result
 
 
-def distribution(evaluator, starts, entry_probability=1.0):
+def distribution(evaluator: 'Evaluator', starts: Weights, entry_probability: float | None = 1.0) -> JsonObject:
     """Aggregate unconditional first-gap mass by canonical board before squaring."""
     if not starts:
         return dict(
@@ -79,6 +86,8 @@ def distribution(evaluator, starts, entry_probability=1.0):
         if k in edges:
             continue
         node, fact = graph.nodes[k], facts[k]
+        transitions: defaultdict[Position, float]
+        absorptions: list[tuple[str, Position | None, float]]
         transitions, absorptions = defaultdict(float), []
         if fact['outcome'] is not None:
             absorptions.append(('terminal', None, 1.0))
@@ -95,7 +104,7 @@ def distribution(evaluator, starts, entry_probability=1.0):
                 absorptions.append(('unresolved', None, 1.0))
             else:
                 recorded = 0
-                for row in data['moves']:
+                for row in cast(JsonObject, data)['moves']:
                     observations = sum(counts(row))
                     recorded += observations
                     if not observations:
@@ -118,7 +127,7 @@ def distribution(evaluator, starts, entry_probability=1.0):
         pending.extend(transitions)
 
     incoming = defaultdict(float, starts)
-    gaps = defaultdict(float)
+    gaps: defaultdict[Position, float] = defaultdict(float)
     terminal_mass = unresolved_mass = 0.0
     cyclic_components = closed_components = 0
     for group in components(edges):
@@ -153,7 +162,7 @@ def distribution(evaluator, starts, entry_probability=1.0):
             for kind, position, probability in stops[k]:
                 weight = mass * probability
                 if kind == 'gap':
-                    gaps[position] += weight
+                    gaps[cast(Position, position)] += weight
                 elif kind == 'terminal':
                     terminal_mass += weight
                 else:

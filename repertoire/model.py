@@ -1,6 +1,7 @@
 """Evidence preparation, independent of network access."""
 
 from dataclasses import dataclass, field
+from typing import cast
 
 from .board_cache import children, owner_outcome, turn
 from .explorer import counts, validate
@@ -32,7 +33,7 @@ Sample = tuple[float, float | None]
 Model = dict[Position, ModelNode]
 Sampled = dict[Position, list[Sample]]
 Evidence = dict[Position, dict]
-Selected = dict[str, tuple[Position, float]]  # move -> (target, policy weight)
+Selected = dict[str, tuple[Position, float | None]]  # move -> (target, policy weight; None at opponent turns)
 
 
 class MissingEvidence(ValueError):
@@ -91,7 +92,7 @@ def node_empirical(n: ModelNode, color: bool) -> list[Sample]:
     """Each branch's observed probability and score, in the (probability, score) format of evaluate."""
     return [
         (
-            b.weight if n.mode == "own" else sum(b.counts) / n.sample if n.mode == "opponent" else 1.0,
+            cast(float, b.weight) if n.mode == "own" else sum(b.counts) / n.sample if n.mode == "opponent" else 1.0,
             b.fixed_score if b.fixed_score is not None else score(b.counts, color),
         )
         for b in n.branches

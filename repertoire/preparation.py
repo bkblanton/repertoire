@@ -1,8 +1,9 @@
 """Cache-only stopping outcomes and their repertoire score contributions."""
 
 import json
-from collections.abc import Collection
-from typing import NamedTuple
+from collections.abc import Collection, Sequence
+from pathlib import Path
+from typing import NamedTuple, cast
 
 import chess
 import numpy as np
@@ -12,9 +13,9 @@ from .board_cache import children, fen_number, geometry, move_text, owner_outcom
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .evaluate import Route, Weights, best_routes, reaches
 from .graph import Graph, chapter_policy_overrides, resolve
-from .model import Evidence, node_empirical, prepare_node, score
+from .model import Evidence, Model, Sampled, node_empirical, prepare_node, score
 from .routes import depth_distribution, first_entry_examples
-from .schema import Position
+from .schema import JsonObject, Position
 from .status import Status
 
 
@@ -43,6 +44,12 @@ class Evaluator:
     Vector: resolved score, unresolved mass, prepared depth, sparse score, sparse mass.
     """
 
+    model: Model
+    sampled: Sampled
+    values: dict[Position, np.ndarray]
+    edges: dict[Position, list[Edge]]
+    stops: dict[Position, list[Stop]]
+
     def __init__(
         self,
         graph: Graph,
@@ -52,7 +59,7 @@ class Evaluator:
         policy: dict | None = None,
         chapter: str | None = None,
         sparse: int = 30,
-    ):
+    ) -> None:
         self.graph, self.color, self.evidence, self.facts = graph, color, evidence, facts
         self.policy, self.chapter, self.sparse = policy or {}, chapter, sparse
         transitions = resolve(graph, color, self.policy)
@@ -65,7 +72,7 @@ class Evaluator:
         self.model, self.sampled, self.values, self.edges, self.stops = {}, {}, {}, {}, {}
 
     def own_choices(self, k: Position) -> dict[str, float]:
-        return {m: w for m, (_, w) in self.transitions[k].items()}
+        return {m: cast(float, w) for m, (_, w) in self.transitions[k].items()}
 
     def stopping(self, sample: list[int], fixed: float | None = None) -> np.ndarray:
         n = sum(sample)
@@ -104,10 +111,10 @@ class Evaluator:
                 continue
             if branch.target is not None:
                 value += p * self.values[branch.target]
-                edges.append(Edge(branch.move, p, branch.target))
+                edges.append(Edge(cast(str, branch.move), p, branch.target))
             else:
                 value += p * self.stopping(branch.counts, branch.fixed_score)
-                stops.append(Stop(branch.move, p, branch.kind, branch.counts, branch.fixed_score))
+                stops.append(Stop(branch.move, p, cast(str, branch.kind), branch.counts, branch.fixed_score))
         if node.mode == 'own':
             value[2] += 1
         self.values[k], self.edges[k], self.stops[k] = value, edges, stops
@@ -144,11 +151,11 @@ class Evaluators:
 
     def __init__(
         self, graph: Graph, color: bool, evidence: Evidence, facts: dict, policy: dict | None = None, sparse: int = 30
-    ):
+    ) -> None:
         self.graph, self.color, self.evidence, self.facts = graph, color, evidence, facts
         self.policy, self.sparse = policy or {}, sparse
         self.transitions = resolve(graph, color, self.policy)
-        self.shared = {}
+        self.shared: dict[str, Evaluator] = {}
 
     def __call__(self, chapter: str | None = None) -> Evaluator:
         """The evaluator for a chapter's comparison policy, or for the overall policy when `chapter` is None."""
@@ -163,8 +170,8 @@ class Evaluators:
         return self.shared[key]
 
 
-def chess_facts(graph, color, evidence):
-    result = {}
+def chess_facts(graph: Graph, color: bool, evidence: Evidence) -> dict[Position, JsonObject]:
+    result: dict[Position, JsonObject] = {}
     for k in graph.nodes:
         facts = geometry(k)
         targets = dict(facts.moves)
@@ -177,7 +184,7 @@ def chess_facts(graph, color, evidence):
     return result
 
 
-def line_text(path, fen=chess.STARTING_FEN):
+def line_text(path: Sequence[str], fen: str = chess.STARTING_FEN) -> str:
     board = chess.Board(fen)
     result = []
     for san in path:
@@ -186,19 +193,21 @@ def line_text(path, fen=chess.STARTING_FEN):
     return ' '.join(result) or '(PGN root)'
 
 
-def position_lines(graph):
+def position_lines(graph: Graph) -> dict[Position, str]:
     """Format each canonical board's first recorded route using its chapter root."""
     root_fens = {c['id']: graph.nodes[c['root']].fen for c in graph.chapters}
-    lines = {}
+    lines: dict[Position, str] = {}
     for position, node in graph.nodes.items():
         chapter = next(c['id'] for c in graph.chapters if c['id'] in node.chapters)
         lines[position] = line_text(node.path, root_fens[chapter])
     return lines
 
 
-def stopping_rows(evaluator, starts, baseline, lines):
+def stopping_rows(
+    evaluator: Evaluator, starts: Weights, baseline: float | None, lines: dict[Position, str]
+) -> list[JsonObject]:
     mass = evaluator.reaches(starts)
-    rows = []
+    rows: list[JsonObject] = []
     for k, reach in mass.items():
         if reach <= 0:
             continue
@@ -244,7 +253,7 @@ def stopping_rows(evaluator, starts, baseline, lines):
     return rows
 
 
-def analyze(path, cache=DEFAULT_CACHE):
+def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     analysis = AnalysisContext(path)
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     evidence = analysis.read_evidence(cache)
@@ -326,7 +335,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     return enrich(result, graph)
 
 
-def main():
+def main() -> None:
     stage_main('preparation', analyze, __doc__)
 
 

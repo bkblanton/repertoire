@@ -2,18 +2,20 @@
 
 import argparse
 import json
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
 from .layout import report_directory
 from .report.generate import generate
+from .schema import JsonObject
 
 _deferred = ContextVar('deferred_report_render', default=False)
 
 
 @contextmanager
-def defer_report_outputs():
+def defer_report_outputs() -> Iterator[None]:
     """A batch owns the final render; standalone commands still render eagerly."""
     token = _deferred.set(True)
     try:
@@ -22,7 +24,7 @@ def defer_report_outputs():
         _deferred.reset(token)
 
 
-def load_report(path):
+def load_report(path: str | Path) -> JsonObject:
     report = json.loads(Path(path).read_text(encoding='utf-8'))
     if report.get('color') not in ('white', 'black') or not all(
         k in report for k in ('overall', 'chapters', 'manifest', 'events')
@@ -31,7 +33,7 @@ def load_report(path):
     return report
 
 
-def update_report_outputs(result_path):
+def update_report_outputs(result_path: str | Path) -> None:
     """Register the latest result per color in this folder and refresh all outputs."""
     if _deferred.get():
         return
@@ -65,7 +67,7 @@ def update_report_outputs(result_path):
     index_path.write_text(json.dumps(index, indent=2), encoding='utf-8')
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+', help='Saved repertoire JSON results')
     parser.add_argument('--output', help='Full report (default: first report folder/report.md)')

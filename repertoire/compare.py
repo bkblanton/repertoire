@@ -7,18 +7,23 @@ import math
 import os
 import re
 import sys
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import chess
 import chess.pgn
 import httpx
+import numpy as np
 
 from . import SCHEMA_VERSION, studies
 from .alternatives import (
     CANDIDATE_PREFIX,
     Choice,
+    Decision,
+    Option,
     Scenarios,
     assignments,
     changed,
@@ -31,14 +36,15 @@ from .alternatives import (
 from .board_cache import STARTING_POSITION, canonical, children, fen_number, move_text, san, turn
 from .character import scope_metrics
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256
-from .evaluate import COMPLETED, KNOWN, UNKNOWN, backward, reaches, select_alternatives
+from .evaluate import COMPLETED, KNOWN, UNKNOWN, Route, Weights, backward, reaches, select_alternatives
 from .explorer import CacheMiss, Explorer, add_token_option, apply_token_file, counts, survey
-from .graph import parse_games, read_games, resolve, topology
+from .graph import Graph, Transitions, parse_games, read_games, resolve, topology
 from .layout import data_json, report_directory
-from .model import MissingEvidence, empirical, prepare, score
+from .model import Evidence, MissingEvidence, Model, Sampled, empirical, prepare, score
 from .preparation import Evaluator, chess_facts, line_text, position_lines
 from .ratings import Context, unavailable
 from .render import update_report_outputs
+from .schema import JsonObject, Position
 from .score import load_config
 from .uncertainty import METHOD as UNCERTAINTY_METHOD
 from .uncertainty import Posterior, difference_interval, paired_variance
@@ -55,26 +61,26 @@ GAP_ROWS = 5
 @dataclass
 class Scenario:
     choice: Choice
-    graph: object
-    policy: dict
-    transitions: dict
-    order: list
-    model: dict
-    raw: dict
-    values: dict
-    selection: dict
-    superseded: list
+    graph: Graph
+    policy: dict[Position, str | Mapping[str, float]]
+    transitions: Transitions
+    order: list[Position]
+    model: Model
+    raw: Sampled
+    values: dict[Position, np.ndarray]
+    selection: dict[Position, JsonObject]
+    superseded: list[Position]
 
 
-def plural(count, noun):
+def plural(count: int, noun: str) -> str:
     return f'{count:,} {noun}' + ('' if count == 1 else 's')
 
 
-def slug(text):
+def slug(text: str) -> str:
     return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-') or 'comparison'
 
 
-def is_study(value):
+def is_study(value: str) -> bool:
     try:
         studies.study_id(value)
     except ValueError:
@@ -82,7 +88,7 @@ def is_study(value):
     return True
 
 
-def parse_entry(text):
+def parse_entry(text: str) -> Position:
     """A position from FEN, or from moves such as '1.e4 e5 2.Nc3' played from the starting position."""
     text = text.strip()
     if '/' in text:
@@ -96,7 +102,7 @@ def parse_entry(text):
     return canonical(board)
 
 
-def text_games(text, label):
+def text_games(text: str, label: str | Path) -> list[chess.pgn.Game]:
     games = []
     stream = io.StringIO(text)
     while (game := chess.pgn.read_game(stream)) is not None:
@@ -106,11 +112,11 @@ def text_games(text, label):
     return games
 
 
-def comparable(text):
+def comparable(text: str) -> list[str]:
     return studies.comparable(text)
 
 
-def save_export(path, text):
+def save_export(path: Path, text: str) -> bool:
     """Write an exported study after checking it parses; leave the file alone when only Date headers changed."""
     parse_games(text_games(text, path))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,7 +128,7 @@ def save_export(path, text):
     return True
 
 
-def source_files(inputs, name, directory=CANDIDATES):
+def source_files(inputs: Sequence[str], name: str, directory: str | Path = CANDIDATES) -> list[Path]:
     """Where each input's PGN is read: the file itself, or the saved export of a study URL."""
     studies_given = [value for value in inputs if not Path(value).is_file()]
     result, count = [], 0
@@ -135,11 +141,19 @@ def source_files(inputs, name, directory=CANDIDATES):
     return result
 
 
-def load_inputs(inputs, name=None, export=True, directory=CANDIDATES, client=None):
+def load_inputs(
+    inputs: Sequence[str],
+    name: str | None = None,
+    export: bool = True,
+    directory: str | Path = CANDIDATES,
+    client: httpx.Client | None = None,
+) -> tuple[list[chess.pgn.Game], str, list[JsonObject]]:
     """Candidate games in priority order, the comparison name and where each input came from.
 
     Study URLs are exported into `directory`; with `export` False the last export is reused.
     """
+    downloads: dict[int, str]
+    files: dict[int, Path]
     downloads, files = {}, {}
     for i, value in enumerate(inputs):
         if Path(value).is_file():
@@ -148,7 +162,7 @@ def load_inputs(inputs, name=None, export=True, directory=CANDIDATES, client=Non
             downloads[i] = value
         else:
             raise ValueError(f'Not a PGN file or Lichess study: {value}')
-    texts = {}
+    texts: dict[int, str] = {}
     if downloads and export:
         token = os.environ.get('LICHESS_TOKEN', '').strip()
         owned = client is None
@@ -169,6 +183,7 @@ def load_inputs(inputs, name=None, export=True, directory=CANDIDATES, client=Non
             or (files[min(files)].stem if files and min(files) == min(games, default=-1) else '')
             or headers.get('ChapterName', 'comparison')
         )
+    sources: list[JsonObject]
     sources, paths = [], source_files(inputs, name, directory)
     for i, value in enumerate(inputs):
         if i in downloads:
@@ -189,7 +204,7 @@ def load_inputs(inputs, name=None, export=True, directory=CANDIDATES, client=Non
     return [g for i in range(len(inputs)) for g in games[i]], name, sources
 
 
-def common_entry(candidate, decisions):
+def common_entry(candidate: Graph, decisions: Sequence[Decision]) -> Position:
     """The last board every top-level decision's line shares, or the decision itself when there is one."""
     top = [d for d in decisions if d.parent is None]
     if len(top) == 1:
@@ -207,7 +222,7 @@ def common_entry(candidate, decisions):
     return canonical(board)
 
 
-def planned_tables(entry, pgn, config):
+def planned_tables(entry: JsonObject, pgn: str | Path, config: JsonObject) -> list[Position]:
     """The tables a saved comparison needs, planned from the repertoire PGN before it is scored.
 
     Competing chapter alternatives are not scored yet, so the plan follows each chapter's first moves; a
@@ -232,9 +247,11 @@ def planned_tables(entry, pgn, config):
     )
 
 
-def registry_tables(saved, pgns, configs):
+def registry_tables(
+    saved: Iterable[JsonObject], pgns: Mapping[str, str | Path], configs: Mapping[str, str | Path | None]
+) -> dict[str, list[Position]]:
     """{color: tables} for every saved comparison, so one fetch pass covers them too."""
-    result = {}
+    result: dict[str, list[Position]] = {}
     for entry in saved:
         try:
             tables = planned_tables(entry, pgns[entry['color']], load_config(configs[entry['color']]))
@@ -245,7 +262,7 @@ def registry_tables(saved, pgns, configs):
     return result
 
 
-def infer_color(games):
+def infer_color(games: Iterable[chess.pgn.Game]) -> str | None:
     tags = {g.headers.get('Orientation', '').lower() for g in games}
     if tags <= {'white'} and tags:
         return 'white'
@@ -257,7 +274,9 @@ def infer_color(games):
 class Comparison:
     """Every scenario a comparison needs, evaluated on demand over the same cached evidence."""
 
-    def __init__(self, analysis, candidate_games, entry=None):
+    def __init__(
+        self, analysis: AnalysisContext, candidate_games: list[chess.pgn.Game], entry: str | None = None
+    ) -> None:
         self.analysis = analysis
         self.color = analysis.color
         manifest = analysis.manifest
@@ -280,24 +299,26 @@ class Comparison:
             manifest['configuration'].get('exclude', []),
         )
         self.entry, self.entry_basis = (parse_entry(entry), 'given') if entry else (self.common_entry(), 'common')
-        self.evidence = {}
+        self.evidence: Evidence = {}
+        self.cache: dict[tuple[tuple[int, int], ...], Scenario]
+        self.posteriors: dict[tuple[tuple[int, int], ...], Posterior]
         self.cache, self.posteriors = {}, {}
 
-    def common_entry(self):
+    def common_entry(self) -> Position:
         return common_entry(self.candidate, self.decisions)
 
     @property
-    def starts(self):
+    def starts(self) -> list[Position]:
         return [*self.roots, *self.repertoire.roots]
 
-    def required(self):
+    def required(self) -> list[Position]:
         """Every table a scenario or the report can use: replies, unanswered boards, decisions and the entry."""
         graph, transitions, positions = self.scenarios.superset(self.config_policy, self.starts)
         tables = required_tables(graph, transitions, positions, self.color)
         extra = [STARTING_POSITION, self.entry, *(d.position for d in self.decisions)]
         return list(dict.fromkeys([*self.analysis.manifest['evidence'], *tables, *extra]))
 
-    def evaluate(self, choice):
+    def evaluate(self, choice: Choice) -> Scenario:
         key = choice.key()
         if key in self.cache:
             return self.cache[key]
@@ -329,32 +350,34 @@ class Comparison:
         self.cache[key] = result
         return result
 
-    def root(self, scenario):
+    def root(self, scenario: Scenario) -> float:
         return sum(w * scenario.values[k][KNOWN] for k, w in self.roots.items())
 
-    def value(self, scenario, k):
+    def value(self, scenario: Scenario, k: Position) -> float | None:
         """Score at a board; without preparation there, the board's own database score."""
         if k in scenario.values:
             v = scenario.values[k]
             return float(v[KNOWN]) if v[UNKNOWN] == 0 else None
         return score(counts(self.evidence[k]), self.color) if k in self.evidence else None
 
-    def choice_for(self, decision, index):
+    def choice_for(self, decision: Decision, index: int) -> Choice:
         """Choose `index` at `decision`, with every enclosing option chosen so the decision applies."""
         choice, d, i = Choice(), decision, index
         while True:
             choice[d.id] = i
             if d.parent is None:
                 return choice
-            d, i = self.decisions[d.parent[0]], d.parent[1]
+            d, i = self.decisions[d.parent[0]], cast(tuple[int, int], d.parent)[1]
 
-    def objective(self, choice, members):
+    def objective(self, choice: Choice, members: Iterable[int]) -> tuple[float, float, float, int]:
         s = self.evaluate(choice)
         local = sum(self.value(s, self.decisions[i].position) or 0.0 for i in members)
         entry = self.value(s, self.entry)
         return (self.root(s), -1.0 if entry is None else entry, local, -len(choice.key()))
 
-    def search(self, members, allowed, label):
+    def search(
+        self, members: Sequence[int], allowed: Callable[[Decision], list[int]], label: str
+    ) -> tuple[Choice, JsonObject]:
         """The best choice within one group of linked decisions, and how it was found."""
         total = count_assignments(self.decisions, members, allowed, SEARCH_LIMIT)
         if total <= SEARCH_LIMIT:
@@ -375,13 +398,13 @@ class Comparison:
                         current, improved = trial, True
         return current, dict(method='coordinate ascent', combinations=None)
 
-    def posterior(self, scenario):
+    def posterior(self, scenario: Scenario) -> Posterior:
         key = scenario.choice.key()
         if key not in self.posteriors:
             self.posteriors[key] = Posterior(scenario.model, scenario.order, self.color, self.prior, self.sparse)
         return self.posteriors[key]
 
-    def interval(self, scenario, starts):
+    def interval(self, scenario: Scenario, starts: Weights) -> list[float] | None:
         """Paired 95% interval of the score change from the current repertoire, in percentage points."""
         current = self.evaluate(Choice())
         if any(k not in s.values for s in (current, scenario) for k in starts):
@@ -391,7 +414,7 @@ class Comparison:
         mean = gb['mean'][COMPLETED] - ga['mean'][COMPLETED]
         return difference_interval(mean, paired_variance(a, ga, b, gb))
 
-    def metrics(self, scenario, start):
+    def metrics(self, scenario: Scenario, start: Position) -> JsonObject | None:
         """Preparation after one board: depth, own moves to know, gaps, reply variety and opponent ratings."""
         if start not in scenario.graph.nodes:
             return None
@@ -430,7 +453,7 @@ class Comparison:
             gaps=gaps,
         )
 
-    def gap_score(self, start, route):
+    def gap_score(self, start: Position, route: Route | None) -> float | None:
         """Database score where preparation ends: the reply's row in its parent table, or the board's own table."""
         if route is None:
             return None
@@ -443,14 +466,14 @@ class Comparison:
         end = children(position)[route[2][-1]] if route[2] else start
         return score(counts(self.evidence[end]), self.color) if end in self.evidence else None
 
-    def replies(self, scenario, decision, move):
+    def replies(self, scenario: Scenario, decision: Decision, move: str | tuple[str, ...] | None) -> list[JsonObject]:
         """The opponent's replies after a move at a decision board, with the score after each."""
         if not isinstance(move, str):
             return []
         after = children(decision.position)[move]
         if after not in scenario.model:
             return []
-        rows = []
+        rows: list[JsonObject] = []
         for b, (p, s) in zip(scenario.model[after].branches, scenario.raw[after]):
             if not b.move or not p:
                 continue
@@ -468,14 +491,14 @@ class Comparison:
         return sorted(rows, key=lambda r: -r['share'])[:REPLY_ROWS]
 
 
-def route_text(start, prefix, number, moves):
+def route_text(start: Position, prefix: str, number: int, moves: Iterable[str]) -> str:
     from .board_cache import route_line
 
     text = route_line(start, number, moves)[0]
     return f'{prefix} {text}'.strip() if prefix and prefix != '(PGN root)' else text
 
 
-def collect_evidence(comparison, cache, offline, dry_run):
+def collect_evidence(comparison: Comparison, cache: str | Path, offline: bool, dry_run: bool) -> JsonObject | None:
     """Read every table the comparison may need, fetching missing ones unless offline. Returns fetched count."""
     positions = comparison.required()
     filters = comparison.analysis.manifest['filters']
@@ -505,12 +528,14 @@ def collect_evidence(comparison, cache, offline, dry_run):
     return dict(tables=len(positions), fetched=len(missing), provenance=explorer.provenance)
 
 
-def chapter_entries(comparison, option):
+def chapter_entries(comparison: Comparison, option: Option) -> list[JsonObject]:
     by_id = {c['id']: c for c in comparison.candidate.chapters}
     return [dict(id=cid, name=by_id[cid]['name'], url=by_id[cid]['url']) for cid in option.chapters]
 
 
-def repertoire_chapters(comparison, decision, move):
+def repertoire_chapters(
+    comparison: Comparison, decision: Decision, move: str | tuple[str, ...] | None
+) -> list[JsonObject]:
     """Your chapters whose recorded move at this board is the one you play."""
     node = comparison.repertoire.nodes.get(decision.position)
     if node is None or not isinstance(move, str) or move not in node.provenance:
@@ -524,7 +549,7 @@ def repertoire_chapters(comparison, decision, move):
     ]
 
 
-def label(position, move):
+def label(position: Position, move: str | tuple[str, ...] | None) -> str:
     if move is None:
         return 'No preparation'
     if isinstance(move, tuple):
@@ -532,7 +557,18 @@ def label(position, move):
     return san(position, move)
 
 
-def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offline=False, dry_run=False, name, title):
+def analyze(
+    analysis: AnalysisContext,
+    games: list[chess.pgn.Game],
+    sources: list[JsonObject],
+    *,
+    entry: str | None = None,
+    cache: str | Path = DEFAULT_CACHE,
+    offline: bool = False,
+    dry_run: bool = False,
+    name: str,
+    title: str,
+) -> JsonObject | None:
     comparison = Comparison(analysis, games, entry)
     decisions = comparison.decisions
     print(
@@ -551,7 +587,7 @@ def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offlin
     reach = reaches(current.model, current.order, current.raw, comparison.roots)
 
     # Each option alone, with everything else as it is now.
-    singles = {}
+    singles: dict[tuple[int, int], Scenario] = {}
     for d in decisions:
         for index in range(1, len(d.options)):
             singles[d.id, index] = comparison.evaluate(comparison.choice_for(d, index))
@@ -561,15 +597,16 @@ def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offlin
     }
     linked = groups(decisions, footprints, superset)
 
-    def improving(d):
+    def improving(d: Decision) -> list[int]:
         return list(range(len(d.options)))
 
-    def candidate_only(d):
+    def candidate_only(d: Decision) -> list[int]:
         allowed = [i for i, o in enumerate(d.options) if o.source == 'candidate']
         return allowed or [0]
 
-    plans = {}
+    plans: dict[str, JsonObject] = {}
     for label_, allowed in (('improving', improving), ('all', candidate_only)):
+        searches: list[JsonObject]
         merged, searches = Choice(), []
         for members in linked:
             best, how = comparison.search(members, allowed, label_)
@@ -585,7 +622,7 @@ def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offlin
             additive=math.isclose(total, sum(s['gain'] for s in searches), abs_tol=1e-9),
         )
 
-    def summary(scenario):
+    def summary(scenario: Scenario) -> JsonObject:
         root = comparison.root(scenario)
         entry = comparison.value(scenario, comparison.entry)
         return dict(
@@ -593,7 +630,7 @@ def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offlin
             unresolved_mass=float(sum(w * scenario.values[k][UNKNOWN] for k, w in comparison.roots.items())),
             entry_score=entry,
             change=root - comparison.root(current),
-            entry_change=None if entry is None else entry - comparison.value(current, comparison.entry),
+            entry_change=None if entry is None else entry - comparison.value(current, comparison.entry),  # type: ignore[operator]
             interval=comparison.interval(scenario, comparison.roots),
             entry_interval=comparison.interval(scenario, {comparison.entry: 1.0}),
             entry_metrics=comparison.metrics(scenario, comparison.entry),
@@ -606,7 +643,7 @@ def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offlin
         'improving': summary(plans['improving']['scenario']),
         'all': summary(plans['all']['scenario']),
     }
-    rows = []
+    rows: list[JsonObject] = []
     for d in decisions:
         base = (
             current
@@ -615,7 +652,8 @@ def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offlin
         )
         table = comparison.evidence.get(d.position, {})
         moves = {r['uci']: r for r in table.get('moves', [])}
-        options = []
+        options: list[JsonObject] = []
+        option: Any
         for index, option in enumerate(d.options):
             scenario = base if index == 0 else singles[d.id, index]
             here = comparison.value(scenario, d.position)
@@ -670,7 +708,7 @@ def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offlin
                 options=options,
             )
         )
-    interactions = []
+    interactions: list[JsonObject] = []
     for plan in ('improving', 'all'):
         for i, members in enumerate(linked):
             choice = Choice({d: plans[plan]['choice'].get(d, 0) for d in members})
@@ -740,7 +778,7 @@ def analyze(analysis, games, sources, *, entry=None, cache=DEFAULT_CACHE, offlin
     )
 
 
-def write_outputs(result, data_dir, report_dir):
+def write_outputs(result: JsonObject, data_dir: str | Path, report_dir: str | Path) -> Path:
     """Save the comparison JSON, the adopt PGN and the report page."""
     from .report.comparison import render
 
@@ -774,19 +812,19 @@ def write_outputs(result, data_dir, report_dir):
 
 
 def run(
-    inputs,
+    inputs: Sequence[str],
     *,
-    color=None,
-    score=None,
-    entry=None,
-    name=None,
-    title=None,
-    cache=DEFAULT_CACHE,
-    offline=False,
-    dry_run=False,
-    export=True,
-    directory=CANDIDATES,
-):
+    color: str | None = None,
+    score: str | Path | None = None,
+    entry: str | None = None,
+    name: str | None = None,
+    title: str | None = None,
+    cache: str | Path = DEFAULT_CACHE,
+    offline: bool = False,
+    dry_run: bool = False,
+    export: bool = True,
+    directory: str | Path = CANDIDATES,
+) -> JsonObject | None:
     games, name, sources = load_inputs(inputs, name, export and not offline, directory)
     color = color or infer_color(games)
     if color is None:
@@ -806,7 +844,7 @@ def run(
     return dict(page=page, name=name, color=color)
 
 
-def load_registry(path=REGISTRY):
+def load_registry(path: str | Path = REGISTRY) -> list[JsonObject]:
     """The saved comparisons: name, color, sources and optional entry for each."""
     path = Path(path)
     if not path.is_file():
@@ -820,12 +858,19 @@ def load_registry(path=REGISTRY):
     return entries
 
 
-def register(path, name, color, inputs, entry=None, directory=CANDIDATES):
+def register(
+    path: str | Path,
+    name: str,
+    color: str,
+    inputs: Sequence[str],
+    entry: str | None = None,
+    directory: str | Path = CANDIDATES,
+) -> None:
     """Save a comparison so `repertoire compare` without inputs and `repertoire build` rerun it.
 
     Files outside the repository are copied into `directory`, so the registry never names a local folder.
     """
-    sources = []
+    sources: list[str] = []
     for i, value in enumerate(inputs):
         if Path(value).is_file():
             source = Path(value).resolve()
@@ -844,7 +889,7 @@ def register(path, name, color, inputs, entry=None, directory=CANDIDATES):
     print(f'Saved {name} in {path}', flush=True)
 
 
-def run_registered(path=REGISTRY, **options):
+def run_registered(path: str | Path = REGISTRY, **options: Any) -> None:
     entries = load_registry(path)
     if not entries:
         raise ValueError(f'No inputs given and no comparisons saved in {path}')
@@ -852,7 +897,7 @@ def run_registered(path=REGISTRY, **options):
         run(e['sources'], color=e['color'], entry=e.get('entry'), name=e['name'], **options)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         'inputs',
@@ -904,4 +949,4 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(main())  # type: ignore[func-returns-value]

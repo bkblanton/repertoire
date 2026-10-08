@@ -1,24 +1,36 @@
 """Rank repertoire vulnerabilities using parent move tables and saved model evidence."""
 
 import json
+from argparse import ArgumentParser, Namespace
+from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
 from .attribution import enrich
 from .board_cache import fen_number, move_text, route_line, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
-from .evaluate import KNOWN, UNKNOWN, backward, best_routes, can_enter, forward, reaches
+from .evaluate import KNOWN, UNKNOWN, Weights, backward, best_routes, can_enter, forward, reaches
 from .explorer import Explorer, add_token_option, apply_token_file, collect, counts
-from .graph import resolve, topology
-from .model import empirical, prepare, score
+from .graph import Graph, resolve, topology
+from .model import Evidence, Model, Sampled, empirical, prepare, score
+from .schema import JsonObject, Position
 from .status import Status
 
 
-def representative_lines(graph, model, order, sampled, roots, prefixes=None):
+def representative_lines(
+    graph: Graph,
+    model: Model,
+    order: list[Position],
+    sampled: Sampled,
+    roots: Weights,
+    prefixes: Mapping[Position, tuple[str, int]] | None = None,
+) -> dict[Position, tuple[str, int]]:
     """One legal policy route for labels, as (move text, full-move number at the position); probabilities always
     use all routes. Numbers count along the route itself, since transposed routes can differ in length.
     `prefixes` continues earlier lines to the roots."""
-    paths = {}
+    paths: dict[Position, tuple[str, int]] = {}
     for k, (_, root, moves) in best_routes(model, order, sampled, roots).items():
         prefix, number = (prefixes or {}).get(root, ('', fen_number(graph.nodes[root].fen)))
         text, position, number = route_line(root, number, moves)
@@ -28,9 +40,17 @@ def representative_lines(graph, model, order, sampled, roots, prefixes=None):
     return paths
 
 
-def candidates(graph, model, sampled, values, evidence, color, sparse_threshold):
+def candidates(
+    graph: Graph,
+    model: Model,
+    sampled: Sampled,
+    values: Mapping[Position, np.ndarray],
+    evidence: Evidence,
+    color: bool,
+    sparse_threshold: int,
+) -> list[JsonObject]:
     """Local signed score changes. This pure function cannot request child evidence."""
-    result = []
+    result: list[JsonObject] = []
     for k, node in model.items():
         if node.mode == 'stop':
             continue
@@ -44,7 +64,7 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
                 continue
             row = rows.get(b.move)
             n = sum(counts(row)) if row else 0
-            common = dict(
+            common: JsonObject = dict(
                 id=f'{k}|{b.move}',
                 position=k,
                 move=b.move,
@@ -81,12 +101,12 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
                     float(values[b.target][KNOWN]) if b.target is not None and values[b.target][UNKNOWN] == 0 else None
                 )
                 alternatives = [r for r in rows.values() if r['uci'] != b.move and sum(counts(r)) > 0]
-                alternatives.sort(key=lambda r: (-score(counts(r), color), -sum(counts(r)), r['uci']))
-                alternative = None
+                alternatives.sort(key=lambda r: (-cast(float, score(counts(r), color)), -sum(counts(r)), r['uci']))
+                alternative: JsonObject | None = None
                 if (
                     move_database_score is not None
                     and alternatives
-                    and score(counts(alternatives[0]), color) > move_database_score
+                    and cast(float, score(counts(alternatives[0]), color)) > move_database_score
                 ):
                     a = alternatives[0]
                     alternative = dict(
@@ -95,7 +115,7 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
                         score=score(counts(a), color),
                         sample_count=sum(counts(a)),
                         sparse=sum(counts(a)) < sparse_threshold,
-                        gap_pp=100 * (score(counts(a), color) - move_database_score),
+                        gap_pp=100 * (cast(float, score(counts(a), color)) - move_database_score),
                         reference_basis='selected move database score; historical screen only',
                     )
                 common.update(
@@ -123,7 +143,7 @@ def candidates(graph, model, sampled, values, evidence, color, sparse_threshold)
     return result
 
 
-def rankings(rows):
+def rankings(rows: Sequence[JsonObject]) -> tuple[dict[str, list[JsonObject]], list[JsonObject]]:
     result = {}
     for kind in ('opponent', 'own'):
         field = 'weighted_drag_pp' if kind == 'opponent' else 'local_drop_pp'
@@ -138,8 +158,13 @@ def rankings(rows):
     return result, strengths
 
 
-def rank_scope(local, reach, lines, entry_probability=1.0):
-    rows = []
+def rank_scope(
+    local: Iterable[JsonObject],
+    reach: Mapping[Position, float],
+    lines: Mapping[Position, tuple[str, int]],
+    entry_probability: float | None = 1.0,
+) -> JsonObject:
+    rows: list[JsonObject] = []
     for candidate in local:
         k = candidate['position']
         if reach[k] <= 0:
@@ -168,14 +193,14 @@ def rank_scope(local, reach, lines, entry_probability=1.0):
     )
 
 
-def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
+def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, fetch_missing: bool = False) -> JsonObject:
     analysis = AnalysisContext(path)
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     transitions = resolve(graph, color, analysis.policy)
     roots = manifest['root_weights']
     analysis_roots = [*roots, *[e['position'] for c in saved['chapters'] for e in c['entries']]]
     order = topology(transitions, analysis_roots)
-    contexts = {'{}': {'transitions': transitions, 'order': order}}
+    contexts: dict[str, dict[str, Any]] = {'{}': {'transitions': transitions, 'order': order}}
     for chapter in saved['chapters']:
         overrides = chapter.get('policy_overrides', {})
         identity = json.dumps(overrides, sort_keys=True)
@@ -227,7 +252,7 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
     reach = reaches(model, order, sampled, roots)
     lines = representative_lines(graph, model, order, sampled, roots)
     overall_scope = rank_scope(local, reach, lines)
-    chapters = []
+    chapters: list[JsonObject] = []
     for chapter in saved['chapters']:
         context = contexts[json.dumps(chapter.get('policy_overrides', {}), sort_keys=True)]
         chapter_model, chapter_order, chapter_sampled, chapter_values = (
@@ -305,7 +330,7 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
     used = {k: analysis.provenance[k] for k in evidence}
     baseline = saved.get('starting_position_reference', {}).get('owner_score')
     total_score = saved['overall']['raw_empirical_score']
-    result = dict(
+    result: JsonObject = dict(
         color=saved['color'],
         overall_score=total_score,
         starting_baseline_score=baseline,
@@ -333,11 +358,11 @@ def analyze(path, cache=DEFAULT_CACHE, fetch_missing=False):
     return enrich(result, graph)
 
 
-def main():
+def main() -> None:
     stage_main('vulnerabilities', analyze, __doc__, configure, options)
 
 
-def configure(parser):
+def configure(parser: ArgumentParser) -> None:
     parser.add_argument(
         '--fetch-missing',
         action='store_true',
@@ -346,7 +371,7 @@ def configure(parser):
     add_token_option(parser)
 
 
-def options(parser, args):
+def options(parser: ArgumentParser, args: Namespace) -> dict[str, bool]:
     apply_token_file(parser, args)
     return dict(fetch_missing=args.fetch_missing)
 

@@ -1,13 +1,35 @@
 """PGN parsing, position identity, policy resolution and chapter entries."""
 
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypedDict
 
 import chess
 import chess.pgn
 
 from .board_cache import canonical as key
 from .board_cache import children, terminal_white, turn
+from .schema import JsonObject, Position
+
+# move -> (target, policy weight); the weight is None at opponent turns.
+Transitions = dict[Position, dict[str, tuple[Position, float | None]]]
+# An explicit move, or move weights summing to one, at own-turn positions.
+Policy = Mapping[Position, str | Mapping[str, float]]
+
+
+class GraphChapter(TypedDict):
+    id: str
+    name: str
+    url: str | None
+    root: Position
+    mainline: list[Position]
+
+
+class InferredEntries(TypedDict):
+    positions: list[Position]
+    paths: list[list[str]]
+    status: str
 
 
 @dataclass
@@ -23,11 +45,11 @@ class Node:
 @dataclass
 class Graph:
     nodes: dict[str, Node]
-    chapters: list[dict]
+    chapters: list[GraphChapter]
     roots: list[str]
 
 
-def read_games(path):
+def read_games(path: str | Path) -> list[chess.pgn.Game]:
     """Every PGN game in a file, in order. The file is closed before any game is checked."""
     games = []
     with Path(path).open(encoding="utf-8-sig") as stream:
@@ -36,13 +58,15 @@ def read_games(path):
     return games
 
 
-def parse(path, exclusions=()):
+def parse(path: str | Path, exclusions: Collection[str] = ()) -> Graph:
     return parse_games(read_games(path), exclusions)
 
 
-def parse_games(games, exclusions=()):
+def parse_games(games: Iterable[chess.pgn.Game], exclusions: Collection[str] = ()) -> Graph:
     """The repertoire graph of PGN games, each one a chapter, in priority order."""
-    nodes, chapters, roots = {}, [], []
+    nodes: dict[Position, Node] = {}
+    chapters: list[GraphChapter] = []
+    roots: list[Position] = []
     for game in games:
         if game.errors:
             raise ValueError(f"Malformed chapter: {game.headers}: {game.errors}")
@@ -72,7 +96,7 @@ def parse_games(games, exclusions=()):
                 "mainline": mainline,
             }
         )
-        stack = [(game, board, [])]
+        stack: list[tuple[chess.pgn.GameNode, chess.Board, list[str]]] = [(game, board, [])]
         while stack:
             pgn, b, moves = stack.pop()
             k = key(b)
@@ -100,7 +124,7 @@ def parse_games(games, exclusions=()):
     return Graph(nodes, chapters, list(dict.fromkeys(roots)))
 
 
-def conflicts(graph, color):
+def conflicts(graph: Graph, color: bool) -> list[JsonObject]:
     return [
         {"position": k, "path": n.path, "choices": {m: sorted(n.provenance[m]) for m in n.edges}}
         for k, n in graph.nodes.items()
@@ -108,12 +132,12 @@ def conflicts(graph, color):
     ]
 
 
-def resolve(graph, color, policy):
+def resolve(graph: Graph, color: bool, policy: Policy) -> Transitions:
     """Explicit overrides, otherwise first PGN move in first chapter order.
 
     The scorer passes the winners of competing chapter alternatives as part of `policy`.
     """
-    transitions = {}
+    transitions: Transitions = {}
     for k, n in graph.nodes.items():
         if terminal_white(k) is not None:
             transitions[k] = {}
@@ -142,7 +166,7 @@ def resolve(graph, color, policy):
     return transitions
 
 
-def chapter_alternatives(graph, color, policy):
+def chapter_alternatives(graph: Graph, color: bool, policy: Policy) -> dict[Position, list[str]]:
     """Own-turn boards where chapters record different first moves: each distinct move, in chapter order.
 
     These compete on score (see evaluate.select_alternatives). Side variations within one chapter do not
@@ -158,7 +182,7 @@ def chapter_alternatives(graph, color, policy):
     return result
 
 
-def alternative_transitions(graph, color, policy):
+def alternative_transitions(graph: Graph, color: bool, policy: Policy) -> Transitions:
     """The selected policy, plus every chapter's first move at each own-turn board.
 
     Every board any chapter alternative or chapter comparison policy can reach is reachable here, so evidence
@@ -173,9 +197,10 @@ def alternative_transitions(graph, color, policy):
     return transitions
 
 
-def reachable(transitions, roots):
+def reachable(transitions: Transitions, roots: Iterable[Position]) -> list[Position]:
     """Every board reachable from the roots, in discovery order; unlike topology, cycles are allowed."""
-    seen, pending = {}, list(roots)
+    seen: dict[Position, None] = {}
+    pending = list(roots)
     while pending:
         k = pending.pop()
         if k in seen:
@@ -185,7 +210,9 @@ def reachable(transitions, roots):
     return list(seen)
 
 
-def chapter_policy_overrides(graph, color, global_transitions, chapter_id):
+def chapter_policy_overrides(
+    graph: Graph, color: bool, global_transitions: Transitions, chapter_id: str
+) -> dict[Position, str]:
     """Prefer this chapter's first recorded own move; use the global policy elsewhere.
 
     Keep chapter-local ordering separately: filtering global edge order would
@@ -201,10 +228,12 @@ def chapter_policy_overrides(graph, color, global_transitions, chapter_id):
     return overrides
 
 
-def topology(transitions, roots):
-    order, visited, active = [], set(), []
+def topology(transitions: Transitions, roots: Iterable[Position]) -> list[Position]:
+    order: list[Position] = []
+    visited: set[Position] = set()
+    active: list[Position] = []
 
-    def visit(k):
+    def visit(k: Position) -> None:
         if k in active:
             raise ValueError(
                 f"Reachable cycle; change policy or exclude the repeated line: {active[active.index(k) :] + [k]}"
@@ -223,7 +252,7 @@ def topology(transitions, roots):
     return order
 
 
-def automatic_entries(graph, color, cid, root):
+def automatic_entries(graph: Graph, color: bool, cid: str, root: Position) -> list[Position]:
     """The first positions on the chapter's lines that no other chapter continues from.
 
     At own turns, follow the chapter's first recorded move, as its comparison policy does. A chapter that only
@@ -248,9 +277,9 @@ def automatic_entries(graph, color, cid, root):
     return sorted(entries)
 
 
-def infer_entries(graph, color):
+def infer_entries(graph: Graph, color: bool) -> dict[str, InferredEntries]:
     """Each chapter's automatic entry positions, with representative paths."""
-    entries = {}
+    entries: dict[str, InferredEntries] = {}
     for c in graph.chapters:
         positions = automatic_entries(graph, color, c["id"], c["root"])
         entries[c["id"]] = {
@@ -261,7 +290,7 @@ def infer_entries(graph, color):
     return entries
 
 
-def chapter_positions(graph, chapter_id, entries):
+def chapter_positions(graph: Graph, chapter_id: str, entries: Iterable[Position]) -> set[Position]:
     """The entries and every descendant through moves this chapter records, including shared positions.
 
     Describes what the chapter prepares. Reach and scores use the entries alone.

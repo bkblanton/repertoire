@@ -2,8 +2,10 @@
 
 import argparse
 import json
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 
@@ -13,19 +15,22 @@ from .depth import prepared_depth_values
 from .evaluate import KNOWN, UNKNOWN, backward, reaches
 from .graph import resolve, topology
 from .model import empirical, prepare, score
+from .schema import JsonObject
 from .stats import correlation, rank
 
 METRICS = ('reach_weighted_pearson', 'reach_weighted_spearman', 'slope_pp_per_move', 'pearson', 'spearman')
 
 
-def weighted_rank(values, weights):
+def weighted_rank(values: np.ndarray, weights: np.ndarray) -> np.ndarray:
     """Weighted mid-CDF ranks, combining the weight of exact ties."""
     _, inverse = np.unique(values, return_inverse=True)
     mass = np.bincount(inverse, weights=weights)
     return (np.cumsum(mass) - 0.5 * mass)[inverse] / weights.sum()
 
 
-def metrics(depth, gain, weights):
+def metrics(
+    depth: Sequence[float] | np.ndarray, gain: Sequence[float] | np.ndarray, weights: Sequence[float] | np.ndarray
+) -> dict[str, float | None]:
     x, y, w = (np.asarray(a, dtype=float) for a in (depth, gain, weights))
     if len(x) < 2 or w.sum() <= 0:
         return dict.fromkeys(METRICS)
@@ -41,7 +46,7 @@ def metrics(depth, gain, weights):
     return {k: float(v) if np.isfinite(v) else None for k, v in result.items()}
 
 
-def analyze_color(path, cache):
+def analyze_color(path: str | Path, cache: str | Path) -> JsonObject:
     analysis = AnalysisContext(path, ('vulnerabilities',))
     saved, manifest, moves = analysis.saved, analysis.manifest, analysis.companions['vulnerabilities']
     graph, color, roots = analysis.graph, analysis.color, analysis.roots
@@ -58,7 +63,7 @@ def analyze_color(path, cache):
     values = backward(model, order, raw, manifest['sparse_threshold'])
     depth = prepared_depth_values(model, order, raw)
     reach = reaches(model, order, raw, roots)
-    root_score = sum(weight * values[position] for position, weight in roots.items())
+    root_score = cast(np.ndarray, sum(weight * values[position] for position, weight in roots.items()))
     if not np.allclose(
         root_score[[KNOWN, UNKNOWN]],
         [saved['overall']['resolved_contribution'], saved['overall']['unresolved_mass']],
@@ -69,6 +74,8 @@ def analyze_color(path, cache):
     expected = saved['overall']['prepared_depth']['expected_moves']
     if expected is not None and not np.isclose(root_depth, expected, atol=1e-10):
         raise AssertionError('Position depths do not reproduce overall prepared depth')
+    eligible: list[JsonObject]
+    seen: set[str]
     eligible, exclusions, seen = [], dict(sparse=0, unavailable=0, unreachable=0), set()
     for row in moves['overall']['all_signed_rows']:
         if row['kind'] != 'own':
@@ -89,7 +96,7 @@ def analyze_color(path, cache):
         branch = next((b for b in model[position].branches if b.move == row['move']), None)
         if model[position].mode != 'own' or branch is None or branch.target != target:
             raise ValueError('Saved own decision differs from the selected overall policy')
-        probability = branch.weight
+        probability = cast(float, branch.weight)
         weight = float(reach[position] * probability)
         after = float(values[target][KNOWN])
         if values[target][UNKNOWN] != 0 or not np.isclose(after, row['move_score'], atol=1e-10):
@@ -98,7 +105,7 @@ def analyze_color(path, cache):
             raise ValueError('Saved decision reach differs from the cached model')
         cached_move = next(r for r in evidence[position]['moves'] if r['uci'] == row['move'])
         counts = [cached_move[k] for k in ('white', 'draws', 'black')]
-        if not np.isclose(score(counts, color), row['move_database_score'], atol=1e-10):
+        if not np.isclose(cast(float, score(counts, color)), row['move_database_score'], atol=1e-10):
             raise ValueError('Saved move baseline differs from the cached parent table')
         eligible.append(
             dict(
@@ -118,7 +125,7 @@ def analyze_color(path, cache):
             )
         )
 
-    def arrays(rows):
+    def arrays(rows: list[JsonObject]) -> tuple[list[float], list[float], list[float]]:
         return ([r['depth'] for r in rows], [r['future_preparation_gain_pp'] for r in rows], [r['reach'] for r in rows])
 
     point = metrics(*arrays(eligible))
@@ -154,8 +161,8 @@ def analyze_color(path, cache):
     )
 
 
-def analyze(paths, output, cache=DEFAULT_CACHE):
-    result = dict(
+def analyze(paths: Iterable[str | Path], output: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
+    result: JsonObject = dict(
         schema_version=SCHEMA_VERSION,
         created_at=datetime.now(UTC).isoformat(),
         network_requests=0,
@@ -175,7 +182,7 @@ def analyze(paths, output, cache=DEFAULT_CACHE):
     return result
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+')
     parser.add_argument('--cache', default=DEFAULT_CACHE)

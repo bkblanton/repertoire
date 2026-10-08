@@ -1,5 +1,8 @@
 """Reusable tables of moves, replies, positions, chapters and openings."""
 
+from collections.abc import Iterable, Mapping
+
+from ..schema import JsonObject
 from .format import (
     count,
     delta_points,
@@ -19,14 +22,14 @@ from .format import (
     score_points,
     spread_display,
 )
-from .links import linked_line
-from .markdown import SourceCell, drop_uniform, table
+from .links import Chapters, linked_line
+from .markdown import Cell, SourceCell, drop_uniform, table
 
 
-def chapter_table(report, refs, detailed=True):
+def chapter_table(report: JsonObject, refs: Chapters, detailed: bool = True) -> list[str]:
     """One row per chapter: its page link, Lichess study link, and entry-conditional metrics."""
     alternatives = any(c.get('policy_overrides') for c in report['chapters'])
-    rows = []
+    rows: list[list[Cell]] = []
     for c in report['chapters']:
         s, base = c['score'], c.get('entry_baseline', {})
         index = refs.entries[c['id']][0]
@@ -70,7 +73,7 @@ def chapter_table(report, refs, detailed=True):
     )
 
 
-def own_move_table(rows, scope, refs, strongest=False):
+def own_move_table(rows: Iterable[JsonObject], scope: JsonObject, refs: Chapters, strongest: bool = False) -> list[str]:
     """Our moves against the database score of the position they are played from."""
     refs = refs.for_scope(scope.get('id'))
     return table(
@@ -106,11 +109,11 @@ def own_move_table(rows, scope, refs, strongest=False):
     )
 
 
-def reply_table(rows, scope, refs, prepared):
+def reply_table(rows: Iterable[JsonObject], scope: JsonObject, refs: Chapters, prepared: bool) -> list[str]:
     """Unprepared replies stop preparation, so only the spread before the reply is informative."""
     spread_header = 'Score spread<br>Before / after' if prepared else 'Score spread before reply'
 
-    def spread(r):
+    def spread(r: JsonObject) -> str:
         before = spread_display(r.get('reference_spread'), False)
         return before + '<br>' + spread_display(r.get('move_spread'), False) if prepared else before
 
@@ -149,7 +152,7 @@ def reply_table(rows, scope, refs, prepared):
     )
 
 
-def position_label(row, color, refs=None):
+def position_label(row: JsonObject, color: str, refs: Chapters | None = None) -> str:
     text = refs.position_cell(row) if refs else line(row['line'])
     if row['kind'] == 'terminal':
         return text + '<br>Game over'
@@ -158,17 +161,17 @@ def position_label(row, color, refs=None):
     return text
 
 
-def position_games(row):
+def position_games(row: JsonObject) -> str:
     games = row.get('games')
     if games is None:
         return 'unavailable'
     return count(games) + ('†' if len(row.get('unprepared_origins', [])) > 1 else '')
 
 
-def position_contribution_table(rows, scope, refs):
+def position_contribution_table(rows: Iterable[JsonObject], scope: JsonObject, refs: Chapters) -> list[str]:
     refs = refs.for_scope(scope.get('id'))
 
-    def kind(row):
+    def kind(row: JsonObject) -> str:
         if row['kind'] == 'terminal':
             return 'Game over'
         if row['score_basis'] == 'database':
@@ -206,14 +209,14 @@ def position_contribution_table(rows, scope, refs):
     return table(headers, values)
 
 
-def leading_entries(chapter, scope, refs, top=3):
+def leading_entries(chapter: JsonObject, scope: JsonObject | None, refs: Chapters, top: int = 3) -> list[str]:
     refs = refs.for_scope(chapter['id'])
     entries = {e['position']: e for e in chapter['entries']}
     routes = (scope or {}).get('entry_routes', {}).get('positions', [])
     selected = sorted(routes, key=lambda r: -r['conditional_first_entry_weight'])[:top]
     if not selected:
         return []
-    rows = []
+    rows: list[list[Cell]] = []
     for route in selected:
         original = dict(entries[route['position']], _opening_entry=True)
         cell = refs.sources(original)
@@ -237,7 +240,9 @@ def leading_entries(chapter, scope, refs, top=3):
     ]
 
 
-def summary_own_priorities(rows, refs, strongest=False, show_components=True):
+def summary_own_priorities(
+    rows: Iterable[JsonObject], refs: Chapters, strongest: bool = False, show_components: bool = True
+) -> list[str]:
     field, label = ('local_gain_pp', 'Gain') if strongest else ('local_drop_pp', 'Drag')
     return table(
         [
@@ -276,8 +281,8 @@ def summary_own_priorities(rows, refs, strongest=False, show_components=True):
     )
 
 
-def opening_table(rows, refs, anchors):
-    values = []
+def opening_table(rows: Iterable[JsonObject], refs: Chapters, anchors: Mapping[str, str]) -> list[str]:
+    values: list[list[Cell]] = []
     for row in rows:
         base, repertoire = row['entry_baseline']['raw_score'], row['repertoire_score']
         values.append(

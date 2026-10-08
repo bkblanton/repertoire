@@ -1,8 +1,9 @@
 """The definitions and evidence glossary at the end of the full report."""
 
+from collections.abc import Iterable
 from importlib.resources import files
 
-from .bundle import FAMILIES
+from .bundle import FAMILIES, Bundle
 from .format import display_source, escape
 from .markdown import section
 
@@ -10,7 +11,7 @@ from .markdown import section
 DEFINITIONS = files(__package__).joinpath('definitions.md').read_text(encoding='utf-8').splitlines()
 
 
-def methods(bundles):
+def methods(bundles: Iterable[Bundle]) -> list[str]:
     text = section('## Definitions and evidence', 'methods')
     text += ['What each measure means and where its limits lie. Tables link to the entries they rely on.', '']
     text += DEFINITIONS

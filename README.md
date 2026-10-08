@@ -87,6 +87,7 @@ uv sync --locked
 uv run pytest -q
 uv run ruff check
 uv run ruff format --check
+uv run mypy
 ```
 
 Tests use synthetic data, so they need no token or network access.

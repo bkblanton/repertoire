@@ -1,12 +1,19 @@
 """Recursive variation in prepared continuation scores, using empirical replies."""
 
 import math
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
 
 from .evaluate import fold
+from .model import Branch
+from .schema import JsonObject, Position
 from .sharpness import stopping_wdl, summarize
 
+if TYPE_CHECKING:
+    from .preparation import Evaluator
 
-def stopping_spread(outcomes):
+
+def stopping_spread(outcomes: JsonObject) -> JsonObject:
     """A stopping score is fixed; game outcomes can still vary after preparation."""
     unresolved = outcomes['unresolved_probability']
     known = unresolved == 0
@@ -23,11 +30,11 @@ def stopping_spread(outcomes):
     )
 
 
-def stopping_counts(sample, color, fixed=None):
+def stopping_counts(sample: Sequence[int], color: bool, fixed: float | None = None) -> JsonObject:
     return stopping_spread(summarize(stopping_wdl(sample, color, fixed)))
 
 
-def mixture(parts, expected=None):
+def mixture(parts: Iterable[tuple[float, JsonObject]], expected: float | None = None) -> JsonObject:
     """Mix variances and means; never average standard deviations or fill gaps."""
     parts = [(p, child) for p, child in parts if p > 0]
     mass = sum(p for p, _ in parts)
@@ -66,10 +73,10 @@ def mixture(parts, expected=None):
     )
 
 
-def recursive_spread(evaluator):
+def recursive_spread(evaluator: 'Evaluator') -> dict[Position, JsonObject]:
     """Recursive score spread for every compiled position; each transposition has one continuation."""
 
-    def combine(k, parts):
+    def combine(k: Position, parts: list[tuple[Branch, float, JsonObject]]) -> JsonObject:
         expected = evaluator.values[k]
         value = mixture([(p, child) for _, p, child in parts], float(expected[0]) if expected[1] == 0 else None)
         opponent = evaluator.facts[k]['turn'] != evaluator.color and evaluator.facts[k]['outcome'] is None
@@ -89,7 +96,7 @@ def recursive_spread(evaluator):
     )
 
 
-def assert_outcomes(value, outcomes):
+def assert_outcomes(value: JsonObject, outcomes: JsonObject) -> None:
     if value['variance'] is None:
         if outcomes['unresolved_probability'] == 0:
             raise AssertionError('Resolved WDL has unresolved recursive spread')

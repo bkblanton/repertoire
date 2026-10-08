@@ -2,9 +2,14 @@
 
 import html
 import re
+from collections.abc import Callable, Container, Iterable, Sequence
+from typing import Self, cast
+
+# One table cell as passed in; `table` stringifies each, and SourceCell is a str carrying extra context.
+Cell = str | int | float
 
 
-def about(key, text='Definitions'):
+def about(key: str, text: str = 'Definitions') -> str:
     """Caveats live once in the glossary; tables link to the relevant entry."""
     return f'[{text}](#def-{key})'
 
@@ -12,25 +17,28 @@ def about(key, text='Definitions'):
 class SourceCell(str):
     """Chapter links that carry the opening name shown with them, and an optional further note."""
 
-    def __new__(cls, text, opening, note=''):
+    opening: str
+    note: str
+
+    def __new__(cls, text: str, opening: str, note: str = '') -> Self:
         result = super().__new__(cls, text)
         result.opening = opening
         result.note = note
         return result
 
-    def context(self):
+    def context(self) -> str:
         """The line under a table's board label: the opening name, then the chapters."""
         parts = [part for part in (self.opening, str(self)) if part and part not in ('unavailable', 'None')]
         return '<br>'.join(([' · '.join(parts)] if parts else []) + ([self.note] if self.note else []))
 
 
-def compressed_columns(headers, rows):
+def compressed_columns(headers: Sequence[str], rows: Iterable[Sequence[Cell]]) -> tuple[list[str], list[list[Cell]]]:
     """Keep related values together without discarding any table evidence."""
-    headers, rows = list(headers), [list(row) for row in rows]
+    headers, rows = list(headers), cast('list[list[Cell]]', [list(row) for row in rows])
     if any(len(row) != len(headers) for row in rows):
         raise ValueError('Table header and row lengths differ')
 
-    def combine(primary, secondary, title, format_cell):
+    def combine(primary: str, secondary: str, title: str, format_cell: Callable[[Cell, Cell], Cell]) -> None:
         if primary not in headers or secondary not in headers:
             return
         first, second = headers.index(primary), headers.index(secondary)
@@ -40,7 +48,7 @@ def compressed_columns(headers, rows):
             del row[second]
         del headers[second]
 
-    def rating(value, difference):
+    def rating(value: Cell, difference: Cell) -> Cell:
         if str(difference).startswith(('n/a', 'unavailable')):
             return value
         number, _, notes = str(difference).partition(' (')
@@ -85,7 +93,7 @@ TEXT_COLUMNS = (
 NUMBER_COLUMNS = ('Position reach', 'Chapter reach')
 
 
-def table(headers, rows):
+def table(headers: Sequence[str], rows: Sequence[Sequence[Cell]]) -> list[str]:
     """A Markdown table; chapter and opening context moves under the board label in the column before it."""
     if not rows:
         return []
@@ -111,12 +119,14 @@ def table(headers, rows):
     ]
 
 
-def _with_context(label, source):
+def _with_context(label: Cell, source: Cell) -> str:
     context = source.context() if isinstance(source, SourceCell) else str(source)
     return f'{label}<br>{context}' if context and context != 'None' else str(label)
 
 
-def drop_uniform(headers, rows, optional):
+def drop_uniform(
+    headers: Sequence[str], rows: Sequence[Sequence[Cell]], optional: Container[str]
+) -> tuple[list[str], list[list[Cell]]]:
     """Remove optional columns that carry the same value in every row, such as all-zero endings."""
     keep = [
         i for i, h in enumerate(headers) if h not in optional or len(rows) < 2 or len({str(row[i]) for row in rows}) > 1
@@ -124,13 +134,16 @@ def drop_uniform(headers, rows, optional):
     return [headers[i] for i in keep], [[row[i] for i in keep] for row in rows]
 
 
-def section(title, anchor=None):
+def section(title: str, anchor: str | None = None) -> list[str]:
     return ([f'<a id="{anchor}"></a>', ''] if anchor else []) + [title, '']
 
 
-def report_navigation(text):
+def report_navigation(text: Sequence[str]) -> list[str]:
     """Build a nested contents list from actual second- and third-level headings."""
     existing = set(re.findall(r'<a id="([^"]+)"', '\n'.join(text)))
+    body: list[str]
+    headings: list[tuple[str, str, str, str | None]]
+    parent: str | None
     body, headings, parent = [], [], None
     for item in text:
         heading = re.fullmatch(r'(##|###) (.+)', item)

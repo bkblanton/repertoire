@@ -1,15 +1,21 @@
 """Weighted correlation helpers shared by the correlation analyses and their report section."""
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 import numpy as np
+from numpy.typing import ArrayLike
+
+from .schema import Position
 
 
-def rank(x):
+def rank(x: ArrayLike) -> np.ndarray:
     _, inverse, counts = np.unique(x, return_inverse=True, return_counts=True)
     ends = np.cumsum(counts)
     return ((ends - counts + 1 + ends) / 2)[inverse]
 
 
-def correlation(x, y, weights=None):
+def correlation(x: ArrayLike, y: ArrayLike, weights: ArrayLike | None = None) -> float:
     x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
     w = np.ones(len(x)) if weights is None else np.asarray(weights, dtype=float)
     if len(x) < 2 or w.sum() <= 0:
@@ -19,9 +25,10 @@ def correlation(x, y, weights=None):
     return float(np.clip(np.sum(w * dx * dy) / denominator, -1, 1)) if denominator > 0 else float('nan')
 
 
-def connected_groups(position_sets):
+def connected_groups(position_sets: Sequence[set[Position]]) -> list[list[int]]:
     """Connected components of overlapping sets, including indirect overlap through a third set."""
-    remaining, groups = set(range(len(position_sets))), []
+    remaining = set(range(len(position_sets)))
+    groups: list[list[int]] = []
     while remaining:
         first = min(remaining)
         remaining.remove(first)
@@ -36,7 +43,7 @@ def connected_groups(position_sets):
     return groups
 
 
-def cell(result, metric):
+def cell(result: Mapping[str, Any], metric: str) -> str:
     """A saved statistic for report tables."""
     value = result[metric]
     if value is None:

@@ -1,21 +1,30 @@
 """Chapter entry references with the repertoire's conditional first-entry weights."""
 
 import math
+from collections.abc import Iterable, Mapping
+from typing import cast
 
 from .board_cache import owner_outcome
 from .explorer import counts
 from .model import score
+from .schema import ChapterScore, EntryBaseline, JsonObject, Position
 from .status import Status
 
 
-def chapter_entry_baseline(positions, chapter_score, evidence, color, provenance):
+def chapter_entry_baseline(
+    positions: Iterable[Position],
+    chapter_score: ChapterScore,
+    evidence: Mapping[Position, JsonObject],
+    color: bool,
+    provenance: Mapping[Position, dict[str, str]],
+) -> EntryBaseline:
     positions = sorted(set(positions))
     if not positions:
         return {"status": Status.ENTRY_CONFIGURATION_REQUIRED, "raw_score": None, "difference_pp": None}
     if len(positions) == 1:
         weights = {positions[0]: 1.0}
     else:
-        weights = chapter_score.get("first_entry_weights", {})
+        weights = cast(dict[Position, float], chapter_score.get("first_entry_weights", {}))
         if any(weights.get(k) is None for k in positions):
             return {"status": Status.UNRESOLVED_ENTRY_WEIGHTS, "raw_score": None, "difference_pp": None}
         weights = {k: weights[k] for k in positions}
@@ -23,12 +32,12 @@ def chapter_entry_baseline(positions, chapter_score, evidence, color, provenance
         sum(weights.values()), 1, abs_tol=1e-9
     ):
         raise ValueError("Chapter baseline requires conditional first-entry weights summing to one")
-    components = []
+    components: list[JsonObject] = []
     known, unresolved = 0.0, 0.0
     for k, weight in weights.items():
         deterministic = owner_outcome(k, color)
         results = counts(evidence[k]) if deterministic is None else None
-        entry_score = score(results, color) if deterministic is None else deterministic
+        entry_score = score(cast(list[int], results), color) if deterministic is None else deterministic
         if entry_score is None:
             unresolved += weight
         else:

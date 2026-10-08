@@ -1,14 +1,19 @@
 """DAG evaluation, first-entry weighting and probability conservation checks."""
 
 from collections.abc import Callable, Collection, Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from .board_cache import children
-from .graph import Graph, chapter_alternatives, resolve, topology
+from .graph import Graph, Policy, chapter_alternatives, resolve, topology
 from .model import Branch, Evidence, Model, Sampled, node_empirical, prepare_node
-from .schema import Position, ScoreSummary
+from .schema import ChapterScore, Position, ScoreSummary
+from .schema import Posterior as PosteriorSummary
 from .status import Status
+
+if TYPE_CHECKING:
+    from .uncertainty import Posterior
 
 # Vector components: resolved contribution, unresolved mass, sparse contribution,
 # sparse mass, leaf mass, deviation mass, other mass, prior-completed score.
@@ -70,7 +75,7 @@ def backward(
     """Each position's component vector. With `width`, every probability and score is an array of that many
     simulated draws and each vector has one column per draw; the tests use this to check the calculated uncertainty."""
 
-    def combine(k, parts):
+    def combine(k: Position, parts: list[tuple[Branch, float | np.ndarray, np.ndarray]]) -> np.ndarray:
         v = np.zeros(8 if width is None else (8, width))
         for _, p, value in parts:
             v += p * value
@@ -84,7 +89,7 @@ def backward(
 def select_alternatives(
     graph: Graph,
     color: bool,
-    policy: dict,
+    policy: Policy,
     evidence: Evidence,
     roots: Collection[Position],
     sparse_threshold: int,
@@ -106,7 +111,8 @@ def select_alternatives(
     transitions = resolve(graph, color, dict(policy, **fixed))
     for k, moves in options.items():
         transitions[k] = {m: (graph.nodes[k].edges[m], None) for m in moves}
-    values, result = {}, {}
+    values: dict[Position, np.ndarray] = {}
+    result: dict[Position, dict[str, Any]] = {}
     for k in topology(transitions, list(roots)):
         selected = transitions[k]
         if k in options:
@@ -126,7 +132,7 @@ def select_alternatives(
 
 def can_enter(model: Model, order: list[Position], entries: Collection[Position]) -> dict[Position, bool]:
     """Whether each position can still reach one of `entries`, including through unresolved replies."""
-    result = {}
+    result: dict[Position, bool] = {}
     for k in order:
         targets = [b.target for b in model[k].branches if b.target is not None] + model[k].potential_targets
         result[k] = k in entries or any(result[t] for t in targets)
@@ -217,7 +223,7 @@ def best_routes(
     extended past `stop_at`. With `replies`, the boards after unprepared opponent replies get routes too.
     """
     stop_at = set(stop_at)
-    best = {k: (w, k, ()) for k, w in roots.items() if w > 0}
+    best: dict[Position, Route] = {k: (w, k, ()) for k, w in roots.items() if w > 0}
     for k in reversed(order):
         if k not in best or k in stop_at:
             continue
@@ -228,16 +234,16 @@ def best_routes(
             if b.target is not None:
                 target = b.target
             elif replies and b.kind == "deviation":
-                target = children(k)[b.move]
+                target = children(k)[cast(str, b.move)]
             else:
                 continue
-            candidate = probability * p, root, (*moves, b.move)
+            candidate = probability * p, root, (*moves, cast(str, b.move))
             if target not in best or better_route(candidate, best[target]):
                 best[target] = candidate
     return best
 
 
-def summarize(r: np.ndarray, posterior) -> ScoreSummary:
+def summarize(r: np.ndarray, posterior: PosteriorSummary) -> ScoreSummary:
     """Empirical score fields from the raw component vector `r`, plus the posterior block from uncertainty.py."""
     u = float(r[UNKNOWN])
     return {
@@ -264,8 +270,8 @@ def chapter_score(
     values: dict[Position, np.ndarray],
     root_weights: Weights,
     entries: Collection[Position],
-    posterior,
-) -> dict:
+    posterior: "Posterior",
+) -> ChapterScore:
     """Score conditional on first entry, with `posterior` an uncertainty.Posterior for the same model."""
     # Only positions that can still reach the chapter matter for its entry weights.
     entering = can_enter(model, order, entries)
@@ -289,22 +295,21 @@ def chapter_score(
             ],
         }
     chapter = posterior.chapter(root_weights, entries)
+    summary: ChapterScore
     if raw_reach <= 0:
         if len(entries) == 1:
             k = next(iter(entries))
-            summary = summarize(values[k], posterior.mixture({k: 1.0}))
+            summary = cast(ChapterScore, summarize(values[k], posterior.mixture({k: 1.0})))
             summary["conditional_basis"] = "single entry position, even though root reach is zero"
         else:
             summary = {"status": Status.UNREACHABLE_MULTIPLE_ENTRIES}
     else:
         if chapter['summary'] is None:
             raise ValueError("Posterior first-entry weights are zero; use a stronger prior or explicit entries")
-        summary = summarize(r / raw_reach, chapter['summary'])
-    summary.update(
-        entry_probability=float(raw_reach),
-        posterior_entry_probability_mean=chapter['entry_probability'],
-        first_entry_weights=weights,
-    )
+        summary = cast(ChapterScore, summarize(r / raw_reach, chapter['summary']))
+    summary["entry_probability"] = float(raw_reach)
+    summary["posterior_entry_probability_mean"] = chapter['entry_probability']
+    summary["first_entry_weights"] = weights
     if unresolved_entry_mass > 0:
         summary["entry_probability"] = None
         summary["posterior_entry_probability_mean"] = None

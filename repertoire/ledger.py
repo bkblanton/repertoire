@@ -1,13 +1,21 @@
 """Stopping-event ledger and starting-position reference saved with each score."""
 
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, cast
+
 import chess
 
 from .board_cache import after_fen, san
 from .explorer import counts
-from .model import score
+from .graph import Graph
+from .model import Model, Sampled, score
+from .schema import JsonObject, Position, StoppingEvent
+
+if TYPE_CHECKING:
+    from .uncertainty import Posterior
 
 
-def starting_position_reference(data, color, provenance):
+def starting_position_reference(data: JsonObject, color: bool, provenance: dict[str, str]) -> JsonObject:
     results = counts(data)
     return {
         "position": chess.STARTING_FEN,
@@ -22,9 +30,18 @@ def starting_position_reference(data, color, provenance):
     }
 
 
-def events(graph, model, raw_sample, posterior, raw_flow, post_flow, color, prior_strength):
+def events(
+    graph: Graph,
+    model: Model,
+    raw_sample: Sampled,
+    posterior: "Posterior",
+    raw_flow: Mapping[tuple[Position, int], float],
+    post_flow: Mapping[tuple[Position, int], float],
+    color: bool,
+    prior_strength: float,
+) -> list[StoppingEvent]:
     """Every stopping event under the overall policy; `post_flow` is the posterior-mean flow from `posterior`."""
-    result = []
+    result: list[StoppingEvent] = []
     for (k, j), mass in raw_flow.items():
         b = model[k].branches[j]
         raw_score = raw_sample[k][j][1]
@@ -44,7 +61,7 @@ def events(graph, model, raw_sample, posterior, raw_flow, post_flow, color, prio
                 "move": b.move,
                 "representative_path_san": path,
                 "chapters": sorted(n.chapters),
-                "type": b.kind,
+                "type": cast(str, b.kind),
                 "unresolved": unresolved,
                 "score_status": "prior-only; no direct observations"
                 if unresolved

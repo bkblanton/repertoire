@@ -1,11 +1,17 @@
 """Expected remaining repertoire-owner moves, with no discount or depth cutoff."""
 
 import math
+from collections.abc import Iterable, Mapping, Sequence
+from typing import cast
 
+from .model import Model, Sampled
+from .schema import ChapterScore, Position, PreparedDepth
 from .status import Status
 
+DepthBounds = dict[Position, tuple[float, float]]  # lower and upper expected remaining own moves
 
-def prepared_depth_values(model, order, sampled):
+
+def prepared_depth_values(model: Model, order: Iterable[Position], sampled: Sampled) -> DepthBounds:
     """Return lower/upper expected-depth bounds for each canonical position.
 
     Our selected move earns one unit. Opponent branches weight continuation
@@ -13,7 +19,8 @@ def prepared_depth_values(model, order, sampled):
     leaf do not affect depth. Missing move distributions retain finite bounds
     from the longest remaining prepared continuation instead of assuming zero.
     """
-    values, longest = {}, {}
+    values: DepthBounds = {}
+    longest: dict[Position, float] = {}
     for k in order:
         node = model[k]
         targets = [b.target for b in node.branches if b.target is not None] + node.potential_targets
@@ -31,7 +38,7 @@ def prepared_depth_values(model, order, sampled):
     return values
 
 
-def summarize_depth(values, weights):
+def summarize_depth(values: Mapping[Position, tuple[float, float]], weights: Mapping[Position, float]) -> PreparedDepth:
     if not weights or any(w is None or not math.isfinite(w) or w < 0 for w in weights.values()):
         raise ValueError('Prepared depth requires nonnegative, known starting weights')
     if not math.isclose(sum(weights.values()), 1, abs_tol=1e-9):
@@ -46,7 +53,9 @@ def summarize_depth(values, weights):
     }
 
 
-def chapter_prepared_depth(values, entries, chapter_score):
+def chapter_prepared_depth(
+    values: Mapping[Position, tuple[float, float]], entries: Sequence[Position], chapter_score: ChapterScore
+) -> PreparedDepth:
     if not entries:
         return {'expected_moves': None, 'unit': 'own_moves', 'status': Status.ENTRY_CONFIGURATION_REQUIRED}
     # Matches the existing single-position conditional-score semantics even
@@ -61,4 +70,4 @@ def chapter_prepared_depth(values, entries, chapter_score):
             'status': Status.UNRESOLVED_ENTRY_WEIGHTS,
             'conditional_bounds': [min(values[k][0] for k in entries), max(values[k][1] for k in entries)],
         }
-    return summarize_depth(values, {k: weights[k] for k in entries})
+    return summarize_depth(values, {k: cast(float, weights[k]) for k in entries})

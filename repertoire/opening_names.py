@@ -7,6 +7,7 @@ from pathlib import Path
 import chess
 
 from .board_cache import canonical
+from .schema import Position
 
 DIRECTORY = Path(__file__).parent / 'data' / 'chess-openings'
 SOURCE = dict(
@@ -17,9 +18,9 @@ SOURCE = dict(
 
 
 @cache
-def names():
+def names() -> dict[Position, dict[str, str]]:
     """The ECO code and name of every listed position, keyed by canonical position."""
-    result = {}
+    result: dict[Position, dict[str, str]] = {}
     for path in sorted(DIRECTORY.glob('*.tsv')):
         with path.open(encoding='utf-8', newline='') as file:
             for row in csv.DictReader(file, delimiter='\t'):

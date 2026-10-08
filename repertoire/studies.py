@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
@@ -18,7 +19,7 @@ CHAPTER_ENDPOINT = 'https://lichess.org/api/study/{}/{}.pgn'
 STUDY = re.compile(r'^(?:https?://)?(?:www\.)?lichess\.org/study/([A-Za-z0-9]{8})(/[A-Za-z0-9]{8})?/?(?:[?#].*)?$')
 
 
-def study_id(value):
+def study_id(value: str) -> str:
     """Accept a bare study ID or a study/chapter URL; chapter links export the whole study."""
     value = value.strip()
     if re.fullmatch(r'[A-Za-z0-9]{8}', value):
@@ -29,7 +30,7 @@ def study_id(value):
     return match.group(1)
 
 
-def load_sources(path=SOURCES):
+def load_sources(path: str | Path = SOURCES) -> dict[str, str]:
     if not Path(path).is_file():
         raise ValueError(f'Create {path} with your White and Black study URLs, or pass the PGN paths; see the README')
     sources = json.loads(Path(path).read_text(encoding='utf-8'))
@@ -39,16 +40,16 @@ def load_sources(path=SOURCES):
     return {color: sources[color] for color in ('white', 'black')}
 
 
-def default_paths(directory=DIRECTORY):
+def default_paths(directory: str | Path = DIRECTORY) -> dict[str, Path]:
     return {color: Path(directory) / f'{color}.pgn' for color in ('white', 'black')}
 
 
-def comparable(text):
+def comparable(text: str) -> list[str]:
     # Lichess stamps the export date into every chapter's Date header.
     return [line for line in text.replace('\r\n', '\n').strip().split('\n') if not line.startswith('[Date ')]
 
 
-def chapter_url(value):
+def chapter_url(value: str) -> str:
     """The export URL for a study or chapter link: a chapter link exports only that chapter."""
     match = STUDY.match(value.strip())
     if match and match.group(2):
@@ -56,7 +57,13 @@ def chapter_url(value):
     return ENDPOINT.format(study_id(value))
 
 
-def download(client, study, patience=OUTAGE_PATIENCE, url=None, orientation=False):
+def download(
+    client: httpx.Client,
+    study: str,
+    patience: int = OUTAGE_PATIENCE,
+    url: str | None = None,
+    orientation: bool = False,
+) -> str:
     """A study's PGN text; `url` exports something else, such as one chapter, and `orientation` adds tags."""
     url = url or ENDPOINT.format(study_id(study))
     params = dict(clocks='false', comments='true', variations='true')
@@ -86,7 +93,11 @@ def download(client, study, patience=OUTAGE_PATIENCE, url=None, orientation=Fals
         return response.text
 
 
-def export(sources=SOURCES, directory=DIRECTORY, client=None):
+def export(
+    sources: str | Path | Mapping[str, str] = SOURCES,
+    directory: str | Path = DIRECTORY,
+    client: httpx.Client | None = None,
+) -> dict[str, Path]:
     """Download both studies; leave a file untouched when only its export date changed."""
     studies = load_sources(sources) if isinstance(sources, (str, Path)) else sources
     token = os.environ.get('LICHESS_TOKEN', '').strip()
@@ -120,7 +131,7 @@ def export(sources=SOURCES, directory=DIRECTORY, client=None):
     return paths
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sources', default=SOURCES, help='JSON file with white and black study URLs')
     parser.add_argument('--directory', default=DIRECTORY)

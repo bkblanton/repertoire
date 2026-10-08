@@ -1,30 +1,38 @@
 """Fetch every Explorer table both repertoires need, so every later stage can run offline."""
 
 import argparse
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from . import studies
 from .context import DEFAULT_CACHE
 from .explorer import DEFAULT_FILTERS, Explorer, add_token_option, apply_token_file, fetch_missing, survey
 from .graph import parse
+from .schema import JsonObject, Position
 from .score import config_path, inspect_repertoire, load_config, parent_positions, plan_repertoire, required_positions
 
 
-def required_tables(pgn, color, config):
+def required_tables(pgn: str | Path, color: bool, config: JsonObject) -> list[Position]:
     """Scoring tables, then own-move parent tables, for one repertoire PGN. No table is read."""
     graph = parse(pgn, config.get('exclude', []))
     plan = plan_repertoire(graph, color, config, inspect_repertoire(graph, color))
     return list(dict.fromkeys([*required_positions(plan, color), *parent_positions(plan, color)]))
 
 
-def fetch(pgns, configs, cache=DEFAULT_CACHE, dry_run=False, extra=None):
+def fetch(
+    pgns: Mapping[str, str | Path],
+    configs: Mapping[str, str | Path | None],
+    cache: str | Path = DEFAULT_CACHE,
+    dry_run: bool = False,
+    extra: Mapping[str, Iterable[Position]] | None = None,
+) -> None:
     """Cache the tables for {color: pgn} with {color: config path or None}.
 
     Colors with the same Explorer filters share one pass, so the run has a single count and estimate.
     `extra` adds {color: positions}, such as saved comparisons. `dry_run` reports what would be fetched
     and makes no requests.
     """
-    groups = {}
+    groups: dict[tuple[tuple[str, str], ...], JsonObject] = {}
     for color, pgn in pgns.items():
         config = load_config(configs.get(color))
         filters = dict(DEFAULT_FILTERS, **config.get('filters', {}))
@@ -45,7 +53,7 @@ def fetch(pgns, configs, cache=DEFAULT_CACHE, dry_run=False, extra=None):
             explorer.close()
 
 
-def main():
+def main() -> None:
     from . import compare
 
     parser = argparse.ArgumentParser(description=__doc__)

@@ -2,17 +2,22 @@
 
 import math
 from collections import defaultdict, deque
+from collections.abc import Collection, Iterable, Mapping
+from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
 from .board_cache import STARTING_POSITION, fen_number, route_line
 from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
+from .evaluate import Route, Weights
 from .explorer import counts
 from .gaps import distribution as gap_distribution
+from .graph import Graph
 from .model import score
 from .opening_names import SOURCE as OPENING_NAME_SOURCE
 from .opening_names import names as opening_names
-from .preparation import Evaluators, chess_facts
+from .preparation import Evaluator, Evaluators, chess_facts
 from .ratings import (
     comparison_fields,
     comparison_mixture,
@@ -25,11 +30,12 @@ from .ratings import (
 from .ratings import (
     mixture as rating_mixture,
 )
+from .schema import JsonObject, Position
 from .sharpness import recursive_wdl, stopping_wdl, summarize
 from .status import Status
 
 
-def opening_identity(value):
+def opening_identity(value: object) -> str | None:
     if not value:
         return None
     if (
@@ -42,7 +48,9 @@ def opening_identity(value):
     return value['name']
 
 
-def classify(graph, names, facts, color):
+def classify(
+    graph: Graph, names: Mapping[Position, dict[str, str]], facts: Mapping[Position, JsonObject], color: bool
+) -> tuple[dict[str, JsonObject], dict[Position, str], dict[Position, set[str]], dict[Position, set[str]]]:
     """Potential labels for annotation, independent of modeled probability.
 
     `names` maps canonical positions to their exact {name, eco}; unlisted positions are unnamed.
@@ -51,6 +59,8 @@ def classify(graph, names, facts, color):
     route into an unnamed board has not thereby played every inherited opening.
     The monotone worklist also handles cycles in unused recorded variations.
     """
+    exact: dict[Position, str]
+    catalog: dict[str, JsonObject]
     exact, catalog = {}, {}
     edges = {k: set(n.edges.values()) for k, n in graph.nodes.items()}
     for k in graph.nodes:
@@ -58,14 +68,18 @@ def classify(graph, names, facts, color):
         identity = opening_identity(value)
         if identity:
             exact[k] = identity
-            opening = catalog.setdefault(identity, dict(id=identity, name=value['name'], eco_codes=set()))
-            opening['eco_codes'].add(value['eco'])
+            opening = catalog.setdefault(
+                identity, dict(id=identity, name=cast(dict[str, str], value)['name'], eco_codes=set())
+            )
+            opening['eco_codes'].add(cast(dict[str, str], value)['eco'])
         if facts[k]['turn'] != color and facts[k]['outcome'] is None:
             edges[k].update(facts[k]['possible_targets'])
             # Only the parent's cached move rows are needed for unprepared boards.
             edges[k].update(target for target, _ in facts[k]['after'].values())
-    labels = {k: set() for k in sorted(set(edges) | {t for targets in edges.values() for t in targets})}
-    pending = deque()
+    labels: dict[Position, set[str]] = {
+        k: set() for k in sorted(set(edges) | {t for targets in edges.values() for t in targets})
+    }
+    pending: deque[Position] = deque()
     for k, identity in exact.items():
         labels[k].add(identity)
         pending.append(k)
@@ -94,7 +108,7 @@ def classify(graph, names, facts, color):
     return catalog, exact, labels, memberships
 
 
-def named_regions(exact, catalog):
+def named_regions(exact: Mapping[Position, str], catalog: Mapping[str, JsonObject]) -> defaultdict[str, set[Position]]:
     """First activation occurs at an exact name or a named specific descendant.
 
     Inheriting a name along an unnamed route cannot introduce a new category:
@@ -102,18 +116,26 @@ def named_regions(exact, catalog):
     therefore equivalent to route-aware first activation, without expanding
     the score graph into histories of previously visited opening categories.
     """
-    regions = defaultdict(set)
+    regions: defaultdict[str, set[Position]] = defaultdict(set)
     for k, identity in exact.items():
         for category in [identity, *catalog[identity]['parent_ids']]:
             regions[category].add(k)
     return regions
 
 
-def name_flow(evaluator, roots, exact, *, initial=None, stop_at=()):
+def name_flow(
+    evaluator: Evaluator,
+    roots: Weights,
+    exact: Mapping[Position, str],
+    *,
+    initial: Mapping[Position, Mapping[str | None, float]] | None = None,
+    stop_at: Iterable[Position] = (),
+) -> dict[Position, dict[str | None, float]]:
     """Preserve the last exact name separately on each incoming probability flow."""
     evaluator.evaluate(roots)
-    flows = defaultdict(lambda: defaultdict(float))
+    flows: defaultdict[Position, defaultdict[str | None, float]] = defaultdict(lambda: defaultdict(float))
     stop_at = set(stop_at)
+    incoming: Any
     for k, weight in roots.items():
         if weight:
             incoming = {exact[k]: 1.0} if k in exact else (initial or {}).get(k, {None: 1.0})
@@ -140,7 +162,7 @@ def name_flow(evaluator, roots, exact, *, initial=None, stop_at=()):
     return {k: dict(values) for k, values in flows.items() if sum(values.values()) > 0}
 
 
-def most_common_source(weights):
+def most_common_source(weights: Mapping[str | None, float]) -> JsonObject | None:
     """A source is a last-name partition, not overlapping historical families."""
     total = sum(weights.values())
     if not total:
@@ -149,8 +171,13 @@ def most_common_source(weights):
     return dict(id=identity, share=mass / total)
 
 
-def chapter_sources(evaluators, saved, exact, overall_flows):
-    scopes = [
+def chapter_sources(
+    evaluators: Evaluators,
+    saved: JsonObject,
+    exact: Mapping[Position, str],
+    overall_flows: Mapping[Position, Mapping[str | None, float]],
+) -> list[JsonObject]:
+    scopes: list[JsonObject] = [
         dict(id='overall', positions={k: most_common_source(v) for k, v in overall_flows.items()}, entry_sources={})
     ]
     manifest = saved['manifest']
@@ -158,14 +185,14 @@ def chapter_sources(evaluators, saved, exact, overall_flows):
         starts = {k: w for k, w in chapter['score'].get('first_entry_weights', {}).items() if w}
         if not starts and len(chapter['entries']) == 1:
             starts = {chapter['entries'][0]['position']: 1.0}
-        scope = dict(id=chapter['id'], positions={}, entry_sources={})
+        scope: JsonObject = dict(id=chapter['id'], positions={}, entry_sources={})
         if not starts:
             scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
             scopes.append(scope)
             continue
         evaluator = evaluators(chapter['id'])
         entry_flow = name_flow(evaluator, manifest['root_weights'], exact, stop_at=starts)
-        initial = {}
+        initial: dict[Position, dict[str | None, float]] = {}
         for k in starts:
             incoming = entry_flow.get(k, {})
             total = sum(incoming.values())
@@ -185,12 +212,14 @@ def chapter_sources(evaluators, saved, exact, overall_flows):
     return scopes
 
 
-def entered_reach(evaluator, entries):
+def entered_reach(evaluator: Evaluator, entries: Iterable[JsonObject]) -> dict[Position, float]:
     """Joint probability of reaching each board after first entering this opening.
 
     Keep this historical origin even after a later named board changes the
     current classification. Incoming first-entry cohorts are disjoint.
     """
+    starts: defaultdict[Position, float]
+    reached: defaultdict[Position, float]
     starts, reached = defaultdict(float), defaultdict(float)
     for entry in entries:
         if entry['parent'] is None:
@@ -208,10 +237,13 @@ def entered_reach(evaluator, entries):
     return {k: mass for k, mass in reached.items() if mass > 0}
 
 
-def first_entries(evaluator, roots, region):
+def first_entries(
+    evaluator: Evaluator, roots: Weights, region: Collection[Position]
+) -> tuple[list[JsonObject], float, float]:
     """Absorb on first membership, including cached unprepared reply boards."""
     incoming = evaluator.reaches(roots, stop_at=region)
     best = evaluator.routes(roots, stop_at=region, replies=True)
+    entries: list[JsonObject]
     entries, missed = [], 0.0
     for k in reversed(evaluator.values):
         mass = incoming[k]
@@ -233,7 +265,7 @@ def first_entries(evaluator, roots, region):
                         move=move,
                         sample=sample,
                         fixed=fixed,
-                        witness=best[target],
+                        witness=best[cast(Position, target)],
                     )
                 )
             else:
@@ -250,7 +282,7 @@ def first_entries(evaluator, roots, region):
         else:
             context = initial[k]
             if evaluator.facts[k]['turn'] == evaluator.color:
-                paired = []
+                paired: list[tuple[float, JsonObject]] = []
                 for origin in context.get('origins', []):
                     data = evaluator.evidence.get(origin['parent_position'])
                     reply = reply_rating(data, origin['move'])
@@ -262,7 +294,7 @@ def first_entries(evaluator, roots, region):
     return entries, total, missed
 
 
-def example(evaluator, witness):
+def example(evaluator: Evaluator, witness: Route) -> JsonObject:
     probability, root, moves = witness
     text, position, _ = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
     return dict(
@@ -274,13 +306,17 @@ def example(evaluator, witness):
     )
 
 
-def cohort(evaluator, entries, total, wdl):
+def cohort(
+    evaluator: Evaluator, entries: Iterable[JsonObject], total: float, wdl: Mapping[Position, np.ndarray]
+) -> JsonObject:
     """Mix continuations and entry baselines with the same first-arrival weights."""
     outcomes = np.zeros(4)
     baseline_known = baseline_unknown = depth = regular_mass = 0.0
+    regular_starts: defaultdict[Position, float]
+    direct_gaps: defaultdict[Position, float]
     regular_starts, direct_gaps = defaultdict(float), defaultdict(float)
     direct_terminal = 0.0
-    rows = {}
+    rows: dict[Position, JsonObject] = {}
     for entry in entries:
         k, weight = entry['position'], entry['mass'] / total
         is_reply = entry['parent'] is not None
@@ -430,7 +466,7 @@ def cohort(evaluator, entries, total, wdl):
     )
 
 
-def analyze(path, cache=DEFAULT_CACHE):
+def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     analysis = AnalysisContext(path)
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     evidence = analysis.read_evidence(cache)
@@ -450,12 +486,12 @@ def analyze(path, cache=DEFAULT_CACHE):
     catalog, exact, potential, _ = classify(graph, names, facts, color)
     regions = named_regions(exact, catalog)
     flows = name_flow(evaluator, roots, exact)
-    positions = {}
+    positions: dict[Position, JsonObject] = {}
     for k in sorted(set(potential) | set(flows)):
         incoming = flows.get(k, {})
         mass = sum(incoming.values())
         active = {identity: weight for identity, weight in incoming.items() if identity is not None}
-        membership = defaultdict(float)
+        membership: defaultdict[str, float] = defaultdict(float)
         for identity, weight in active.items():
             for category in [identity, *catalog[identity]['parent_ids']]:
                 membership[category] += weight
@@ -473,6 +509,8 @@ def analyze(path, cache=DEFAULT_CACHE):
             opening_reach_contributions={},
             opening_reach_fractions={},
         )
+    rows: list[JsonObject]
+    unreachable: list[str]
     rows, unreachable = [], []
     for identity, opening in catalog.items():
         entries, total, missed = first_entries(evaluator, roots, regions[identity])
@@ -485,7 +523,7 @@ def analyze(path, cache=DEFAULT_CACHE):
                 raise AssertionError('Opening origin exceeds actual board or opening reach')
             board['opening_reach_contributions'][identity] = mass
             board['opening_reach_fractions'][identity] = min(1.0, mass / board['reach'])
-        chapter_ids = set()
+        chapter_ids: set[str] = set()
         for k in regions[identity]:
             if reach.get(k, 0.0) > 0:
                 chapter_ids.update(graph.nodes[k].chapters)
@@ -549,7 +587,7 @@ def analyze(path, cache=DEFAULT_CACHE):
     )
 
 
-def main():
+def main() -> None:
     stage_main('openings', analyze, __doc__)
 
 

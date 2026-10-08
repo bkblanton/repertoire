@@ -24,6 +24,7 @@ Repository = "https://github.com/bkblanton/repertoire"
 
 [dependency-groups]
 dev = [
+    "mypy>=2.4.0",
     "pytest>=9.1.1",
     "ruff>=0.16.10",
 ]
@@ -46,6 +47,19 @@ extend-exclude = [".uv-cache", ".uv-python", ".cache"]
 quote-style = "preserve"
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "UP"]
+select = ["E", "W", "F", "I", "B", "UP", "ANN"]
 # zip() pairs model branches with their sampled values, which may be arrays of simulated draws.
-ignore = ["B905"]
+# Any is allowed: saved analyses are JSON objects whose rows are typed as dict[str, Any].
+ignore = ["B905", "ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
+
+[tool.mypy]
+files = ["repertoire"]
+python_version = "3.12"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true

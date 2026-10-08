@@ -4,9 +4,11 @@ import argparse
 import hashlib
 import json
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, TypedDict, cast
 
 import chess
 import numpy as np
@@ -30,6 +32,11 @@ from .evaluate import (
 )
 from .explorer import DEFAULT_FILTERS, Explorer, add_token_option, apply_token_file, collect
 from .graph import (
+    Graph,
+    GraphChapter,
+    InferredEntries,
+    Policy,
+    Transitions,
     alternative_transitions,
     chapter_policy_overrides,
     chapter_positions,
@@ -43,16 +50,58 @@ from .graph import (
 )
 from .layout import data_json, report_directory
 from .ledger import events, starting_position_reference
-from .model import empirical, prepare
+from .model import Evidence, Model, Sampled, empirical, prepare
 from .render import update_report_outputs
-from .schema import Chapter, ChapterScore
+from .schema import (
+    Alternative,
+    Chapter,
+    ChapterScore,
+    JsonObject,
+    Position,
+    ScoreSummary,
+    StoppingEvent,
+)
 from .status import Status
 from .transitions import chapter_transitions, hitting_bounds
 from .uncertainty import METHOD as UNCERTAINTY_METHOD
 from .uncertainty import Posterior
 
 
-def entry_positions(value, graph):
+# One policy profile; evaluate_profiles adds the evaluated fields.
+class Profile(TypedDict):
+    overrides: dict[Position, str]
+    transitions: Transitions
+    chapters: list[str]
+    order: NotRequired[list[Position]]
+    model: NotRequired[Model]
+    raw: NotRequired[Sampled]
+    values: NotRequired[dict[Position, np.ndarray]]
+    depth: NotRequired[dict[Position, tuple[float, float]]]
+    reachable: NotRequired[set[Position]]
+
+
+class Inspection(TypedDict):
+    chapters: list[GraphChapter]
+    nodes: int
+    conflicts: list[JsonObject]
+    entries: dict[str, InferredEntries]
+
+
+class Sensitivity(TypedDict):
+    prior: list[float]
+    chapters: dict[str, ChapterScore]
+    overall: NotRequired[ScoreSummary]
+
+
+class Scores(TypedDict):
+    overall: ScoreSummary
+    chapters: list[Chapter]
+    chapter_transitions: list[JsonObject]
+    events: list[StoppingEvent]
+    prior_sensitivity: list[Sensitivity]
+
+
+def entry_positions(value: Iterable[str | JsonObject], graph: Graph) -> list[Position]:
     positions = []
     for item in value:
         if isinstance(item, str):
@@ -75,34 +124,34 @@ def entry_positions(value, graph):
 class Plan:
     """What to score: policy profiles, root weights, each chapter's entry positions and the positions it prepares."""
 
-    profiles: list
-    root_weights: dict
+    profiles: list[Profile]
+    root_weights: dict[Position, float]
     absolute_reach: bool
-    entries: dict
-    entry_status: dict
-    prepared: dict
+    entries: dict[str, list[Position]]
+    entry_status: dict[str, str]
+    prepared: dict[str, list[Position]]
     # Every chapter alternative selectable: what evidence planning must cover before alternatives are scored.
-    candidates: dict
-    reachable: list
+    candidates: Transitions
+    reachable: list[Position]
 
     @property
-    def roots(self):
+    def roots(self) -> list[Position]:
         """The repertoire roots and every chapter entry: where evaluation starts."""
         return list(dict.fromkeys([*self.root_weights, *(p for positions in self.entries.values() for p in positions)]))
 
     @property
-    def overall(self):
+    def overall(self) -> Profile:
         return self.profiles[0]
 
 
 CONFIG = "configs/{}.json"
 
 
-def load_config(path):
+def load_config(path: str | Path | None) -> JsonObject:
     return json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
 
 
-def config_path(color, path=None):
+def config_path(color: str, path: str | None = None) -> str:
     """An explicit configuration, else configs/<color>.json, created without overrides when missing."""
     if path:
         return path
@@ -114,7 +163,7 @@ def config_path(color, path=None):
     return str(default)
 
 
-def inspect_repertoire(graph, color):
+def inspect_repertoire(graph: Graph, color: bool) -> Inspection:
     return {
         "chapters": graph.chapters,
         "nodes": len(graph.nodes),
@@ -123,10 +172,10 @@ def inspect_repertoire(graph, color):
     }
 
 
-def policy_profiles(graph, color, policy):
+def policy_profiles(graph: Graph, color: bool, policy: Policy) -> list[Profile]:
     """The overall policy, then one profile per distinct set of chapter-local first choices."""
     transitions = resolve(graph, color, policy)
-    profiles = [{'overrides': {}, 'transitions': transitions, 'chapters': []}]
+    profiles: list[Profile] = [{'overrides': {}, 'transitions': transitions, 'chapters': []}]
     profile_ids = {'{}': 0}
     for c in graph.chapters:
         overrides = chapter_policy_overrides(graph, color, transitions, c['id'])
@@ -144,7 +193,7 @@ def policy_profiles(graph, color, policy):
     return profiles
 
 
-def root_weighting(graph, config):
+def root_weighting(graph: Graph, config: JsonObject) -> tuple[dict[Position, float], bool]:
     """Starting weights for the overall score, and whether its reach is absolute."""
     absolute_reach = "root_weights" in config or key(chess.Board()) in graph.roots
     if "root_weights" in config:
@@ -163,7 +212,9 @@ def root_weighting(graph, config):
     return root_weights, absolute_reach
 
 
-def chapter_entries(graph, color, config, inspection):
+def chapter_entries(
+    graph: Graph, color: bool, config: JsonObject, inspection: Inspection
+) -> tuple[dict[str, list[Position]], dict[str, str], dict[str, list[Position]]]:
     """Each chapter's entry positions, how they were chosen, and the positions it prepares from them.
 
     Entries are automatic unless `entries` configures them. A chapter is reached only at its entries, by
@@ -197,7 +248,13 @@ def chapter_entries(graph, color, config, inspection):
     return entries, entry_status, prepared
 
 
-def plan_repertoire(graph, color, config, inspection, selected=None):
+def plan_repertoire(
+    graph: Graph,
+    color: bool,
+    config: JsonObject,
+    inspection: Inspection,
+    selected: Mapping[Position, str] | None = None,
+) -> Plan:
     """What to score. `selected` holds the winners of competing chapter alternatives, once they are known."""
     policy = config.get('policy', {})
     profiles = policy_profiles(graph, color, dict(policy, **(selected or {})))
@@ -219,7 +276,7 @@ def plan_repertoire(graph, color, config, inspection, selected=None):
     )
 
 
-def required_positions(plan, color):
+def required_positions(plan: Plan, color: bool) -> list[Position]:
     """Every table the scores need: opponent turns, unanswered own turns, chapter entries and the start."""
     required = [
         k
@@ -237,7 +294,7 @@ def required_positions(plan, color):
     return list(dict.fromkeys([STARTING_POSITION, *required, *baseline_positions]))
 
 
-def parent_positions(plan, color):
+def parent_positions(plan: Plan, color: bool) -> list[Position]:
     """Own-move parents: the tables the vulnerabilities stage compares each selected move against."""
     parents = [
         k
@@ -251,7 +308,7 @@ def parent_positions(plan, color):
     return list(dict.fromkeys(parents))
 
 
-def evaluate_profiles(graph, color, plan, evidence, sparse_threshold):
+def evaluate_profiles(graph: Graph, color: bool, plan: Plan, evidence: Evidence, sparse_threshold: int) -> None:
     for profile in plan.profiles:
         profile['model'] = prepare(graph, profile['transitions'], profile['order'], color, evidence)
         profile['raw'] = empirical(profile['model'], color)
@@ -260,9 +317,10 @@ def evaluate_profiles(graph, color, plan, evidence, sparse_threshold):
         profile['reachable'] = set(topology(profile['transitions'], list(plan.root_weights)))
 
 
-def conditional(plan, profile, c, posterior) -> ChapterScore:
+def conditional(plan: Plan, profile: Profile, c: GraphChapter, posterior: Posterior) -> ChapterScore:
     """A chapter's score conditional on first entry, under its comparison policy."""
     positions = plan.entries[c['id']]
+    summary: ChapterScore
     if not positions:
         summary = {'status': Status.ENTRY_CONFIGURATION_REQUIRED}
     elif (
@@ -270,10 +328,9 @@ def conditional(plan, profile, c, posterior) -> ChapterScore:
         and c['root'] not in profile['reachable']
         and len(positions) == 1
     ):
-        summary = summarize(profile['values'][positions[0]], posterior.mixture({positions[0]: 1.0}))
-        summary.update(
-            entry_probability=None, conditional_basis='disconnected custom-FEN chapter; no absolute root weight'
-        )
+        summary = cast(ChapterScore, summarize(profile['values'][positions[0]], posterior.mixture({positions[0]: 1.0})))
+        summary['entry_probability'] = None
+        summary['conditional_basis'] = 'disconnected custom-FEN chapter; no absolute root weight'
     else:
         summary = chapter_score(
             profile['model'],
@@ -291,7 +348,16 @@ def conditional(plan, profile, c, posterior) -> ChapterScore:
     return summary
 
 
-def chapter_result(graph, color, plan, profile, c, posterior, evidence, provenance) -> Chapter:
+def chapter_result(
+    graph: Graph,
+    color: bool,
+    plan: Plan,
+    profile: Profile,
+    c: GraphChapter,
+    posterior: Posterior,
+    evidence: Evidence,
+    provenance: Mapping[Position, dict[str, str]],
+) -> Chapter:
     overall = plan.overall
     positions = plan.entries[c['id']]
     summary = conditional(plan, profile, c, posterior)
@@ -322,11 +388,13 @@ def chapter_result(graph, color, plan, profile, c, posterior, evidence, provenan
     }
 
 
-def prior_sensitivity(graph, color, plan, raw_root, sparse_threshold):
+def prior_sensitivity(
+    graph: Graph, color: bool, plan: Plan, raw_root: np.ndarray, sparse_threshold: int
+) -> list[Sensitivity]:
     """Overall and chapter posteriors under symmetric weak and stronger priors."""
-    sensitivity = []
+    sensitivity: list[Sensitivity] = []
     for prior in ([0.1, 0.1, 0.1], [2.0, 2.0, 2.0]):
-        item = {'prior': prior, 'chapters': {}}
+        item: Sensitivity = {'prior': prior, 'chapters': {}}
         for index, profile in enumerate(plan.profiles):
             alternative = Posterior(profile['model'], profile['order'], color, prior, sparse_threshold)
             if index == 0:
@@ -338,12 +406,20 @@ def prior_sensitivity(graph, color, plan, raw_root, sparse_threshold):
     return sensitivity
 
 
-def score_repertoire(graph, color, plan, evidence, provenance, prior, sparse_threshold):
+def score_repertoire(
+    graph: Graph,
+    color: bool,
+    plan: Plan,
+    evidence: Evidence,
+    provenance: Mapping[Position, dict[str, str]],
+    prior: list[float],
+    sparse_threshold: int,
+) -> Scores:
     """Overall and chapter scores, the stopping-event ledger, transitions and prior sensitivity."""
     evaluate_profiles(graph, color, plan, evidence, sparse_threshold)
     overall, root_weights = plan.overall, plan.root_weights
     model, order, raw_sample = overall['model'], overall['order'], overall['raw']
-    raw_root = sum(w * overall['values'][k] for k, w in root_weights.items())
+    raw_root = cast(np.ndarray, sum(w * overall['values'][k] for k, w in root_weights.items()))
     chapter_results = {}
     for index, profile in enumerate(plan.profiles):
         posterior = Posterior(profile['model'], profile['order'], color, prior, sparse_threshold)
@@ -364,7 +440,7 @@ def score_repertoire(graph, color, plan, evidence, provenance, prior, sparse_thr
                     graph, color, plan, profile, c, posterior, evidence, provenance
                 )
     chapters = [chapter_results[c['id']] for c in graph.chapters]
-    transition_rows = []
+    transition_rows: list[JsonObject] = []
     for profile in plan.profiles:
         rows = chapter_transitions(profile['model'], profile['order'], profile['raw'], chapters, plan.entries)
         transition_rows.extend(
@@ -383,11 +459,11 @@ def score_repertoire(graph, color, plan, evidence, provenance, prior, sparse_thr
     )
 
 
-def alternative_rows(graph, color, plan, selection):
+def alternative_rows(graph: Graph, color: bool, plan: Plan, selection: Mapping[Position, dict]) -> list[Alternative]:
     """Each board where chapters compete: every alternative's score there, its reach and the winner."""
     overall = plan.overall
     reach = reaches(overall['model'], overall['order'], overall['raw'], plan.root_weights)
-    rows = []
+    rows: list[Alternative] = []
     for k, choice in selection.items():
         node = graph.nodes[k]
         rows.append(
@@ -413,7 +489,7 @@ def alternative_rows(graph, color, plan, selection):
     return sorted(rows, key=lambda r: (-(r['reach'] or 0.0), len(r['path']), r['path']))
 
 
-def analyze(args):
+def analyze(args: argparse.Namespace) -> JsonObject | None:
     config = load_config(args.config)
     color = args.color == "white"
     graph = parse(args.pgn, config.get("exclude", []))
@@ -430,7 +506,7 @@ def analyze(args):
             found = inspection['entries'][c['id']]
             paths = '; '.join(' '.join(path) or 'start' for path in sorted(found['paths'])) or 'none (fallback applies)'
             print(f"{c['id']} {c['name']}: {paths}")
-        return
+        return None
     plan = plan_repertoire(graph, color, config, inspection)
     explorer = Explorer(args.cache, dict(DEFAULT_FILTERS, **config.get("filters", {})), args.offline, args.refresh)
     try:
@@ -457,7 +533,7 @@ def analyze(args):
         )
     scores = score_repertoire(graph, color, plan, evidence, explorer.provenance, args.prior, args.sparse_threshold)
     interval = scores['overall']['posterior']['credible_interval_95']
-    report = {
+    report: JsonObject = {
         "color": args.color,
         "overall": scores['overall'],
         "chapters": scores['chapters'],
@@ -523,7 +599,7 @@ def analyze(args):
     return {"overall": report["overall"], "report": str((report_directory(output) / 'report.md').resolve())}
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Expected scores under a forced repertoire policy")
     parser.add_argument("command", choices=["inspect", "run"])
     parser.add_argument("pgn")

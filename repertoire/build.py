@@ -5,9 +5,11 @@ import argparse
 import hashlib
 import json
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 from . import (
     character,
@@ -28,6 +30,7 @@ from .explorer import add_token_option, apply_token_file, observe_cache
 from .layout import data_json, report_directory
 from .render import defer_report_outputs
 from .report.generate import generate, page_names
+from .schema import JsonObject
 
 # Comparisons never affect the repertoire's own analyses; only their own step depends on this code.
 COMPARISON_CODE = ('compare.py', 'alternatives.py')
@@ -50,16 +53,16 @@ MODULES = dict(
 # checks the same inputs and roughly a thousand cache files for every stage. Builder clears this at
 # the start of a run and forgets each stage's outputs after rewriting them, so a file replaced
 # within the clock's resolution is never mistaken for its previous version.
-_digests = {}
+_digests: dict[tuple[str, int, int], str] = {}
 
 
-def forget(paths):
+def forget(paths: Iterable[str | Path]) -> None:
     names = {str(Path(p).resolve()) for p in paths}
     for identity in [i for i in _digests if i[0] in names]:
         del _digests[identity]
 
 
-def digest(path):
+def digest(path: str | Path) -> str | None:
     path = Path(path)
     try:
         stat = path.stat()
@@ -73,18 +76,18 @@ def digest(path):
     return _digests[identity]
 
 
-def file_inputs(paths):
+def file_inputs(paths: Iterable[str | Path]) -> dict[str, str | None]:
     return {str(Path(path).resolve()): digest(path) for path in paths}
 
 
-def write_json(path, value):
+def write_json(path: str | Path, value: Any) -> None:
     path = Path(path)
     temporary = path.with_suffix(path.suffix + '.tmp')
     temporary.write_text(data_json(value), encoding='utf-8')
     temporary.replace(path)
 
 
-def code_inputs(presentation=False):
+def code_inputs(presentation: bool = False) -> dict[str, str | None]:
     """Source files whose changes invalidate saved analyses, or with `presentation` also the rendered pages."""
     package = Path(__file__).parent
     rendering = [package / 'render.py', *sorted((package / 'report').glob('*.py'))]
@@ -103,20 +106,26 @@ def code_inputs(presentation=False):
 class Builder:
     """Checkpoint completed stages; failed stages never acquire a valid record."""
 
-    def __init__(self, state_path, force=False):
+    def __init__(self, state_path: str | Path, force: bool = False) -> None:
         self.path, self.force = Path(state_path), force
         try:
-            self.state = json.loads(self.path.read_text(encoding='utf-8'))
+            self.state: JsonObject = json.loads(self.path.read_text(encoding='utf-8'))
             if self.state.get('version') != 1 or not isinstance(self.state.get('steps'), dict):
                 self.state = {}
         except (FileNotFoundError, ValueError):
             self.state = {}
         self.state.setdefault('version', 1)
         self.state.setdefault('steps', {})
-        self.timings = []
+        self.timings: list[JsonObject] = []
         _digests.clear()
 
-    def step(self, name, inputs, outputs, action):
+    def step(
+        self,
+        name: str,
+        inputs: Callable[[], Mapping[str, Any]],
+        outputs: Sequence[str | Path],
+        action: Callable[[], object],
+    ) -> None:
         started = time.perf_counter()
         current = inputs()
         old = self.state['steps'].get(name, {})
@@ -152,17 +161,17 @@ class Builder:
 
 
 def build(
-    white_pgn,
-    black_pgn,
+    white_pgn: str | Path,
+    black_pgn: str | Path,
     *,
-    white_config=None,
-    black_config=None,
-    directory='reports/data',
-    cache=DEFAULT_CACHE,
-    offline=False,
-    force=False,
-    comparisons=None,
-):
+    white_config: str | Path | None = None,
+    black_config: str | Path | None = None,
+    directory: str | Path = 'reports/data',
+    cache: str | Path = DEFAULT_CACHE,
+    offline: bool = False,
+    force: bool = False,
+    comparisons: str | Path | None = None,
+) -> JsonObject:
     started = time.perf_counter()
     pgns, configs = dict(white=white_pgn, black=black_pgn), dict(white=white_config, black=black_config)
     # Saved comparisons to rerun; the command line passes comparisons.json.
@@ -202,29 +211,35 @@ def build(
             )
             runner.step(
                 f'{color}.score',
-                lambda args=args: dict(
-                    code=analysis_code,
-                    files=file_inputs([args.pgn] + ([args.config] if args.config else [])),
-                    color=args.color,
-                    cache=cache,
-                    prior=args.prior,
-                    sparse_threshold=args.sparse_threshold,
-                    tolerance=args.tolerance,
+                cast(
+                    Callable[[], JsonObject],
+                    lambda args=args: dict(
+                        code=analysis_code,
+                        files=file_inputs([args.pgn] + ([args.config] if args.config else [])),
+                        color=args.color,
+                        cache=cache,
+                        prior=args.prior,
+                        sparse_threshold=args.sparse_threshold,
+                        tolerance=args.tolerance,
+                    ),
                 ),
                 [path, path.with_suffix('.inspection.json')],
-                lambda args=args: scoring.analyze(args),
+                cast(Callable[[], object], lambda args=args: scoring.analyze(args)),
             )
         for family in FAMILIES:
             for path in paths:
                 required = [path] + [path.with_suffix(f'.{name}.json') for name in DEPENDENCIES.get(family, ())]
 
-                def analyze(path=path, family=family):
+                def analyze(path: Path = path, family: str = family) -> None:
                     value = MODULES[family].analyze(path, cache)
                     write_json(path.with_suffix(f'.{family}.json'), value)
 
                 runner.step(
                     f'{path.stem}.{family}',
-                    lambda required=required: dict(code=analysis_code, files=file_inputs(required), cache=cache),
+                    cast(
+                        Callable[[], JsonObject],
+                        lambda required=required: dict(code=analysis_code, files=file_inputs(required), cache=cache),
+                    ),
                     [path.with_suffix(f'.{family}.json')],
                     analyze,
                 )
@@ -258,7 +273,7 @@ def build(
     )
     registry = directory / '.report-index.json'
 
-    def render():
+    def render() -> None:
         generate(paths, require_complete=True)
         write_json(registry, {path.stem: path.name for path in paths})
 
@@ -283,13 +298,21 @@ def build(
     return result
 
 
-def compare_step(runner, entry, directory, folder, cache, offline, code):
+def compare_step(
+    runner: Builder,
+    entry: JsonObject,
+    directory: str | Path,
+    folder: str | Path,
+    cache: str,
+    offline: bool,
+    code: Mapping[str, str | None],
+) -> list[Path]:
     """Rerun one saved comparison when its repertoire score or candidate changes. A failure is reported and
     skipped, so it never blocks the main reports; the previous comparison page is kept."""
     name, score = entry['name'], Path(directory) / f"{entry['color']}.json"
     data, page = Path(directory) / 'comparisons' / f'{name}.json', Path(folder) / 'comparisons' / f'{name}.md'
 
-    def inputs():
+    def inputs() -> JsonObject:
         files = [score, *compare.source_files(entry['sources'], name)]
         return dict(code=code, entry=entry, files=file_inputs(files), cache=cache)
 
@@ -315,7 +338,7 @@ def compare_step(runner, entry, directory, folder, cache, offline, code):
     return [data]
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('white_pgn', nargs='?', help='Exported White PGN; omit both to use the Lichess studies')
     parser.add_argument('black_pgn', nargs='?')

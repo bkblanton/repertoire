@@ -2,20 +2,23 @@
 
 import os
 import re
+from collections.abc import Mapping, Sequence
 from functools import partial
 from pathlib import Path
 
 from ..attribution import write_text
 from ..layout import report_directory
-from .bundle import FAMILIES, load, load_correlations, load_rating_correlations
+from ..schema import JsonObject
+from .bundle import FAMILIES, Bundle, load, load_correlations, load_rating_correlations
 from .pages import full_report, summary_report
 
 CHAPTER_PAGE = re.compile(r'[WB]\d+\.md')
 
 
-def resolve_links(pages, aliases):
+def resolve_links(pages: Mapping[Path, str], aliases: Mapping[str, Path]) -> dict[Path, str]:
     """Point in-page anchors and @page placeholders at whichever generated file holds them."""
-    owners, homes = {}, {}
+    owners: dict[str, Path] = {}
+    homes: dict[Path, str] = {}
     for path, text in pages.items():
         found = re.findall(r'<a id="([^"]+)"></a>', text)
         for anchor in found:
@@ -23,10 +26,10 @@ def resolve_links(pages, aliases):
         if path.parent.name == 'chapters' and found:
             homes[path] = found[0]
 
-    def relative(target, source):
+    def relative(target: Path, source: Path) -> str:
         return Path(os.path.relpath(target, source.parent)).as_posix()
 
-    def anchor_link(path, match):
+    def anchor_link(path: Path, match: re.Match[str]) -> str:
         anchor = match[1]
         target = owners.get(anchor)
         if target is None or target == path:
@@ -35,11 +38,11 @@ def resolve_links(pages, aliases):
             f']({relative(target, path)})' if homes.get(target) == anchor else f']({relative(target, path)}#{anchor})'
         )
 
-    def page_link(path, match):
+    def page_link(path: Path, match: re.Match[str]) -> str:
         target = aliases.get(match[1])
         return match[0] if target is None else f']({relative(target, path)}{match[2] or ""})'
 
-    resolved = {}
+    resolved: dict[Path, str] = {}
     for path, text in pages.items():
         text = re.sub(r'\]\(#([^)\s]+)\)', partial(anchor_link, path), text)
         resolved[path] = re.sub(r'\]\(@([\w/.-]+)(#[^)\s]*)?\)', partial(page_link, path), text)
@@ -47,16 +50,16 @@ def resolve_links(pages, aliases):
 
 
 def generate(
-    paths,
-    full_path=None,
-    summary_path=None,
+    paths: Sequence[str | Path],
+    full_path: str | Path | None = None,
+    summary_path: str | Path | None = None,
     *,
-    strict=True,
-    require_complete=False,
-    top=10,
-    chapter_top=5,
-    position_top=20,
-):
+    strict: bool = True,
+    require_complete: bool = False,
+    top: int = 10,
+    chapter_top: int = 5,
+    position_top: int = 20,
+) -> list[Bundle]:
     if not paths or min(top, chapter_top, position_top) < 1:
         raise ValueError('Supply reports and positive table lengths')
     bundles = load(paths, strict, require_complete)
@@ -103,7 +106,7 @@ def generate(
     return bundles
 
 
-def page_names(report):
+def page_names(report: JsonObject) -> list[str]:
     """Relative chapter and opening page paths that a render of this score result writes."""
     color = report['color']
     return [f'chapters/{color[0].upper()}{i}.md' for i in range(1, len(report['chapters']) + 1)] + [

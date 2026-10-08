@@ -4,25 +4,27 @@ import argparse
 import hashlib
 import json
 from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
 
 from .report.format import score_cell, score_points
+from .schema import JsonObject, Position
 from .stats import connected_groups, correlation, rank
 from .status import Status
 
 
-def finite(value):
+def finite(value: object) -> bool | np.bool_:
     return isinstance(value, (int, float)) and np.isfinite(value)
 
 
-def digest(path):
+def digest(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def point(moment, centered):
+def point(moment: np.ndarray, centered: bool) -> tuple[np.ndarray, np.ndarray]:
     """Correlation and score-per-100-rating slope from sufficient moments."""
     a = np.asarray(moment, dtype=float)
     if centered:
@@ -36,7 +38,7 @@ def point(moment, centered):
     return np.clip(r, -1, 1), slope
 
 
-def estimate(moments, centered):
+def estimate(moments: Sequence[Sequence[float] | np.ndarray], centered: bool) -> JsonObject:
     """Pooled correlation and slope from per-group sufficient moments."""
     a = np.asarray(moments, dtype=float)
     if not len(a):
@@ -50,11 +52,14 @@ def estimate(moments, centered):
     )
 
 
-def within_parent(rows):
+def within_parent(rows: Iterable[JsonObject]) -> JsonObject:
     """Demean both variables within each canonical parent board."""
-    parents = defaultdict(list)
+    parents: defaultdict[Position, list[JsonObject]] = defaultdict(list)
     for row in rows:
         parents[row['position']].append(row)
+    moments: list[list[float]]
+    eligible: list[JsonObject]
+    details: list[JsonObject]
     moments, eligible, details = [], [], []
     for position, replies in sorted(parents.items()):
         if len(replies) < 2:
@@ -81,8 +86,8 @@ def within_parent(rows):
     return result
 
 
-def chapter_association(rows, field, weighted):
-    groups = defaultdict(list)
+def chapter_association(rows: Sequence[JsonObject], field: str, weighted: bool) -> JsonObject:
+    groups: defaultdict[str, list[np.ndarray]] = defaultdict(list)
     origin_x = np.mean([r['rating'] for r in rows]) if rows else 0
     origin_y = np.mean([r[field] for r in rows]) if rows else 0
     for row in rows:
@@ -104,7 +109,7 @@ def chapter_association(rows, field, weighted):
     return result
 
 
-def load_color(path):
+def load_color(path: str | Path) -> JsonObject:
     path = Path(path)
     paths = dict(
         score=path, ratings=path.with_suffix('.ratings.json'), vulnerabilities=path.with_suffix('.vulnerabilities.json')
@@ -130,8 +135,10 @@ def load_color(path):
     if ratings['manifest']['supporting_sha256']['vulnerabilities'] != hashes['vulnerabilities']:
         raise ValueError('Ratings reference a different vulnerability snapshot')
     scopes = {s['id']: s for s in ratings['scopes']}
+    chapter_rows: list[JsonObject]
+    position_sets: list[set[Position]]
     chapter_rows, position_sets = [], []
-    excluded_chapters = []
+    excluded_chapters: list[str] = []
     for chapter in score['chapters']:
         context = scopes.get(chapter['id'], {}).get('score_evidence', {})
         values = dict(
@@ -160,8 +167,10 @@ def load_color(path):
         for i in group:
             chapter_rows[i]['cluster'] = f"{score['color']}-{number}"
     threshold = m['sparse_threshold']
+    replies: list[JsonObject]
+    excluded: defaultdict[str, int]
     replies, excluded = [], defaultdict(int)
-    seen = set()
+    seen: set[str] = set()
     rating_rows = scopes['overall']['moves']
     for row in vulnerabilities['overall']['all_signed_rows']:
         if row['kind'] != 'opponent':
@@ -208,12 +217,12 @@ def load_color(path):
     )
 
 
-def cell(result, key='correlation', slope=False):
+def cell(result: JsonObject, key: str = 'correlation', slope: bool = False) -> str:
     value = result.get(key)
     return 'unavailable' if value is None else f"{value:+.3f}{'%' if slope else ''}"
 
 
-def markdown(result):
+def markdown(result: JsonObject) -> str:
     lines = [
         '# Opponent rating and repertoire score',
         '',
@@ -321,8 +330,8 @@ def markdown(result):
     return '\n'.join(lines) + '\n'
 
 
-def analyze(paths):
-    result = dict(created_at=datetime.now(UTC).isoformat(), network_requests=0, results={})
+def analyze(paths: Iterable[str | Path]) -> JsonObject:
+    result: JsonObject = dict(created_at=datetime.now(UTC).isoformat(), network_requests=0, results={})
     for path in paths:
         data = load_color(path)
         if data['color'] in result['results']:
@@ -355,7 +364,7 @@ def analyze(paths):
     return result
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+')
     parser.add_argument('--output', default='reports/data/opponent-rating-score-correlation.json')

@@ -2,13 +2,14 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 
-def report_directory(result_path):
+def report_directory(result_path: str | Path) -> Path:
     directory = Path(result_path).parent
     return directory.parent if directory.name == 'data' else directory
 
 
-def data_json(value):
+def data_json(value: Any) -> str:
     """Saved analysis JSON: compact, since the files are large and read by programs rather than people."""
     return json.dumps(value, separators=(',', ':'), allow_nan=False)

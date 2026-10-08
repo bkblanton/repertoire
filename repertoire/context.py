@@ -7,40 +7,49 @@ repertoire graph, and writes a companion JSON whose manifest ties it to that exa
 import argparse
 import hashlib
 import json
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 from . import SCHEMA_VERSION
 from .explorer import CacheMiss, Explorer
-from .graph import parse
+from .graph import Graph, parse
 from .layout import data_json
-from .schema import CompanionManifest
+from .model import Evidence
+from .schema import CompanionManifest, JsonObject, Position
 
 DEFAULT_CACHE = '.cache/explorer'
 
 
-def selected_policy(manifest):
+def selected_policy(manifest: JsonObject) -> dict[Position, str | Mapping[str, float]]:
     """The overall policy a score used: explicit overrides plus the winners of competing chapter alternatives."""
     return dict(manifest['configuration'].get('policy', {}), **manifest.get('selected_alternatives', {}))
 
 
-def sha256(data):
+def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def file_sha256(path):
+def file_sha256(path: str | Path) -> str:
     return sha256(Path(path).read_bytes())
 
 
 class AnalysisContext:
     """A saved score result, the companion analyses it needs, and the cached evidence behind it."""
 
-    def __init__(self, path, companions=()):
+    companions: dict[str, JsonObject]
+    companion_hashes: dict[str, str]
+    evidence: Evidence
+    missing: list[Position]
+    provenance: dict[Position, dict[str, str]]
+
+    def __init__(self, path: str | Path, companions: Iterable[str] = ()) -> None:
         self.path = Path(path)
         raw = self.path.read_bytes()
         self.report_sha256 = sha256(raw)
-        self.saved = json.loads(raw)
-        self.manifest = self.saved['manifest']
+        self.saved: JsonObject = json.loads(raw)
+        self.manifest: JsonObject = self.saved['manifest']
         self.source = Path(self.manifest['input_path'])
         self.color = self.saved['color'] == 'white'
         self.require_source()
@@ -52,27 +61,27 @@ class AnalysisContext:
                 raise ValueError(f'{family} belongs to a different score snapshot; regenerate it first')
             self.companions[family], self.companion_hashes[family] = value, sha256(data)
         self.evidence, self.missing, self.provenance = {}, [], {}
-        self._graph = None
+        self._graph: Graph | None = None
 
     @property
-    def policy(self):
+    def policy(self) -> dict[Position, str | Mapping[str, float]]:
         return selected_policy(self.manifest)
 
     @property
-    def roots(self):
+    def roots(self) -> dict[Position, float]:
         return self.manifest['root_weights']
 
     @property
-    def sparse_threshold(self):
+    def sparse_threshold(self) -> int:
         return self.manifest['sparse_threshold']
 
     @property
-    def graph(self):
+    def graph(self) -> Graph:
         if self._graph is None:
             self._graph = parse(self.source, self.manifest['configuration'].get('exclude', []))
         return self._graph
 
-    def matches(self, companion):
+    def matches(self, companion: JsonObject) -> bool:
         """Whether a companion analysis was made from this exact score result."""
         m = companion.get('manifest', {})
         return (
@@ -82,11 +91,13 @@ class AnalysisContext:
             and m.get('filters') == self.manifest['filters']
         )
 
-    def require_source(self, during=None):
+    def require_source(self, during: str | None = None) -> None:
         if file_sha256(self.source) != self.manifest['input_sha256']:
             raise ValueError(f'PGN changed during {during}' if during else 'PGN changed since scoring; rescore first')
 
-    def read_evidence(self, cache, positions=None, required=False):
+    def read_evidence(
+        self, cache: str | Path, positions: Iterable[Position] | None = None, required: bool = False
+    ) -> Evidence:
         """Read cached tables offline; tables the score used must be unchanged.
 
         Misses are recorded in `missing`, or raise CacheMiss when `required`.
@@ -110,9 +121,9 @@ class AnalysisContext:
         self.provenance.update(explorer.provenance)
         return self.evidence
 
-    def scopes(self):
+    def scopes(self) -> list[JsonObject]:
         """The overall repertoire and every chapter, each with its first-entry starting weights."""
-        result = [
+        result: list[JsonObject] = [
             dict(
                 id='overall',
                 name='Overall repertoire',
@@ -142,7 +153,7 @@ class AnalysisContext:
             )
         return result
 
-    def companion_manifest(self, **fields) -> CompanionManifest:
+    def companion_manifest(self, **fields: Any) -> CompanionManifest:
         """Provenance shared by every companion: the score snapshot, its source and the cache reads."""
         manifest = dict(
             created_at=datetime.now(UTC).isoformat(),
@@ -158,14 +169,20 @@ class AnalysisContext:
             uncached_positions=self.missing,
         )
         manifest.update(fields)
-        return manifest
+        return cast(CompanionManifest, manifest)
 
 
-def write_companion(path, family, value):
+def write_companion(path: str | Path, family: str, value: JsonObject) -> None:
     Path(path).with_suffix(f'.{family}.json').write_text(data_json(value), encoding='utf-8')
 
 
-def stage_main(family, analyze, description, configure=None, options=None):
+def stage_main(
+    family: str,
+    analyze: Callable[..., JsonObject],
+    description: str | None,
+    configure: Callable[[argparse.ArgumentParser], object] | None = None,
+    options: Callable[[argparse.ArgumentParser, argparse.Namespace], Mapping[str, Any]] | None = None,
+) -> None:
     """Command-line entry point shared by the cache-only stages.
 
     `configure(parser)` adds stage options; `options(parser, args)` validates them and returns extra
