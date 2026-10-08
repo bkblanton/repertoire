@@ -65,16 +65,22 @@ def no_network(monkeypatch):
     monkeypatch.setattr(httpx.Client, 'request', forbidden)
 
 
-def scored(tmp_path, candidate_text):
-    """Score the repertoire offline, with tables cached for every repertoire and candidate position."""
+def scored(tmp_path, candidate_text, empty=()):
+    """Score the repertoire offline, with tables cached for every repertoire and candidate position.
+
+    Positions in `empty` get a table with no games, which leaves the line through them unresolved.
+    """
     (tmp_path / 'repertoire.pgn').write_text(REPERTOIRE, encoding='utf-8')
     (tmp_path / 'candidate.pgn').write_text(candidate_text, encoding='utf-8')
     union = parse_games([*read_games(tmp_path / 'candidate.pgn'), *read_games(tmp_path / 'repertoire.pgn')])
     cache = tmp_path / 'cache'
     cache.mkdir()
     leaves = {position(k): v for k, v in LEAVES.items()}
+    empty = {position(k) for k in empty}
     for k, node in union.nodes.items():
-        if k in leaves:
+        if k in empty:
+            cache_row(cache, k, data(0, 0, 0))
+        elif k in leaves:
             cache_row(cache, k, data(leaves[k], 0, 100 - leaves[k]))
         else:
             moves = list(node.edges)
@@ -100,8 +106,8 @@ def scored(tmp_path, candidate_text):
     return folder / 'white.json', cache
 
 
-def run(tmp_path, monkeypatch, candidate_text, **options):
-    path, cache = scored(tmp_path, candidate_text)
+def run(tmp_path, monkeypatch, candidate_text, empty=(), **options):
+    path, cache = scored(tmp_path, candidate_text, empty)
     no_network(monkeypatch)
     done = compare.run(
         [str(tmp_path / 'candidate.pgn')], color='white', score=path, cache=str(cache), offline=True, **options
@@ -164,6 +170,16 @@ def test_chapters_sharing_a_move_compete_further_down(tmp_path, monkeypatch):
     assert outer['options'][1]['improving'] and inner['options'][1]['improving']
     assert result['scenarios']['improving']['entry_score'] == pytest.approx(0.8)
     assert result['groups'][0]['improving']['combinations'] == 3
+
+
+def test_entry_change_is_unresolved_when_the_current_entry_score_is(tmp_path, monkeypatch):
+    # No games after 3.Nd2 leave the current score at 1.e4 unresolved; 3.Bd3 resolves it.
+    result, page = run(tmp_path, monkeypatch, SCHLECHTER, empty=['e4 e6 d4 d5 Nd2'])
+    scenarios = result['scenarios']
+    assert scenarios['current']['entry_score'] is None
+    assert scenarios['improving']['entry_score'] is not None
+    assert scenarios['improving']['entry_change'] is None
+    assert 'unresolved' in page.read_text(encoding='utf-8')
 
 
 def test_decisions_follow_each_chapter_against_the_repertoire(tmp_path):

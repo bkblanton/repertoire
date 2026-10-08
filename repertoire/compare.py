@@ -622,6 +622,8 @@ def analyze(
             additive=math.isclose(total, sum(s['gain'] for s in searches), abs_tol=1e-9),
         )
 
+    current_entry = comparison.value(current, comparison.entry)
+
     def summary(scenario: Scenario) -> JsonObject:
         root = comparison.root(scenario)
         entry = comparison.value(scenario, comparison.entry)
@@ -630,7 +632,7 @@ def analyze(
             unresolved_mass=float(sum(w * scenario.values[k][UNKNOWN] for k, w in comparison.roots.items())),
             entry_score=entry,
             change=root - comparison.root(current),
-            entry_change=None if entry is None else entry - comparison.value(current, comparison.entry),  # type: ignore[operator]
+            entry_change=None if entry is None or current_entry is None else entry - current_entry,
             interval=comparison.interval(scenario, comparison.roots),
             entry_interval=comparison.interval(scenario, {comparison.entry: 1.0}),
             entry_metrics=comparison.metrics(scenario, comparison.entry),
