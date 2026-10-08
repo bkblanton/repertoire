@@ -644,6 +644,34 @@ def correlations_section(result: JsonObject | None, reason: str | None) -> list[
     return text
 
 
+MODERATE_CORRELATION = 0.3
+
+
+def preparation_gain_sentence(result: JsonObject | None, color: str) -> str | None:
+    """The summary's one-line reading of the preparation correlation, only when the data supports it.
+
+    Both reach-weighted correlations must be at least moderate, the slope positive, and the association must
+    survive dropping decisions with no remaining preparation, so the claim is not carried by the zero-depth cluster.
+    """
+    r = ((result or {}).get('results') or {}).get(color)
+    if not r:
+        return None
+    pearson = r.get('reach_weighted_pearson')
+    spearman = r.get('reach_weighted_spearman')
+    slope = r.get('slope_pp_per_move')
+    positive_depth = (r.get('sensitivity_without_zero_depth') or {}).get('reach_weighted_pearson')
+    if pearson is None or spearman is None or slope is None or positive_depth is None:
+        return None
+    if min(pearson, spearman) < MODERATE_CORRELATION or slope <= 0 or positive_depth <= 0:
+        return None
+    return (
+        f'Deeper preparation goes with larger gains over the database score (linear correlation {pearson:.2f}; '
+        f'about +{percentage(slope / 100)} per additional prepared own move). This is an association across '
+        'your decisions, not a forecast of what adding a move would gain '
+        '([Future preparation gain](#preparation-correlation)).'
+    )
+
+
 def rating_correlations_section(result: JsonObject | None, reason: str | None) -> list[str]:
     from ..rating_correlations import cell as rating_cell
 

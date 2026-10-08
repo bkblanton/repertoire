@@ -77,7 +77,7 @@ def generate(
     folder = full_path.parent
     pages = {
         full_path: rendered.pop('report.md'),
-        summary_path: summary_report(bundles) + '\n',
+        summary_path: summary_report(bundles, correlations) + '\n',
         **{folder / name: content for name, content in rendered.items()},
     }
     aliases = {'report': full_path, 'summary': summary_path, **{name[:-3]: folder / name for name in rendered}}

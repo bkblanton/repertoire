@@ -42,6 +42,7 @@ from .sections import (
     overview,
     overview_notes,
     position_tree,
+    preparation_gain_sentence,
     rating_correlations_section,
     snapshot_notes,
     strengths_section,
@@ -486,7 +487,7 @@ def full_report(
     return pages
 
 
-def summary_report(bundles: Sequence[Bundle]) -> str:
+def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = None) -> str:
     """Headline, then what to work on: where preparation ends and own moves to review; the rest collapses."""
     snapshot = snapshot_notes(bundles)
     warnings = [row for row in snapshot if row.startswith('**')]
@@ -533,6 +534,9 @@ def summary_report(bundles: Sequence[Bundle]) -> str:
             f"([recurring gaps](#{color}-equivalent-gap-reach)).",
             '',
         ]
+        gain = preparation_gain_sentence(correlations, color)
+        if gain:
+            text += [gain, '']
         text += exits_section(char, refs, 5)
         text += [f'[More exit points](#{color}-exits) · [All positions and gaps](#{color}-common-positions)', '']
         own_bad = own_priorities(moves.get('rankings', {}).get('own', []))

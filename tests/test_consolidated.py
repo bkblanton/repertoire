@@ -242,6 +242,29 @@ def test_stale_correlations_rejected_and_matching_estimates_shown(complete):
     assert 'Both main analyses are reach-weighted' in full
     assert 'Prepared depth and score improvement' not in full
     data = json.loads(correlations.read_text())
+    bundle = load([path])[0]
+    white = data['results']['white']
+    supported = dict(
+        white,
+        reach_weighted_pearson=0.77,
+        reach_weighted_spearman=0.76,
+        slope_pp_per_move=1.33,
+        sensitivity_without_zero_depth=dict(white['sensitivity_without_zero_depth'], reach_weighted_pearson=0.7),
+    )
+    claim = 'Deeper preparation goes with larger gains'
+    summary = summary_report([bundle], {'results': {'white': supported}})
+    assert f'{claim} over the database score (linear correlation 0.77; about +1.3% per additional' in summary
+    assert '[Future preparation gain](#preparation-correlation)' in summary and 'rating-correlations' not in summary
+    assert summary.index(claim) < summary.index('### Where preparation ends')
+    for unsupported in (
+        dict(reach_weighted_pearson=0.2),
+        dict(reach_weighted_spearman=-0.4),
+        dict(slope_pp_per_move=0.0),
+        dict(sensitivity_without_zero_depth=dict(reach_weighted_pearson=None)),
+        dict(sensitivity_without_zero_depth=dict(reach_weighted_pearson=-0.1)),
+    ):
+        assert claim not in summary_report([bundle], {'results': {'white': dict(supported, **unsupported)}})
+    assert claim not in summary_report([bundle])
     original = dict(data['provenance']['white'])
     for key in ('report_sha256', 'vulnerabilities_sha256', 'prior', 'sparse_threshold'):
         data['provenance']['white'][key] = 'wrong'
