@@ -600,7 +600,8 @@ def correlations_section(result: JsonObject | None, reason: str | None) -> list[
         'Positive correlation means decisions with deeper future preparation '
         'tend to have larger gains over their own move baseline. '
         'The slope is the associated gain per additional expected future own '
-        'move; it does not estimate the effect of adding a move.',
+        'move. It compares different positions, so it is not a causal estimate '
+        'of what adding a move would gain.',
         '',
         '<details>',
         '<summary>Unweighted and positive-depth sensitivity checks</summary>',
@@ -636,7 +637,8 @@ def correlations_section(result: JsonObject | None, reason: str | None) -> list[
         '',
         '</details>',
         '',
-        'These describe association across this repertoire\'s decisions, not the causal gain from adding preparation.',
+        'These describe association across this repertoire\'s decisions. Deeper preparation tends to go with larger '
+        'gains, but the slope is not a forecast of the gain from adding preparation.',
         '',
     ]
     return text
