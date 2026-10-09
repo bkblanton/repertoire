@@ -83,6 +83,38 @@ def prepare(
     return {k: prepare_node(k, transitions[k], color, evidence) for k in order}
 
 
+def arrival_moves(graph: Graph, color: bool, evidence: Evidence) -> dict[Position, list[tuple[Position, str]]]:
+    """The recorded opponent moves leading to each own-turn position, as (parent, move), from cached parents."""
+    result: dict[Position, list[tuple[Position, str]]] = {}
+    for k, node in graph.nodes.items():
+        if turn(k) != color and k in evidence:
+            for move, target in node.edges.items():
+                result.setdefault(target, []).append((k, move))
+    return result
+
+
+def move_counts(data: dict, move: str) -> list[int]:
+    return next((counts(r) for r in data["moves"] if r["uci"] == move), [0, 0, 0])
+
+
+def arrival_counts(graph: Graph, color: bool, evidence: Evidence) -> dict[Position, list[int]]:
+    """Games reaching each own-turn position through a recorded opponent move: the sum of those moves' rows in
+    the cached parent tables. Tables where you are to move and have a prepared move are never fetched."""
+    result: dict[Position, list[int]] = {}
+    for k, origins in arrival_moves(graph, color, evidence).items():
+        rows = [move_counts(evidence[parent], move) for parent, move in origins]
+        result[k] = [sum(column) for column in zip(*rows)]
+    return result
+
+
+def position_counts(arrivals: dict[Position, list[int]], evidence: Evidence, k: Position) -> list[int] | None:
+    """Database games at an own-turn position with a prepared move: the opponent move rows that lead to it, or
+    its own table where nothing leads to it (the starting position)."""
+    if k in arrivals:
+        return arrivals[k]
+    return counts(evidence[k]) if k in evidence else None
+
+
 def score(count: list[int], color: bool) -> float | None:
     total = sum(count)
     return ((count[0] if color else count[2]) + 0.5 * count[1]) / total if total else None

@@ -83,7 +83,7 @@ Useful options:
 
 ## Long runs
 
-Every position in a repertoire needs its own Opening Explorer table, and the build fetches them all before it analyzes anything. Requests go out one at a time, about one per second. Lichess answers sustained use with HTTP 429, which pauses the run for a minute at a time, so a first run on a large repertoire takes hours: some 60 chapters across both colors need about 2,000 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
+Every position where the opponent is to move needs its own Opening Explorer table, as do the starting position, chapter entries and positions where your preparation ends; your own prepared moves need none. The build fetches them all before it analyzes anything. Requests go out one at a time, about one per second. Lichess answers sustained use with HTTP 429, which pauses the run for a minute at a time, so a first run on a large repertoire takes hours: some 60 chapters across both colors need about 1,300 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
 
 Check the size of a run before you start it:
 
@@ -92,7 +92,7 @@ uv run repertoire build --dry-run --token-file path/to/lichess_token.txt
 ```
 
 ```text
-white and black: 1980 Explorer tables: 412 cached, 1568 to fetch (at least 26m)
+white and black: 1270 Explorer tables: 260 cached, 1010 to fetch (at least 17m)
 ```
 
 "At least" assumes one request per second and no rate limiting, so real runs are slower. `fetch --dry-run` gives the same count for the last export without needing a token.
@@ -100,8 +100,8 @@ white and black: 1980 Explorer tables: 412 cached, 1568 to fetch (at least 26m)
 While fetching, a progress line is printed about every 15 seconds. Its estimate uses the recent rate, including rate-limit pauses, so it settles after the first few minutes:
 
 ```text
-white and black: 87/1568 fetched, ~1h 50m left
-Explorer: rate-limited (HTTP 429); waiting 60s (87/1568 fetched)
+white and black: 87/1010 fetched, ~1h 10m left
+Explorer: rate-limited (HTTP 429); waiting 60s (87/1010 fetched)
 ```
 
 The run looks after itself:
@@ -281,7 +281,7 @@ These read saved scores and the cache and refresh the reports when they finish. 
 
 | Command | Writes (in `reports/data/`) | Notes |
 | --- | --- | --- |
-| `vulnerabilities` | `<color>.vulnerabilities.json` | `--fetch-missing` fetches own-move parent tables that are not cached. |
+| `vulnerabilities` | `<color>.vulnerabilities.json` | Gains and drags of your moves and the opponent's replies. |
 | `preparation` | `<color>.preparation.json` | Stopping outcomes, prepared-depth distributions and entry routes. |
 | `character` | `<color>.character.json` | `--games` sets the reuse curve (default 10 50 100 500). |
 | `ratings` | `<color>.ratings.json` | Needs vulnerabilities, preparation and character. |

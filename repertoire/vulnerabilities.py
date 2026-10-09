@@ -1,10 +1,9 @@
-"""Rank repertoire vulnerabilities using parent move tables and saved model evidence."""
+"""Rank repertoire vulnerabilities from the saved model evidence."""
 
 import json
-from argparse import ArgumentParser, Namespace
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 
@@ -12,9 +11,9 @@ from .attribution import enrich
 from .board_cache import fen_number, move_text, route_line, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .evaluate import KNOWN, UNKNOWN, Weights, backward, best_routes, can_enter, forward, reaches
-from .explorer import Explorer, add_token_option, apply_token_file, collect, counts
+from .explorer import counts
 from .graph import Graph, resolve, topology
-from .model import Evidence, Model, Sampled, empirical, prepare, score
+from .model import Evidence, Model, Sampled, arrival_counts, empirical, position_counts, prepare, score
 from .schema import JsonObject, Position
 from .status import Status
 
@@ -46,24 +45,29 @@ def candidates(
     sampled: Sampled,
     values: Mapping[Position, np.ndarray],
     evidence: Evidence,
+    arrivals: dict[Position, list[int]],
     color: bool,
     sparse_threshold: int,
 ) -> list[JsonObject]:
-    """Local signed score changes. This pure function cannot request child evidence."""
+    """Local signed score changes. Own moves are compared through the opponent tables around them: the
+    position's arrival rows before the move and the table after it."""
     result: list[JsonObject] = []
     for k, node in model.items():
         if node.mode == 'stop':
             continue
         number = fen_number(graph.nodes[k].fen)
-        parent_data = evidence[k]
-        parent_n = sum(counts(parent_data))
-        rows = {r['uci']: r for r in parent_data['moves']}
-        parent_score = score(counts(parent_data), color)
+        rows = {r['uci']: counts(r) for r in evidence[k]['moves']} if node.mode == 'opponent' else {}
+        parent_sample = counts(evidence[k]) if node.mode == 'opponent' else position_counts(arrivals, evidence, k)
+        parent_n = sum(parent_sample) if parent_sample else 0
+        parent_score = score(parent_sample, color) if parent_sample else None
         for b, (p, empirical_score) in zip(node.branches, sampled[k]):
             if not b.move or p <= 0:
                 continue
-            row = rows.get(b.move)
-            n = sum(counts(row)) if row else 0
+            if node.mode == 'opponent':
+                sample = rows.get(b.move)
+            else:
+                sample = counts(evidence[b.target]) if b.target in evidence else None
+            n = sum(sample) if sample else 0
             common: JsonObject = dict(
                 id=f'{k}|{b.move}',
                 position=k,
@@ -73,7 +77,7 @@ def candidates(
                 branch_probability=float(p),
                 sample_count=n,
                 parent_sample_count=parent_n,
-                counts_white_draw_black=counts(row) if row else [0, 0, 0],
+                counts_white_draw_black=sample or [0, 0, 0],
                 sparse=n < sparse_threshold,
                 chapters=sorted(graph.nodes[k].chapters),
                 target=b.target,
@@ -93,31 +97,12 @@ def candidates(
                     score_basis=basis,
                     prepared=b.target is not None,
                     reference_basis='repertoire value before opponent reply',
-                    alternative=None,
                 )
             else:
-                move_database_score = score(counts(row), color) if row else None
+                move_database_score = score(sample, color) if sample else None
                 after = (
                     float(values[b.target][KNOWN]) if b.target is not None and values[b.target][UNKNOWN] == 0 else None
                 )
-                alternatives = [r for r in rows.values() if r['uci'] != b.move and sum(counts(r)) > 0]
-                alternatives.sort(key=lambda r: (-cast(float, score(counts(r), color)), -sum(counts(r)), r['uci']))
-                alternative: JsonObject | None = None
-                if (
-                    move_database_score is not None
-                    and alternatives
-                    and cast(float, score(counts(alternatives[0]), color)) > move_database_score
-                ):
-                    a = alternatives[0]
-                    alternative = dict(
-                        move=a['uci'],
-                        san=san(k, a['uci']),
-                        score=score(counts(a), color),
-                        sample_count=sum(counts(a)),
-                        sparse=sum(counts(a)) < sparse_threshold,
-                        gap_pp=100 * (cast(float, score(counts(a), color)) - move_database_score),
-                        reference_basis='selected move database score; historical screen only',
-                    )
                 common.update(
                     kind='own',
                     reference_score=parent_score,
@@ -132,8 +117,8 @@ def candidates(
                         and model[b.target].branches[0].fixed_score is None
                         and model[b.target].sample < sparse_threshold
                     ),
-                    reference_basis='ordinary database score at parent',
-                    alternative=alternative,
+                    reference_basis='database score of the opponent moves leading to the parent',
+                    move_basis='database score of the position after the move',
                 )
             before, after = common['reference_score'], common['move_score']
             common['local_drop_pp'] = None if before is None or after is None else 100 * (before - after)
@@ -179,9 +164,6 @@ def rank_scope(
             if entry_probability is None or row['weighted_drag_pp'] is None
             else entry_probability * row['weighted_drag_pp']
         )
-        row['alternative_opportunity_pp'] = (
-            row['branch_reach'] * row['alternative']['gap_pp'] if row['alternative'] else None
-        )
         rows.append(row)
     ranked, strengths = rankings(rows)
     return dict(
@@ -193,7 +175,7 @@ def rank_scope(
     )
 
 
-def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, fetch_missing: bool = False) -> JsonObject:
+def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     analysis = AnalysisContext(path)
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     transitions = resolve(graph, color, analysis.policy)
@@ -224,19 +206,8 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, fetch_missing: 
         rtol=0,
     ):
         raise AssertionError('Reconstructed model differs from saved scores')
-    own_positions = sorted({k for context in contexts.values() for k, n in context['model'].items() if n.mode == 'own'})
-    analysis.read_evidence(cache, own_positions)
-    missing = list(analysis.missing)
-    if missing and not fetch_missing:
-        raise ValueError(f'{len(missing)} own-parent tables missing; use --fetch-missing to cache parents only')
-    if missing:
-        online = Explorer(cache, manifest['filters'])
-        try:
-            evidence.update(collect(online, missing, f'{saved["color"]} own-move parents'))
-            analysis.provenance.update(online.provenance)
-            analysis.missing.clear()
-        finally:
-            online.close()
+    own_positions = {k for context in contexts.values() for k, n in context['model'].items() if n.mode == 'own'}
+    arrivals = arrival_counts(graph, color, evidence)
     for context in contexts.values():
         context['local'] = candidates(
             graph,
@@ -244,6 +215,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, fetch_missing: 
             context['sampled'],
             context['values'],
             evidence,
+            arrivals,
             color,
             manifest['sparse_threshold'],
         )
@@ -337,21 +309,13 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, fetch_missing: 
         overall_delta_pp=None if baseline is None or total_score is None else 100 * (total_score - baseline),
         overall=overall_scope,
         chapters=chapters,
-        manifest=analysis.companion_manifest(
-            evidence=used,
-            cache_only=not missing,
-            network_requests=len(missing),
-            parent_tables_fetched=len(missing),
-            candidate_child_queries=0,
-            sparse_threshold=manifest['sparse_threshold'],
-        ),
+        manifest=analysis.companion_manifest(evidence=used, sparse_threshold=manifest['sparse_threshold']),
         validation=dict(
             saved_scores_reproduced=True,
             chapter_scores_reproduced=True,
             probability_conservation=True,
             max_opponent_balance_error=max_balance_error,
             own_decision_positions=len(own_positions),
-            own_parent_tables_complete=True,
         ),
     )
     result['manifest']['own_score_basis'] = 'prepared repertoire continuation'
@@ -359,21 +323,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, fetch_missing: 
 
 
 def main() -> None:
-    stage_main('vulnerabilities', analyze, __doc__, configure, options)
-
-
-def configure(parser: ArgumentParser) -> None:
-    parser.add_argument(
-        '--fetch-missing',
-        action='store_true',
-        help='Fetch only missing own decision parent tables; default is cache-only',
-    )
-    add_token_option(parser)
-
-
-def options(parser: ArgumentParser, args: Namespace) -> dict[str, bool]:
-    apply_token_file(parser, args)
-    return dict(fetch_missing=args.fetch_missing)
+    stage_main('vulnerabilities', analyze, __doc__)
 
 
 if __name__ == '__main__':

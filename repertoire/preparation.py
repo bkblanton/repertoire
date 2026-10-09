@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Collection, Sequence
+from functools import cached_property
 from pathlib import Path
 from typing import NamedTuple, cast
 
@@ -12,8 +13,9 @@ from .attribution import enrich
 from .board_cache import children, fen_number, geometry, move_text, owner_outcome
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .evaluate import Route, Weights, best_routes, reaches
+from .explorer import counts
 from .graph import Graph, chapter_policy_overrides, resolve
-from .model import Evidence, Model, Sampled, node_empirical, prepare_node, score
+from .model import Evidence, Model, Sampled, arrival_counts, node_empirical, position_counts, prepare_node, score
 from .routes import depth_distribution, first_entry_examples
 from .schema import JsonObject, Position
 from .status import Status
@@ -70,6 +72,21 @@ class Evaluator:
             )
         self.transitions = transitions
         self.model, self.sampled, self.values, self.edges, self.stops = {}, {}, {}, {}, {}
+
+    @cached_property
+    def arrivals(self) -> dict[Position, list[int]]:
+        return arrival_counts(self.graph, self.color, self.evidence)
+
+    def database_counts(self, k: Position) -> tuple[list[int] | None, str]:
+        """A position's database games and their source. Own-turn positions with a prepared move have no table
+        of their own; they use the opponent move rows leading to them (see model.position_counts)."""
+        if self.facts[k]['turn'] == self.color and self.graph.nodes[k].edges:
+            sample = position_counts(self.arrivals, self.evidence, k)
+            source = 'parent_move_rows' if k in self.arrivals else 'position'
+        else:
+            data = self.evidence.get(k)
+            sample, source = (counts(data) if data is not None else None), 'position'
+        return sample, source if sample is not None else 'unavailable'
 
     def own_choices(self, k: Position) -> dict[str, float]:
         return {m: cast(float, w) for m, (_, w) in self.transitions[k].items()}

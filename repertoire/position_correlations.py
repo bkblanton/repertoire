@@ -13,6 +13,7 @@ from . import SCHEMA_VERSION
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256
 from .depth import prepared_depth_values
 from .evaluate import KNOWN, UNKNOWN, backward, reaches
+from .explorer import counts
 from .graph import resolve, topology
 from .model import empirical, prepare, score
 from .schema import JsonObject
@@ -103,10 +104,8 @@ def analyze_color(path: str | Path, cache: str | Path) -> JsonObject:
             raise ValueError('Saved continuation score differs from the cached model')
         if not np.isclose(weight, row['branch_reach'], atol=1e-10):
             raise ValueError('Saved decision reach differs from the cached model')
-        cached_move = next(r for r in evidence[position]['moves'] if r['uci'] == row['move'])
-        counts = [cached_move[k] for k in ('white', 'draws', 'black')]
-        if not np.isclose(cast(float, score(counts, color)), row['move_database_score'], atol=1e-10):
-            raise ValueError('Saved move baseline differs from the cached parent table')
+        if not np.isclose(cast(float, score(counts(evidence[target]), color)), row['move_database_score'], atol=1e-10):
+            raise ValueError('Saved move baseline differs from the cached table after the move')
         eligible.append(
             dict(
                 id=row['id'],

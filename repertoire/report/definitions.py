@@ -44,10 +44,6 @@ def methods(bundles: Iterable[Bundle]) -> list[str]:
             if r.get('diagnostics', {}).get('sanity_checks_passed')
             else 'Scoring sanity checks unavailable'
         ]
-        if 'vulnerabilities' in b:
-            checks.append(
-                f"vulnerability candidate-child queries: {b['vulnerabilities']['manifest']['candidate_child_queries']}"
-            )
         if 'preparation' in b or 'character' in b:
             checks.append('preparation and character use cached evidence only')
         text += ['; '.join(checks) + '. Companion score hashes and filters were checked before assembly.', '']

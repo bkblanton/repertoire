@@ -15,7 +15,7 @@ from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
 from .evaluate import COMPLETED
 from .explorer import counts, validate
 from .graph import Graph, resolve, topology
-from .model import Evidence, prepare
+from .model import Evidence, arrival_moves, move_counts, prepare
 from .openings import name_flow
 from .preparation import Evaluator, chess_facts
 from .schema import JsonObject, Position
@@ -28,8 +28,8 @@ from .uncertainty import Posterior, comparison_interval, dirichlet_variance, row
 
 class OwnComparison(TypedDict):
     drop: tuple[float, list[float]]
-    database_gain: list[float]
-    continuation_gain: list[float]
+    database_gain: list[float] | None
+    continuation_gain: list[float] | None
 
 
 def gap_priorities(metrics: JsonObject | None) -> JsonObject:
@@ -136,6 +136,34 @@ def database_table(
     return moves, np.asarray(observations, dtype=float) + table_prior / len(observations)
 
 
+def parent_moments(
+    k: Position,
+    origins: Sequence[tuple[Position, str]] | None,
+    evidence: Evidence,
+    color: bool,
+    prior: Sequence[float],
+) -> tuple[float, float] | None:
+    """Mean and variance of an own-turn position's database score, as in model.position_counts: the opponent
+    move rows leading to it, weighted by their games, or its own table where nothing leads to it. Each row is
+    from a different table, so their scores are independent."""
+    owner = np.array([1.0, 0.5, 0.0] if color else [0.0, 0.5, 1.0])
+    if origins:
+        parts = []
+        for parent, move in origins:
+            moves, alpha = database_table(evidence[parent], parent, color, prior)
+            parts.append((sum(move_counts(evidence[parent], move)), row_moments(alpha[moves.index(move)], owner)))
+        total = sum(n for n, _ in parts)
+        if not total:
+            return None
+        mean = sum(n * m for n, (m, _) in parts) / total
+        return mean, sum((n / total) ** 2 * v for n, (_, v) in parts)
+    if k not in evidence:
+        return None
+    _, alpha = database_table(evidence[k], k, color, prior)
+    cells = np.broadcast_to(owner, alpha.shape)
+    return float((alpha * cells).sum() / alpha.sum()), dirichlet_variance(alpha, cells)
+
+
 class LocalComparisons:
     """Means and 95% intervals of local score changes, from one policy's exact posterior.
 
@@ -145,7 +173,7 @@ class LocalComparisons:
     """
 
     def __init__(
-        self, posterior: Posterior, database: Mapping[Position, tuple[list[str], np.ndarray]], owner: np.ndarray
+        self, posterior: Posterior, database: Mapping[Position, tuple[float, float]], owner: np.ndarray
     ) -> None:
         self.posterior, self.database, self.owner = posterior, database, owner
         self.influence = posterior.influence()
@@ -190,15 +218,16 @@ class LocalComparisons:
         drop = before - after
         return drop, comparison_interval(drop, variance, component, coefficient)
 
-    def own(self, k: Position, move: str, target: Position) -> OwnComparison:
-        """Parent database score, the selected move's database score and the continuation after it."""
-        moves, alpha = self.database[k]
-        weights = alpha / alpha.sum()
-        parent = float((weights * self.owner).sum())
-        parent_variance = dirichlet_variance(alpha, np.broadcast_to(self.owner, alpha.shape))
-        row = moves.index(move)
-        selected, selected_variance = row_moments(alpha[row], self.owner)
-        share = float(weights[row].sum())
+    def own(self, k: Position, target: Position) -> OwnComparison | None:
+        """Parent database score, the selected move's database score and the continuation after it.
+
+        The parent score pools the opponent move rows leading to the position (`database[k]`). The move's score
+        is the whole table after it, which the continuation also uses, so those two covary. Tables upstream of
+        the position are independent of everything after it.
+        """
+        if k not in self.database:
+            return None
+        parent, parent_variance = self.database[k]
         after = self.posterior.values[target][COMPLETED]
         after_variance = self.value_variance(target)
         drop = parent - after
@@ -207,19 +236,31 @@ class LocalComparisons:
         component, coefficient = (
             ((parent, parent_variance), 1.0) if leaf is None or parent_variance >= leaf[1] else (leaf, -1.0)
         )
-        return dict(
+        result: OwnComparison = dict(
             drop=(drop, comparison_interval(drop, parent_variance + after_variance, component, coefficient)),
-            # The parent score already contains the move's own share of its database score.
-            database_gain=comparison_interval(
-                selected - parent,
-                parent_variance + selected_variance * (1 - 2 * share),
-                (selected, selected_variance),
-                1 - share,
-            ),
-            continuation_gain=comparison_interval(
-                after - selected, after_variance + selected_variance, (selected, selected_variance), -1
-            ),
+            database_gain=None,
+            continuation_gain=None,
         )
+        if self.posterior.model[target].mode == 'opponent':
+            alpha = self.posterior.alpha[target]
+            owner = np.broadcast_to(self.owner, alpha.shape)
+            selected = float((alpha * owner).sum() / alpha.sum())
+            selected_variance = dirichlet_variance(alpha, owner)
+            continuation_variance = (
+                after_variance
+                - self.posterior.table_variance(target)
+                + dirichlet_variance(alpha, self.posterior.cells(target) - owner)
+            )
+            gain_component, gain_coefficient = (
+                ((selected, selected_variance), 1.0)
+                if selected_variance >= parent_variance
+                else ((parent, parent_variance), -1.0)
+            )
+            result['database_gain'] = comparison_interval(
+                selected - parent, parent_variance + selected_variance, gain_component, gain_coefficient
+            )
+            result['continuation_gain'] = comparison_interval(after - selected, continuation_variance)
+        return result
 
 
 def add_recursive_spreads(
@@ -367,12 +408,15 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     evidence = analysis.read_evidence(cache, list(dict(manifest['evidence'], **compared)), required=True)
     if any(analysis.provenance[k] != original for k, original in compared.items()):
         raise ValueError('Cached evidence changed since the vulnerability analysis; rebuild it first')
-    chosen: defaultdict[Position, set[str]] = defaultdict(set)
-    for scope in scopes:
-        for row in scope['moves'].get('all_signed_rows', []):
-            if row['kind'] == 'own':
-                chosen[row['position']].add(row['move'])
-    database = {k: database_table(evidence[k], k, color, manifest['prior']) for k in chosen}
+    chosen = {
+        row['position'] for scope in scopes for row in scope['moves'].get('all_signed_rows', []) if row['kind'] == 'own'
+    }
+    origins = arrival_moves(graph, color, evidence)
+    database = {
+        k: moments
+        for k in chosen
+        if (moments := parent_moments(k, origins.get(k), evidence, color, manifest['prior'])) is not None
+    }
     owner = np.array([1.0, 0.5, 0.0] if color else [0.0, 0.5, 1.0])
     facts = chess_facts(graph, color, evidence)
     exact = {k: r['exact_name'] for k, r in supporting['openings']['positions'].items() if r.get('exact_name')}
@@ -414,16 +458,18 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
                 k, move = row['position'], row['move']
                 j = branches[k][move]
                 if row['kind'] == 'own':
-                    parts = comparisons.own(k, move, cast(Position, model[k].branches[j].target))
-                    _, drop = parts['drop']
+                    parts = comparisons.own(k, cast(Position, model[k].branches[j].target))
+                    drop = None if parts is None else parts['drop'][1]
                 else:
                     _, drop = comparisons.opponent(k, j)
-                entry = dict(local_drop_interval_pp=drop, local_gain_interval_pp=[-drop[1], -drop[0]])
+                entry = dict(
+                    local_drop_interval_pp=drop, local_gain_interval_pp=None if drop is None else [-drop[1], -drop[0]]
+                )
                 if row['kind'] == 'own':
                     entry.update(
                         move_decomposition(row),
-                        database_move_gain_interval_pp=parts['database_gain'],
-                        continuation_gain_interval_pp=parts['continuation_gain'],
+                        database_move_gain_interval_pp=None if parts is None else parts['database_gain'],
+                        continuation_gain_interval_pp=None if parts is None else parts['continuation_gain'],
                     )
                 results[scope['id']]['moves'][row['id']] = entry
         del comparisons, model
@@ -437,8 +483,8 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
             uncertainty_method=UNCERTAINTY_METHOD,
             interval_definition='Approximate prior-completed 95% local model intervals: exact '
             'posterior means and first-order variances from each cached Dirichlet '
-            'table, combined through shared transposition values. Own move and '
-            'parent database scores share one table, so their covariance is '
+            'table, combined through shared transposition values. The database score '
+            'after an own move and the continuation share one table, so their covariance is '
             'included. Policies and population are fixed; historical game overlap '
             'and selection effects are not modeled. Weighted rankings use '
             'empirical reach.',

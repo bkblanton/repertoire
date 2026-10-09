@@ -5,8 +5,8 @@ import pytest
 from helpers import data, graph, position, setup
 
 from repertoire.evaluate import COMPLETED, UNKNOWN, backward, forward
-from repertoire.report_insights import LocalComparisons, database_table
-from repertoire.uncertainty import beta_quantile, dirichlet_variance, score_interval
+from repertoire.report_insights import LocalComparisons, database_table, parent_moments
+from repertoire.uncertainty import beta_quantile, dirichlet_variance, row_moments, score_interval
 
 PGN = '1. Nf3 d5 2. g3 Nf6 3. Bg2 (3. Bh3) *\n\n1. g3 Nf6 2. Nf3 d5 3. Bg2 *'
 
@@ -118,24 +118,29 @@ def test_local_comparisons_match_simulation(fixture):
     assert checked == 3
 
 
-def test_own_move_comparisons_include_the_shared_table_covariance():
-    k = position('')
-    table = data(120, 20, 60, [('e2e4', 60, 10, 30), ('d2d4', 60, 10, 30)])
-    moves, alpha = database_table(table, k, True, [0.5] * 3)
-    owner = np.array([1.0, 0.5, 0.0])
-    parent = dirichlet_variance(alpha, np.broadcast_to(owner, alpha.shape))
-    weights = alpha / alpha.sum()
-    row = moves.index('e2e4')
-    selected = alpha[row] @ owner / alpha[row].sum()
-    gradient = np.zeros_like(alpha)
-    gradient[row] = (owner - selected) / weights[row].sum()
-    move = dirichlet_variance(alpha, gradient)
-    difference = dirichlet_variance(alpha, gradient - np.broadcast_to(owner, alpha.shape))
-    # The move's own games are part of the parent table, so the difference varies less than independent scores would.
-    assert 0 < difference < parent + move
-    _, reversed_alpha = database_table(table, k, False, [0.5] * 3)
-    black = np.array([0.0, 0.5, 1.0])
-    assert (weights * owner).sum() + (reversed_alpha / reversed_alpha.sum() * black).sum() == pytest.approx(1)
+def test_parent_moments_pool_arrival_rows_by_games():
+    prior, owner = [0.5] * 3, np.array([1.0, 0.5, 0.0])
+    first, second = position(''), position('e4 e5')
+    evidence = {
+        first: data(40, 10, 50, [('e2e4', 20, 5, 5), ('d2d4', 20, 5, 45)]),
+        second: data(30, 0, 70, [('g1f3', 5, 0, 5), ('b1c3', 25, 0, 65)]),
+    }
+    parts = []
+    for k, move in ((first, 'e2e4'), (second, 'g1f3')):
+        moves, alpha = database_table(evidence[k], k, True, prior)
+        parts.append(row_moments(alpha[moves.index(move)], owner))
+    mean, variance = parent_moments('own', [(first, 'e2e4'), (second, 'g1f3')], evidence, True, prior)
+    # Weighted by their 30 and 10 games; rows from different tables are independent.
+    assert mean == pytest.approx(0.75 * parts[0][0] + 0.25 * parts[1][0])
+    assert variance == pytest.approx(0.75**2 * parts[0][1] + 0.25**2 * parts[1][1])
+    # With nothing leading to it, a position uses its own whole table.
+    _, alpha = database_table(evidence[first], first, True, prior)
+    whole = parent_moments(first, None, evidence, True, prior)
+    assert whole == pytest.approx(
+        ((alpha / alpha.sum() * owner).sum(), dirichlet_variance(alpha, np.broadcast_to(owner, alpha.shape)))
+    )
+    assert parent_moments('own', [(first, 'c2c4')], evidence, True, prior) is None
+    assert parent_moments(second, None, {}, True, prior) is None
 
 
 def test_beta_quantiles_and_intervals():
@@ -172,19 +177,22 @@ def test_paired_policy_difference_matches_simulation(fixture):
     'rows, tolerance', [([('e2e4', 60, 10, 30), ('d2d4', 60, 10, 30)], 1.5), ([('e2e4', 5, 1, 2)], 4.0)]
 )
 def test_own_move_comparisons_match_simulation(fixture, rows, tolerance):
-    # The second case is a sparse move that makes up every game at its parent; unplayed moves' skewed
-    # prior-only scores make its database gain only roughly normal. Report tables filter such rows.
-    posterior, simulated, n = fixture['posterior'], fixture['simulated'], fixture['n']
-    k, target = 'parent', position('Nf3')
+    # The parent score is the opponent's 1.e4 row leading to the position; the second case is a sparse row,
+    # whose skewed score makes the drop only roughly normal. Report tables filter such rows. The move's database
+    # score is the table after it, which the continuation shares.
+    posterior, sample, simulated, n = fixture['posterior'], fixture['sample'], fixture['simulated'], fixture['n']
+    k, target, before = 'parent', position('Nf3'), position('')
     totals = [sum(r[i] for r in rows) for i in (1, 2, 3)]
-    database = {k: database_table(data(*totals, rows), position(''), True, [0.5] * 3)}
-    moves, alpha = database[k]
+    evidence = {before: data(*totals, rows)}
+    database = {k: parent_moments(k, [(before, 'e2e4')], evidence, True, [0.5] * 3)}
+    moves, alpha = database_table(evidence[before], before, True, [0.5] * 3)
     theta = np.random.default_rng(5).dirichlet(alpha.ravel(), size=n).reshape(n, *alpha.shape)
-    parent = theta.sum(axis=1) @ posterior.owner
     row = theta[:, moves.index('e2e4')]
-    selected = row @ posterior.owner / row.sum(axis=1)
+    parent = row @ posterior.owner / row.sum(axis=1)
+    selected = sum(p * s for p, s in sample[target])
     after = simulated[target][COMPLETED]
-    parts = LocalComparisons(posterior, database, posterior.owner).own(k, 'e2e4', target)
+    parts = LocalComparisons(posterior, database, posterior.owner).own(k, target)
+    assert parts is not None
     for interval, draws in (
         (parts['drop'][1], parent - after),
         (parts['database_gain'], selected - parent),

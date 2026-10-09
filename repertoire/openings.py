@@ -11,7 +11,6 @@ import numpy as np
 from .board_cache import STARTING_POSITION, fen_number, route_line
 from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
 from .evaluate import Route, Weights
-from .explorer import counts
 from .gaps import distribution as gap_distribution
 from .graph import Graph
 from .model import score
@@ -329,8 +328,8 @@ def cohort(
             else:
                 direct_terminal += weight
         else:
-            data = evaluator.evidence.get(k)
-            sample = counts(data) if data is not None else [0, 0, 0]
+            known, source = evaluator.database_counts(k)
+            sample = known or [0, 0, 0]
             fixed = evaluator.facts[k]['outcome']
             base = fixed if fixed is not None else score(sample, evaluator.color)
             continuation = wdl[k]
@@ -353,7 +352,7 @@ def cohort(
                 entry_probability=0.0,
                 example=route,
                 games=0,
-                games_source='parent move rows' if is_reply else 'position',
+                games_source='parent move rows' if is_reply or source == 'parent_move_rows' else 'position',
                 baseline_contribution=0.0,
                 baseline_unresolved_weight=0.0,
                 repertoire_contribution=0.0,

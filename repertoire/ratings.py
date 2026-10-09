@@ -371,16 +371,6 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     supporting = analysis.companions
     evidence = analysis.read_evidence(cache)
-    # Only read existing cached alternatives. A miss remains unavailable.
-    analysis.read_evidence(
-        cache,
-        [
-            children(row['position'])[row['alternative']['move']]
-            for scope in [supporting['vulnerabilities']['overall'], *supporting['vulnerabilities']['chapters']]
-            for row in scope.get('all_signed_rows', [])
-            if row['kind'] == 'own' and row.get('alternative')
-        ],
-    )
     facts = chess_facts(graph, color, evidence)
     policy = selected_policy(manifest)
     roots = manifest['root_weights']
@@ -538,9 +528,6 @@ def attach(bundle: 'Bundle') -> None:
                     rows.extend(more)
                 for row in rows:
                     row['opponent_rating'] = scope.get('moves', {}).get(row['position'] + '|' + row['move'])
-                    if row.get('alternative'):
-                        alt = row['alternative']
-                        alt['opponent_rating'] = scope.get('moves', {}).get(row['position'] + '|' + alt['move'])
     for row in bundle['report']['events']:
         stops(row, scopes.get('overall', {}))
     for chapter in bundle['report']['chapters']:

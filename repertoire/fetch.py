@@ -9,14 +9,14 @@ from .context import DEFAULT_CACHE
 from .explorer import DEFAULT_FILTERS, Explorer, add_token_option, apply_token_file, fetch_missing, survey
 from .graph import parse
 from .schema import JsonObject, Position
-from .score import config_path, inspect_repertoire, load_config, parent_positions, plan_repertoire, required_positions
+from .score import config_path, inspect_repertoire, load_config, plan_repertoire, required_positions
 
 
 def required_tables(pgn: str | Path, color: bool, config: JsonObject) -> list[Position]:
-    """Scoring tables, then own-move parent tables, for one repertoire PGN. No table is read."""
+    """The scoring tables for one repertoire PGN. No table is read."""
     graph = parse(pgn, config.get('exclude', []))
     plan = plan_repertoire(graph, color, config, inspect_repertoire(graph, color))
-    return list(dict.fromkeys([*required_positions(plan, color), *parent_positions(plan, color)]))
+    return required_positions(plan, color)
 
 
 def fetch(

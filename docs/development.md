@@ -67,6 +67,7 @@ Each stage saves a manifest with the hashes of its inputs: the source PGN, the s
 - Your moves never inherit their database popularity. Opponent reply probabilities keep deviations and games with no listed move.
 - Replies are expanded after the last recorded move, and a reply that transposes straight into preparation continues it. Unknown positions end preparation; there is no search for a later return.
 - Unprepared replies use the parent table's move row. Analyses never fetch the tables of unprepared positions.
+- Positions where you have a prepared move have no table. Their database games are the opponent move rows leading to them (`model.position_counts`), and a move's database score is the table after it. Analyses read only the tables the score used (`AnalysisContext.read_evidence`), so leftover cache entries never change a result.
 - Missing evidence stays unresolved; a failed request is never zero data. Sparse filtering applies to strength and vulnerability rankings, never to probabilities or the score.
 
 **Reports.**

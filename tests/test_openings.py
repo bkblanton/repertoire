@@ -34,7 +34,8 @@ def named(names, k, name, eco='A00'):
 def transposing(tmp_path):
     g = graph(tmp_path, '1. Nf3 d5 2. g3 Nf6 3. Bg2 *\n\n1. g3 Nf6 2. Nf3 d5 3. Bg2 *')
     e = {k: data(50, 0, 50, [(m, 50, 0, 50) for m in n.edges]) for k, n in g.nodes.items()}
-    e[position('Nf3 d5')] = data(75, 0, 25, [('g2g3', 75, 0, 25)])
+    # Own-turn positions with a prepared move use the opponent move rows leading to them.
+    e[position('Nf3')] = data(75, 0, 25, [('d7d5', 75, 0, 25)])
     leaf = position('Nf3 d5 g3 Nf6 Bg2')
     e[leaf] = data(10, 20, 70, [('c7c6', 10, 20, 70)])
     policy = {g.roots[0]: {'g1f3': 0.4, 'g2g3': 0.6}}
@@ -222,13 +223,17 @@ def test_black_score_and_unknown_entry_evidence_are_not_filled_in(tmp_path):
     result = cohort(ev, entries, total, recursive_wdl(ev))
     assert result['repertoire_score'] == pytest.approx(0.8)
     assert result['outcomes']['sharpness'] == pytest.approx(44.0)
-    # A forced own-move entry does not need local outcome counts for its score.
+    # A forced own-move entry does not need local outcome counts for its score; its baseline is the
+    # opponent's move row leading to it.
     entries, total, _ = first_entries(ev, {root: 1.0}, {position('e4')})
     result = cohort(ev, entries, total, recursive_wdl(ev))
     assert result['repertoire_score'] == pytest.approx(0.8)
-    assert result['entry_baseline']['raw_score'] is None
-    assert result['entry_baseline']['unresolved_mass'] == 1.0
-    assert result['difference_pp'] is None
+    assert result['entry_baseline']['raw_score'] == pytest.approx(0.5)
+    assert result['entries'][0]['games_source'] == 'parent move rows'
+    # With no cached table before it, the baseline stays unresolved rather than filled in.
+    e.pop(root)
+    ev = Evaluator(g, False, e, chess_facts(g, False, e))
+    assert ev.database_counts(position('e4')) == (None, 'unavailable')
 
 
 def test_cache_only_analysis_preserves_scores_sources_and_validates_staleness(tmp_path, monkeypatch):
@@ -257,7 +262,8 @@ def test_cache_only_analysis_preserves_scores_sources_and_validates_staleness(tm
     assert 'French Defense: Tarrasch Variation' in {r['name'] for r in result['catalog']}
     assert result['coverage']['ever_classified_probability'] == pytest.approx(1.0)
     g = graph(tmp_path, Path(saved['manifest']['input_path']).read_text())
-    assert set(calls) == set(g.nodes)
+    # Only the tables the score used are read, whatever else the cache holds.
+    assert set(calls) == set(saved['manifest']['evidence']) < set(g.nodes)
     for p, digest in originals.items():
         assert hashlib.sha256(p.read_bytes()).hexdigest() == digest
     Path(saved['manifest']['input_path']).write_text('changed')

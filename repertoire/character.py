@@ -301,8 +301,7 @@ def position_reach_rows(
             kind = 'theory_leaf'
         else:
             kind = 'own_move' if evaluator.facts[k]['turn'] == evaluator.color else 'opponent_reply'
-        data = evaluator.evidence.get(k)
-        sample = counts(data) if data is not None else None
+        sample, source = evaluator.database_counts(k)
         value = evaluator.values[k]
         rows[k] = dict(
             position=k,
@@ -315,7 +314,7 @@ def position_reach_rows(
             outcomes=summarize_outcomes(wdl_values[k]),
             database_score=score(sample, evaluator.color) if sample is not None else None,
             games=sum(sample) if sample is not None else None,
-            games_source='position' if sample is not None else 'unavailable',
+            games_source=source,
             counts_white_draw_black=sample,
         )
     # The cached parent table supplies both the reply and its probability. No

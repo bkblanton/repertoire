@@ -76,6 +76,7 @@ Values are computed backward through the graph and probabilities forward. Probab
 
 Tables come from the authenticated [Lichess Opening Explorer](https://lichess.org/api#tag/Opening-Explorer) endpoint, `https://explorer.lichess.org/lichess`, with enough move rows to cover every legal move, no example games, and the same filters for the whole run.
 
+- Tables are fetched for every opponent position, every theory leaf, every chapter entry and the starting position. A position where you have a prepared move needs no table, because your move is forced.
 - Requests are sequential. Rate limits are waited out indefinitely; server errors and dropped connections are retried for up to 30 minutes per request.
 - Every response is cached on disk, keyed by endpoint, position and filters, with its retrieval time. Runs can be stopped and resumed.
 - Each score saves a manifest of its configuration, filters, input hashes and the cache entries it used.

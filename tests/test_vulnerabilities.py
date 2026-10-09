@@ -8,7 +8,12 @@ from helpers import cache_row, data, graph, position, setup
 from repertoire.evaluate import forward, reaches
 from repertoire.explorer import DEFAULT_FILTERS, Explorer
 from repertoire.graph import key
+from repertoire.model import arrival_counts
 from repertoire.vulnerabilities import analyze, candidates, rank_scope, representative_lines
+
+
+def signed_rows(g, m, raw, v, evidence, color):
+    return candidates(g, m, raw, v, evidence, arrival_counts(g, color, evidence), color, 30)
 
 
 def fixture(tmp_path):
@@ -26,7 +31,7 @@ def fixture(tmp_path):
 
 def test_opponent_uses_prepared_values_and_parent_rows_without_child_query(tmp_path):
     g, m, o, raw, v, e = fixture(tmp_path)
-    rows = candidates(g, m, raw, v, e, True, 30)
+    rows = signed_rows(g, m, raw, v, e, True)
     scope = rank_scope(rows, reaches(m, o, raw, {g.roots[0]: 1}), representative_lines(g, m, o, raw, {g.roots[0]: 1}))
     reply = scope['rankings']['opponent'][0]
     assert reply['move_san'] == 'c5'
@@ -39,41 +44,44 @@ def test_opponent_uses_prepared_values_and_parent_rows_without_child_query(tmp_p
     assert position('e4 c5') not in e  # deviation child statistics are never necessary
 
 
-def test_own_deficit_forced_probability_and_same_table_alternative(tmp_path):
+def test_own_deficit_and_forced_probability_use_the_opponent_tables_around_the_move(tmp_path):
     g, m, o, raw, v, e = fixture(tmp_path)
-    rows = candidates(g, m, raw, v, e, True, 30)
+    rows = signed_rows(g, m, raw, v, e, True)
     scope = rank_scope(rows, reaches(m, o, raw, {g.roots[0]: 1}), {})
-    e4, nf3 = scope['rankings']['own']
+    nf3, e4 = scope['rankings']['own']
     assert nf3['move_san'] == 'Nf3'
     assert nf3['parent_reach'] == pytest.approx(0.8)
     assert nf3['branch_probability'] == 1  # not historical 10%
-    assert nf3['weighted_drag_pp'] == pytest.approx(8)
+    # The position's score is the 1...e5 row leading to it, not its own table's .6; the move's is the table after it.
+    assert nf3['reference_score'] == pytest.approx(0.75) and nf3['parent_sample_count'] == 80
+    assert nf3['move_database_score'] == 0.5 and nf3['sample_count'] == 100
+    assert nf3['weighted_drag_pp'] == pytest.approx(20)
+    # Nothing leads to the starting position, so it keeps its own table.
+    assert e4['reference_score'] == pytest.approx(0.6) and e4['move_database_score'] == pytest.approx(0.6)
     assert e4['weighted_drag_pp'] == pytest.approx(20)
-    assert nf3['alternative']['san'] == 'Nc3'
-    assert nf3['alternative']['sample_count'] == 90
-    assert nf3['alternative_opportunity_pp'] == pytest.approx(0.8 * 100 * (56 / 90 - 0.4))
+    assert 'alternative' not in nf3
 
 
 def test_chapter_weighted_multiple_entries_and_transposition_aggregation(tmp_path):
     g = graph(tmp_path, '1. Nf3 d5 2. g3 Nf6 3. Bg2 *\n\n1. g3 Nf6 2. Nf3 d5 3. Bg2 *')
     root, junction = g.roots[0], position('Nf3 d5 g3 Nf6')
     evidence = {
-        position('Nf3'): data(10, 0, 0, [('d7d5', 10, 0, 0)]),
-        position('Nf3 d5 g3'): data(10, 0, 0, [('g8f6', 10, 0, 0)]),
-        position('g3'): data(10, 0, 0, [('g8f6', 10, 0, 0)]),
-        position('g3 Nf6 Nf3'): data(10, 0, 0, [('d7d5', 10, 0, 0)]),
+        root: data(60, 0, 40, [('g1f3', 3, 0, 7), ('g2g3', 3, 0, 7)]),
+        position('Nf3'): data(6, 0, 4, [('d7d5', 6, 0, 4)]),
+        position('Nf3 d5 g3'): data(6, 0, 4, [('g8f6', 6, 0, 4)]),
+        position('g3'): data(6, 0, 4, [('g8f6', 6, 0, 4)]),
+        position('g3 Nf6 Nf3'): data(6, 0, 4, [('d7d5', 6, 0, 4)]),
         position('Nf3 d5 g3 Nf6 Bg2'): data(3, 2, 5),
     }
     m, o, raw, _, v, _ = setup(g, True, evidence, {root: {'g1f3': 0.7, 'g2g3': 0.3}})
-    for k, node in m.items():
-        if node.mode == 'own':
-            evidence[k] = data(60, 0, 40, [(b.move, 3, 0, 7) for b in node.branches])
-    local = candidates(g, m, raw, v, evidence, True, 30)
+    local = signed_rows(g, m, raw, v, evidence, True)
     mass = reaches(m, o, raw, {root: 1})
     assert mass[junction] == pytest.approx(1)
     overall = rank_scope(local, mass, {})
     joined = [r for r in overall['rankings']['own'] if r['position'] == junction]
     assert len(joined) == 1
+    # The shared board pools the rows of both routes into it.
+    assert joined[0]['parent_sample_count'] == 20
     assert joined[0]['weighted_drag_pp'] == pytest.approx(20)
     selected = [r for r in overall['all_signed_rows'] if r['position'] == root]
     assert sorted(r['weighted_drag_pp'] for r in selected) == pytest.approx([6, 14])
@@ -99,17 +107,18 @@ def test_black_perspective_missing_and_sparse_evidence(tmp_path):
     e = {
         root: data(60, 0, 40, [('e2e4', 60, 0, 40)]),
         e4: data(50, 0, 50, [('e7e5', 8, 0, 2), ('c7c5', 42, 0, 48)]),
-        leaf: data(70, 0, 30),
+        leaf: data(7, 0, 3),
     }
     m, o, raw, _, v, _ = setup(g, False, e)
-    own = next(r for r in candidates(g, m, raw, v, e, False, 30) if r['kind'] == 'own')
+    own = next(r for r in signed_rows(g, m, raw, v, e, False) if r['kind'] == 'own')
     assert own['move_score'] == 0.3
-    assert own['move_database_score'] == 0.2
-    assert own['local_drop_pp'] == pytest.approx(20)
+    assert own['move_database_score'] == 0.3
+    assert own['reference_score'] == pytest.approx(0.4)  # Black's score in the 1.e4 row
+    assert own['local_drop_pp'] == pytest.approx(10)
     assert own['sparse']
-    assert own['alternative']['san'] == 'c5'
-    e[e4] = data(0, 0, 0)
-    rows = candidates(g, m, raw, v, e, False, 30)
+    # No games in the row leading to the position leave its score unresolved, whatever its own table says.
+    e[root] = data(0, 0, 0)
+    rows = signed_rows(g, m, raw, v, e, False)
     scope = rank_scope(rows, reaches(m, o, raw, {root: 1}), {})
     assert len(scope['unresolved_rows']) == 1
     assert not scope['rankings']['own']
@@ -147,33 +156,23 @@ def saved_fixture(tmp_path):
     return path, cache, e, m
 
 
-def test_fetches_only_missing_own_parents_then_runs_fully_offline(tmp_path, monkeypatch):
-    path, cache, e, m = saved_fixture(tmp_path)
+def test_runs_offline_from_the_score_evidence_alone(tmp_path, monkeypatch):
+    path, cache, _, m = saved_fixture(tmp_path)
     original_get = Explorer.get
-    network_calls = []
-    monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
+    reads = []
 
     def guarded_get(self, k):
-        if self.offline:
-            return original_get(self, k)
-        assert m[k].mode == 'own'
-        network_calls.append(k)
-        self.provenance[k] = cache_row(cache, k, e[k])
-        return e[k]
+        assert self.offline
+        reads.append(k)
+        return original_get(self, k)
 
     monkeypatch.setattr(Explorer, 'get', guarded_get)
-    with pytest.raises(ValueError, match='own-parent tables missing'):
-        analyze(path, cache)
-    result = analyze(path, cache, fetch_missing=True)
-    assert set(network_calls) == {k for k in m if m[k].mode == 'own'}
-    assert result['manifest']['candidate_child_queries'] == 0
-    network_calls.clear()
     replay = analyze(path, cache)
-    assert not network_calls
-    assert replay['overall'] == result['overall']
+    assert reads and all(m[k].mode != 'own' for k in reads)
+    assert replay['manifest']['network_requests'] == 0
     chapter_own = replay['chapters'][0]['rankings']['own'][0]
-    assert chapter_own['weighted_drag_pp'] == pytest.approx(10)
-    assert chapter_own['study_drag_pp_after_entry'] == pytest.approx(8)
+    assert chapter_own['weighted_drag_pp'] == pytest.approx(25)
+    assert chapter_own['study_drag_pp_after_entry'] == pytest.approx(20)
     for scope in [replay['overall'], *replay['chapters']]:
         for row in scope['all_signed_rows']:
             board = chess.Board()
@@ -198,15 +197,16 @@ def test_changed_source_rejected_before_loading_evidence(tmp_path):
         analyze(path, cache)
 
 
-def test_prepared_continuation_can_be_a_strength_despite_bad_historical_move_row(tmp_path):
+def test_prepared_continuation_can_be_a_strength_despite_its_own_move_row(tmp_path):
     g, _, _, _, _, e = fixture(tmp_path)
+    # The 2.Nf3 row at 1.e4 e5 scores .4, but its table is never read: the move is judged by the table after it.
     e[position('e4 e5 Nf3')] = data(80, 0, 20)
     m, o, raw, _, v, _ = setup(g, True, e)
-    scope = rank_scope(candidates(g, m, raw, v, e, True, 30), reaches(m, o, raw, {g.roots[0]: 1}), {})
+    scope = rank_scope(signed_rows(g, m, raw, v, e, True), reaches(m, o, raw, {g.roots[0]: 1}), {})
     nf3 = next(r for r in scope['strengths'] if r['move_san'] == 'Nf3')
-    assert nf3['move_database_score'] == 0.4
+    assert nf3['move_database_score'] == 0.8
     assert nf3['move_score'] == 0.8
-    assert nf3['local_gain_pp'] == pytest.approx(20)
+    assert nf3['local_gain_pp'] == pytest.approx(5)
     assert not scope['rankings']['own']
 
 
@@ -214,12 +214,13 @@ def test_unknown_continuation_never_falls_back_to_historical_own_move_score(tmp_
     g, _, _, _, _, e = fixture(tmp_path)
     e[position('e4 e5 Nf3')] = data(0, 0, 0)
     m, o, raw, _, v, _ = setup(g, True, e)
-    scope = rank_scope(candidates(g, m, raw, v, e, True, 30), reaches(m, o, raw, {g.roots[0]: 1}), {})
+    scope = rank_scope(signed_rows(g, m, raw, v, e, True), reaches(m, o, raw, {g.roots[0]: 1}), {})
     assert not scope['rankings']['own'] and not scope['strengths']
     for row in scope['all_signed_rows']:
         if row['kind'] == 'own':
-            assert row['move_database_score'] is not None
             assert row['move_score'] is None and row['local_drop_pp'] is None
+    nf3 = next(r for r in scope['all_signed_rows'] if r['move_san'] == 'Nf3')
+    assert nf3['move_database_score'] is None  # the table after the move has no games
 
 
 def test_own_ranking_uses_direct_deficit_while_opponent_ranking_uses_weighted_drag():
@@ -256,7 +257,7 @@ def test_lines_number_moves_along_their_own_route(tmp_path):
     assert lines[nf3] == ('1.e3 1...e6 2.e4 2...e5 3.Nf3', 3)
     rows = {
         r['move_san']: r
-        for r in rank_scope(candidates(g, m, raw, v, evidence, False, 30), reaches(m, o, raw, {root: 1}), lines)[
+        for r in rank_scope(signed_rows(g, m, raw, v, evidence, False), reaches(m, o, raw, {root: 1}), lines)[
             'all_signed_rows'
         ]
     }

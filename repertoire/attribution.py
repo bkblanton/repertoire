@@ -142,9 +142,6 @@ def enrich(report: JsonObject, graph: Graph) -> JsonObject:
             elif isinstance(item, dict):
                 if item.get('kind') in ('own', 'opponent') and 'position' in item and 'move' in item:
                     item['chapter_attribution'] = attribution.position_or_move(item['position'], item['move'])
-                    if item.get('alternative'):
-                        alt = item['alternative']
-                        alt['chapter_attribution'] = attribution.position_or_move(item['position'], alt['move'])
                 for field, child in list(item.items()):
                     if field != 'chapter_attribution':
                         visit(child)

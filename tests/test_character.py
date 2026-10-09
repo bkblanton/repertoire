@@ -104,7 +104,9 @@ def test_transposition_counts_one_shared_decision(tmp_path, white):
     assert len(bishops) == 1 and bishops[0]['reach'] == pytest.approx(1)
     positions = result['positions']
     assert len({r['position'] for r in positions}) == len(positions)
-    assert all(r['repertoire_score'] == (1 if white else 0) and r['games'] == 100 for r in positions)
+    assert all(r['repertoire_score'] == (1 if white else 0) for r in positions)
+    # An own-turn position counts the opponent move rows leading to it, so the transposition pools both routes.
+    assert sorted(r['games'] for r in positions) == [100] * (len(positions) - 1) + [200]
     root = next(r for r in positions if r['position'] == g.roots[0])
     assert root['reach'] == pytest.approx(1)  # our 40/60 mixture does not split the position
     bishop_position = bishops[0]['position']

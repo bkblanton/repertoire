@@ -98,14 +98,14 @@ class AnalysisContext:
     def read_evidence(
         self, cache: str | Path, positions: Iterable[Position] | None = None, required: bool = False
     ) -> Evidence:
-        """Read cached tables offline; tables the score used must be unchanged.
+        """Read cached tables offline, by default the ones the score used; those must be unchanged.
 
         Misses are recorded in `missing`, or raise CacheMiss when `required`.
         """
         saved = self.manifest['evidence']
         explorer = Explorer(cache, self.manifest['filters'], offline=True)
         try:
-            for k in self.graph.nodes if positions is None else positions:
+            for k in saved if positions is None else positions:
                 if k in self.evidence or k in self.missing:
                     continue
                 try:

@@ -22,7 +22,7 @@ def lichess(tmp_path, monkeypatch):
     monkeypatch.setattr('repertoire.explorer.time.sleep', lambda _: None)
     white, black = tmp_path / 'white.pgn', tmp_path / 'black.pgn'
     white.write_text(TEXT)
-    # A different Black repertoire, so its scoring tables cannot stand in for White's own-move parents.
+    # A different Black repertoire, so its scoring tables cannot stand in for White's own-turn positions.
     black.write_text(BLACK)
     nodes = parse(white).nodes
     requests = []
@@ -66,7 +66,7 @@ def test_build_fetches_every_table_first_then_runs_offline(lichess, monkeypatch,
     assert requests == []
 
 
-def test_fetch_includes_own_move_parents_and_dry_run_makes_no_requests(lichess, monkeypatch, capsys):
+def test_fetch_skips_own_move_positions_and_dry_run_makes_no_requests(lichess, monkeypatch, capsys):
     tmp_path, white, black, requests = lichess
     pgns, configs, cache = dict(white=white, black=black), {}, tmp_path / 'cache'
     monkeypatch.delenv('LICHESS_TOKEN')
@@ -76,10 +76,14 @@ def test_fetch_includes_own_move_parents_and_dry_run_makes_no_requests(lichess, 
     monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
     fetch.fetch(pgns, configs, cache)
     fetched = {chess.Board(fen).fen().rsplit(' ', 2)[0] for fen in requests}
-    # White's own-move parent after 1. e4 e5 is not a scoring table but is still fetched.
+    # White's prepared move after 1. e4 e5 needs no table; the start is fetched for the baseline and the
+    # position after 2. Nf3 for the score.
     board = chess.Board()
+    assert board.fen().rsplit(' ', 2)[0] in fetched
     for move in ('e4', 'e5'):
         board.push_san(move)
+    assert board.fen().rsplit(' ', 2)[0] not in fetched
+    board.push_san('Nf3')
     assert board.fen().rsplit(' ', 2)[0] in fetched
     requests.clear()
     fetch.fetch(pgns, configs, cache)

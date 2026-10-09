@@ -59,7 +59,7 @@ Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and 
 | Score spread | How much the scores of the continuations vary, including later replies. Omitted for unprepared replies, where preparation has ended. |
 | 1 in N games | How often a position or move comes up, shown under its reach: 1 / reach, assuming independent games. |
 | Per 1,000 games | A reach-weighted gain, drag or contribution, in score points per 1,000 games with that color (or entering the chapter). |
-| Games | Games in the database at that position or in the parent table's row for that move. Not the sample size of the whole continuation. |
+| Games | Games in the database at that position or in the parent table's row for that move. A position where you have a prepared move counts the opponent move rows that lead to it. Not the sample size of the whole continuation. |
 | Opponent rating | The average rating of the opponents at that point, with its difference from the parent position on reply rows. It describes the database games and never adjusts a score. |
 
 ### Lines, links and units
@@ -192,9 +192,9 @@ The full report includes two reach-weighted correlations. Both are point estimat
 - **Own move drag** is the database score of the parent position minus your score after your move. It measures how your move and the preparation after it compare with what players do there in general. The strengths section ranks the reverse, your gain.
 - **Gain** splits into the **move gain**, your move's database score minus the position's, and the **preparation gain**, your score after the move minus the move's database score. The two add up to the total.
 
-Weighted values are shown in score points per 1,000 games, so a weighted drag of `0.0317%` reads as `0.32`. The summary ranks your moves by reach times gain or drag; the full report ranks them by the gain or drag itself. Intervals on gains and drags combine every table the comparison depends on. **1 in N games** is `1 / reach`: how many games with that color (or entering the chapter) pass before a position comes up once on average.
+Tables for positions where you have a prepared move are never fetched, because your move is forced and the score does not need them. The position's database score is therefore pooled from the opponent move rows that lead to it, or its own table at the starting position, and your move's database score is the whole table after it. Where a position is reached by one move order, these are the same games its own table would hold. At a transposition, the position's score counts only the routes in your studies, and the table after your move counts every move order.
 
-The JSON also lists the database scores of the other moves in each of your positions. They are screening information, not recommendations: the best of several observed scores tends to be high by chance.
+Weighted values are shown in score points per 1,000 games, so a weighted drag of `0.0317%` reads as `0.32`. The summary ranks your moves by reach times gain or drag; the full report ranks them by the gain or drag itself. Intervals on gains and drags combine every table the comparison depends on. **1 in N games** is `1 / reach`: how many games with that color (or entering the chapter) pass before a position comes up once on average.
 
 Chapter rankings are among games that enter the chapter. For a chapter whose moves lost to an alternative, they describe the alternative, not the repertoire you play.
 

@@ -83,8 +83,7 @@ def test_unselected_chapters_have_conditional_scores_and_separate_reach(tmp_path
     )
     assert 'Overall-policy reach' in summary
     result = vulnerabilities(tmp_path / 'white.json', cache)
-    assert result['manifest']['candidate_child_queries'] == 0
-    assert result['manifest']['parent_tables_fetched'] == 0
+    assert result['manifest']['network_requests'] == 0
     assert len(result['chapters']) == 3
     assert result['validation']['chapter_scores_reproduced']
     selected = {r['move_san'] for r in result['overall']['all_signed_rows'] if r['position'] == position('e4 e6 d4 d5')}
