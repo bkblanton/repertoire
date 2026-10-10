@@ -17,6 +17,7 @@ dependencies = [
     "httpx>=0.28.1",
     "numpy>=2.5.3",
     "python-chess>=1.999",
+    "zstandard>=0.25.0",
 ]
 
 [project.urls]

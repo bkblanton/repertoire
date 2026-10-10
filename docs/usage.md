@@ -12,6 +12,7 @@ Run every command from the repository root. Repertoire reads your Lichess studie
 - [Keeping results up to date](#keeping-results-up-to-date)
 - [Configuration](#configuration)
 - [Comparing alternative preparation](#comparing-alternative-preparation)
+- [Engine evaluations](#engine-evaluations)
 - [Running single stages](#running-single-stages)
 - [Files](#files)
 - [Troubleshooting](#troubleshooting)
@@ -34,6 +35,7 @@ Everything runs through `uv run repertoire <command>`. Add `--help` to any comma
 | `export` | Export the studies without building. |
 | `fetch` | Fetch the Explorer tables both repertoires need, without building. |
 | `compare` | Compare a candidate study or PGN with your repertoire. See [Comparing alternative preparation](#comparing-alternative-preparation). |
+| `evals` | Import Lichess cloud evaluations for your positions from the downloaded export. See [Engine evaluations](#engine-evaluations). |
 | `report` | Render the Markdown reports from saved results, offline. |
 | `score` | Inspect or score one repertoire PGN. |
 | `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. See [Running single stages](#running-single-stages). |
@@ -255,6 +257,23 @@ uv run repertoire compare https://lichess.org/study/<candidate-study-id> --color
 
 `build` then exports saved candidate studies along with your own, fetches their tables in the same pass, and reruns each comparison when your score or the candidate changes. A failing comparison is reported and skipped without blocking the main reports. The summary lists every saved comparison with its verdict and marks any made from an older score. `uv run repertoire compare` with no inputs reruns every saved comparison. A saved PGN from outside the repository is copied into `studies/candidates/`.
 
+## Engine evaluations
+
+`repertoire evals` keeps a local store of [Lichess cloud evaluations](https://database.lichess.org/#evals): Stockfish evaluations that Lichess users' browsers have shared, in centipawns or moves to mate from White's side. They describe positions objectively and are kept separate from the database score, which they never change. Build your repertoire first; the commands read the saved scores (`reports/data/white.json` and `black.json` by default) to find your positions.
+
+The evaluations come only from the export Lichess publishes, a single file of several hundred million positions (about 21 GB compressed). Download [lichess_db_eval.jsonl.zst](https://database.lichess.org/lichess_db_eval.jsonl.zst) to `.cache/evals/`; the download can take hours, since Lichess limits its speed. Then run:
+
+```sh
+uv run repertoire evals import
+uv run repertoire evals status
+```
+
+**`import`** searches the export for every position in your studies, every position one move beyond them (`--plies` changes how far) and every position where preparation ends. The file lists positions in no particular order, so it cannot be searched for one position: each import reads it from start to end, which takes about ten minutes, and keeps only the positions it is looking for. The store remembers which positions it has looked for in that file, so running `import` again after editing your studies reads the file again only if there are new positions, and looks only for those. Pass `--export` for a file elsewhere. A newer export is a different file, and importing it looks for every position again, keeping the deeper evaluation of each.
+
+Both commands end with the coverage for each color, which **`status`** prints on its own: how many of the positions where preparation ends have an evaluation, weighted by how often games end there, and how many of the positions games reach. Positions nobody has analyzed on Lichess, usually rare replies deep in a line, have no evaluation. Nothing is requested or estimated in their place.
+
+For each position the store keeps the deepest search in the export, with every line it reports, in `.cache/evals/evals.sqlite`.
+
 ## Running single stages
 
 `build` runs every stage in order and is the normal way to update results. The stage commands are useful for investigating one analysis.
@@ -313,10 +332,11 @@ Rows are filtered before the limit is applied, and the JSON keeps every row. `--
 | `configs/` | Your [configuration](#configuration) files. |
 | `comparisons.json` | [Saved comparisons](#saved-comparisons). |
 | `.cache/explorer/` | Every fetched Explorer table, keyed by position, endpoint and filters, with its retrieval time. |
+| `.cache/evals/` | The cloud evaluation store and, if you keep it there, the downloaded export. |
 | `reports/` | The generated reports, chapter and opening pages, and comparison pages. |
 | `reports/data/` | Saved scores and analyses as JSON, and the build's progress in `.build-state.json`. |
 
-All of these are ignored by Git, so your repertoire stays on your computer. Back up `studies.json`, `configs/` and `comparisons.json` yourself if you want their history. Deleting the cache means fetching every table again.
+All of these are ignored by Git, so your repertoire stays on your computer. Back up `studies.json`, `configs/` and `comparisons.json` yourself if you want their history. Deleting the cache means fetching every table again, and deleting `.cache/evals/` means downloading and importing the evaluation export again.
 
 Saved scores include the full model: every stopping event, score, sensitivity result, sample count and policy decision, plus a `manifest` recording the input file, its hash, the configuration, the filters and the cache entries used. A failed score run writes its error to `<output>.error.json`.
 
