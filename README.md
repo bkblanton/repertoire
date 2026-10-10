@@ -11,6 +11,7 @@ The score describes database results when you play your repertoire's moves. It i
 - **Expected score** for each color and chapter, next to the ordinary database score from the same starting point, with approximate 95% intervals.
 - **Where preparation ends:** the positions where games most often leave your preparation, one row per study task.
 - **Moves to review:** your own moves that score below the database average for their position.
+- **Free transpositions:** unprepared replies after which one of your moves leads back into your preparation, and whether doing so raises or lowers your score.
 - **Where your edge comes from:** the delta split move by move into parts that add up, so you can see which decisions earn it.
 - **Effort and value:** chapters ranked by edge per move to remember, lines worth little for their length, and valuable moves that come up too rarely to stay fresh.
 - **Chapter reach and depth:** how often each chapter is reached, by which move orders, and how many prepared moves you play on average.

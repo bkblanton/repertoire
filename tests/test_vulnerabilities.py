@@ -141,6 +141,7 @@ def saved_fixture(tmp_path):
             filters=DEFAULT_FILTERS,
             evidence=provenance,
             sparse_threshold=30,
+            prior=[0.5, 0.5, 0.5],
         ),
         chapters=[
             dict(

@@ -34,6 +34,7 @@ from .format import (
     opponent_rating,
     per_thousand,
     percentage,
+    plies,
     population_text,
     position_reach_label,
     rating_cell,
@@ -729,6 +730,78 @@ def effort_section(
                         percentage((1 - r['branch_reach']) ** games),
                     ]
                     for r in review
+                ],
+            ),
+        ]
+    return text
+
+
+def transposing_cell(row: JsonObject, refs: Chapters) -> str:
+    """Your move after the reply, linked to the prepared position it reaches, and the chapters holding it."""
+    route = refs.move_route(row)
+    number = plies(route) // 2 + 1
+    token = (
+        f"{number}.{row['transposing_san']}"
+        if row['exit_position'].split()[1] == 'w'
+        else (f"{number}...{row['transposing_san']}")
+    )
+    chapters = refs.chapter_sources({'chapter_attribution': {'source_ids': row['target_chapters']}})
+    link = analysis_url(row['transposition_target'], f'{route} {token}')
+    return f'[{line(token)}]({link})<br>to {chapters}'
+
+
+def change_cell(row: JsonObject) -> str:
+    return (
+        score_points(row['change_pp'], signed=True)
+        + f"<br>Move {score_points(row['move_change_pp'], signed=True)}, "
+        + f"prep {score_points(row['preparation_change_pp'], signed=True)}"
+        + '<br>95%: '
+        + interval_cell(row['change_interval_pp'])
+    )
+
+
+def free_transpositions_section(
+    scope: JsonObject | None,
+    refs: Chapters,
+    top: int,
+    level: str = '###',
+    anchor: str | None = None,
+    chapter: str | None = None,
+) -> list[str]:
+    """Unprepared replies after which one of your moves reaches prepared positions; on a chapter page, the
+    replies that leave that chapter."""
+    rows = [r for r in (scope or {}).get('free_transpositions', []) if not r.get('sparse')]
+    if chapter is not None:
+        rows = [r for r in rows if chapter in (r.get('chapter_attribution') or {}).get('context_ids', [])]
+    if not rows:
+        return []
+    text = [
+        *section(f'{level} Free transpositions', anchor),
+        'Unprepared replies after which one of your moves reaches a position you have prepared. Change is your '
+        'score there minus the database score after the reply, which is how the reports count these games now; it '
+        'splits into the move and your preparation after it. The comparison is with average play after the reply, '
+        'not your best move there, so a negative change is a reason not to transpose and a positive one only '
+        f'says it beats average play. {about("free-transpositions")}.',
+        '',
+    ]
+    for raise_score, name in ((True, 'Transposing raises your score'), (False, 'Transposing lowers your score')):
+        shown = [r for r in rows if (r['change_pp'] > 0) == raise_score][:top]
+        if not shown:
+            continue
+        text += [
+            f'**{name}**',
+            '',
+            *table(
+                ['Line', 'Chapter source', 'Games leaving prep here', 'Transpose with', 'Change'],
+                [
+                    [
+                        refs.move_cell(r),
+                        refs.sources(r),
+                        reach_cell(r['reach']),
+                        transposing_cell(r, refs),
+                        change_cell(r),
+                    ]
+                    for r in shown
                 ],
             ),
         ]

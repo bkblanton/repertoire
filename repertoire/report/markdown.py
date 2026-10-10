@@ -89,6 +89,7 @@ TEXT_COLUMNS = (
     'Comparison',
     'Part',
     'Arrivals',
+    'Transpose with',
 )
 
 # Numeric headers that share a prefix with a text column.

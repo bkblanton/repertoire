@@ -13,10 +13,12 @@ from .board_cache import fen_number, move_text, route_line, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .evaluate import KNOWN, UNKNOWN, Weights, backward, best_routes, can_enter, forward, reaches
 from .explorer import counts
+from .free_transpositions import free_transpositions
 from .graph import Graph, resolve, topology
 from .model import Evidence, Model, Sampled, arrival_counts, empirical, position_counts, prepare, score
 from .schema import JsonObject, Position
 from .status import Status
+from .uncertainty import Posterior
 
 
 def representative_lines(
@@ -306,6 +308,18 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
                 **scope,
             )
         )
+    overall_scope['free_transpositions'] = free_transpositions(
+        graph,
+        model,
+        sampled,
+        values,
+        reach,
+        Posterior(model, order, color, manifest['prior'], manifest['sparse_threshold']),
+        evidence,
+        color,
+        lines,
+        manifest['sparse_threshold'],
+    )
     overall_scope['effort'] = effort.effort(
         model, order, sampled, roots, overall_scope['all_signed_rows'], overall_scope['edge']
     )

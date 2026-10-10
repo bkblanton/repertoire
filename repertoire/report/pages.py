@@ -39,6 +39,7 @@ from .sections import (
     entry_routes_section,
     evidence_snapshot,
     exits_section,
+    free_transpositions_section,
     gap_section,
     openings_section,
     overview,
@@ -201,6 +202,7 @@ def chapter_page(
     contents = [
         ('starts', 'Where this chapter starts'),
         ('exits', 'Where preparation ends'),
+        ('free-transpositions', 'Free transpositions'),
         ('common-positions', 'Most common positions'),
         ('vulnerabilities', 'Vulnerabilities'),
         ('strengths', 'Strengths'),
@@ -294,6 +296,18 @@ def chapter_page(
     text += section('## Where this chapter starts', f'{anchor}-starts')
     text += leading_entries(chapter, preparation.get(cid), refs) or ['Entry routes are unavailable.', '']
     text += exits_section(char, refs, max(chapter_top, 10), level='##', anchor=f'{anchor}-exits')
+    free = free_transpositions_section(
+        bundle.get('vulnerabilities', {}).get('overall'),
+        refs,
+        chapter_top,
+        level='##',
+        anchor=f'{anchor}-free-transpositions',
+        chapter=cid,
+    )
+    text += free or section('## Free transpositions', f'{anchor}-free-transpositions') + [
+        'No well-sampled unprepared reply in this chapter has a move back into your preparation.',
+        '',
+    ]
     text += common_positions_for_scope(
         char or {'id': cid}, refs, position_top, level='##', anchor=f'{anchor}-common-positions'
     )
@@ -396,6 +410,9 @@ def full_report(
         ]
         text += alternatives_section(r, refs)
         text += exits_section(characters.get('overall'), refs, top, anchor=f'{color}-exits')
+        text += free_transpositions_section(
+            b.get('vulnerabilities', {}).get('overall'), refs, top, anchor=f'{color}-free-transpositions'
+        )
         text += common_positions_section([b], position_top)
         text += openings_section(b, refs)
         text += vulnerabilities_section(b.get('vulnerabilities', {}).get('overall'), refs, top)

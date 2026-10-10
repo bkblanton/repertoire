@@ -90,7 +90,12 @@ def write_json(path: str | Path, value: Any) -> None:
 def code_inputs(presentation: bool = False) -> dict[str, str | None]:
     """Source files whose changes invalidate saved analyses, or with `presentation` also the rendered pages."""
     package = Path(__file__).parent
-    rendering = [package / 'render.py', *sorted((package / 'report').glob('*.py'))]
+    # The glossary is rendered into the full report, so editing it re-renders the pages.
+    rendering = [
+        package / 'render.py',
+        *sorted((package / 'report').glob('*.py')),
+        package / 'report' / 'definitions.md',
+    ]
     # Study export, table fetching and the command dispatcher never affect analyses or rendering.
     excluded = ('studies.py', 'fetch.py', 'cli.py', 'render.py', *COMPARISON_CODE)
     files = [p for p in sorted(package.glob('*.py')) if p.name not in excluded]

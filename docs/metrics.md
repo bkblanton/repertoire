@@ -21,6 +21,7 @@ A few rules hold throughout:
   - [Chapter reach and entries](#chapter-reach-and-entries)
   - [Prepared depth](#prepared-depth)
   - [Where preparation ends](#where-preparation-ends)
+  - [Free transpositions](#free-transpositions)
   - [Gaps](#gaps)
   - [Score spread and outcome volatility](#score-spread-and-outcome-volatility)
   - [Reuse, reply variety and position profiles](#reuse-reply-variety-and-position-profiles)
@@ -44,9 +45,9 @@ Collapsed sections follow: the most common positions as a tree, chapter comparis
 
 ### The full report, chapter and opening pages
 
-`reports/report.md` holds the detail for both colors: chapter tables, exit points, positions, openings, vulnerabilities, strengths, where the edge comes from, effort and value, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
+`reports/report.md` holds the detail for both colors: chapter tables, exit points, free transpositions, positions, openings, vulnerabilities, strengths, where the edge comes from, effort and value, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
 
-Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, its exit points, positions, vulnerabilities, strengths, where its edge comes from, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
+Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, its exit points, free transpositions, positions, vulnerabilities, strengths, where its edge comes from, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
 
 ### Columns
 
@@ -139,6 +140,14 @@ The **prepared-depth distribution** in the full report shows the probability of 
 **Exit points** group every place a game leaves preparation by the last prepared position before it: the position where the opponent chose an unprepared reply, or a position where you have no move. **Games leaving prep here** is the total probability of those exits, and **share of games at this position** divides it by the position's reach. Each game leaves preparation once, so exit rows do not overlap. Finished games and missing opponent data are left out. The database score is the reach-weighted average of the unprepared replies' results.
 
 A position where many games leave through many rare replies, such as a chapter that ends one move early, appears as one row instead of dozens of 1% reply rows.
+
+### Free transpositions
+
+Preparation ends at an unprepared reply, and the reports score that game with the reply's row in the parent table: the database result of every game after it, whatever you played next. Sometimes one of your legal moves from there reaches a position you have prepared, so you could continue your preparation. The full report lists these replies, and each chapter page lists the ones that leave that chapter.
+
+**Change** is your repertoire score at the prepared position minus the database score after the reply. It splits into the **move**, the prepared position's database score minus the score after the reply, and your **preparation**, your score minus the prepared position's database score. For example, after 1.e4 d5 2.exd5 Qxd5 3.Nc3 Qd8 4.d4 e6, 5.Ne4 reaches a French Rubinstein position: its database score is lower than after 4...e6, but preparation there can make up the difference.
+
+The comparison is with average play after the reply, because the table at that position is not fetched. A negative change is therefore a good reason not to transpose, while a positive one only says that transposing beats average play, not that it is your best move. The prepared position's database score also counts every move order into it, which can differ from games that arrive this way. The 95% interval treats the reply's row and the prepared position's evidence as independent. Thinly sampled replies are left out, and the score itself never follows a game back into preparation.
 
 ### Gaps
 
