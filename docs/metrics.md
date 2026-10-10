@@ -28,6 +28,7 @@ A few rules hold throughout:
   - [Opponent ratings](#opponent-ratings)
   - [Correlations](#correlations)
 - [Strengths and vulnerabilities](#strengths-and-vulnerabilities)
+  - [Where your edge comes from](#where-your-edge-comes-from)
 
 ## Reading the reports
 
@@ -38,13 +39,13 @@ Start with `reports/summary.md`. After the headline scores, each color leads wit
 - **Where preparation ends** groups every unprepared reply by the last prepared position before it, so one row is one study task. *Games leaving prep here* is the share of all games with that color whose preparation ends at that position. *Of games at this position* separates a chapter that simply stops (100%) from rare sidelines at a busy position. Unlike other rankings, these rows do not overlap.
 - **Own moves to review** ranks your moves by how often they are played times how far they fall below the database score of their position.
 
-Collapsed sections follow: the most common positions as a tree, chapter comparisons, costly unprepared replies, your strongest moves, and preparation and variability. Where chapters compete in the same position, each alternative is listed with its score (see [Move selection](usage.md#move-selection)). Saved [comparisons](usage.md#comparing-alternative-preparation) are listed at the end. Notices about changed studies or missing analyses appear above the scores.
+Collapsed sections follow: the most common positions as a tree, chapter comparisons, costly unprepared replies, where your edge comes from, and preparation and variability. Where chapters compete in the same position, each alternative is listed with its score (see [Move selection](usage.md#move-selection)). Saved [comparisons](usage.md#comparing-alternative-preparation) are listed at the end. Notices about changed studies or missing analyses appear above the scores.
 
 ### The full report, chapter and opening pages
 
-`reports/report.md` holds the detail for both colors: chapter tables, exit points, positions, openings, vulnerabilities, strengths, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
+`reports/report.md` holds the detail for both colors: chapter tables, exit points, positions, openings, vulnerabilities, strengths, where the edge comes from, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
 
-Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, its exit points, positions, vulnerabilities, strengths, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
+Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, its exit points, positions, vulnerabilities, strengths, where its edge comes from, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
 
 ### Columns
 
@@ -197,6 +198,17 @@ Tables for positions where you have a prepared move are never fetched, because y
 Weighted values are shown in score points per 1,000 games, so a weighted drag of `0.0317%` reads as `0.32`. The summary ranks your moves by reach times gain or drag; the full report ranks them by the gain or drag itself. Intervals on gains and drags combine every table the comparison depends on. **1 in N games** is `1 / reach`: how many games with that color (or entering the chapter) pass before a position comes up once on average.
 
 Chapter rankings are among games that enter the chapter. For a chapter whose moves lost to an alternative, they describe the alternative, not the repertoire you play.
+
+### Where your edge comes from
+
+Gains overlap: the gain of `1.e4` includes everything after it. The edge ledger splits the delta into parts that add up instead. Each of your moves contributes its **edge**, `move reach * move gain`, where the move gain is the database score after the move minus the database score of the position it is played from. A move counts only its own step, so the rows add up, and the whole table answers which of your decisions earn the delta. The full report also groups the edge by your move number and lists the moves that cost the most.
+
+The moves alone add up to slightly more or less than the delta, for two reasons, each shown as its own row:
+
+- **Move orders at transpositions.** A prepared position's database score pools the opponent moves leading to it by game count, but your repertoire arrives through each move order in its own proportion. Rare move orders often score differently: after 1.e4 d6 2.d4 Nf6 3.Nc3 g6 4.g3 Bg7, games arriving by the Modern order (1...g6) may score better than the Pirc order, and your repertoire may send more games through it than the database does. Each arrival adds `its reach * (pooled score - score of its own move row)`. In a chapter, the row also covers move orders the chapter never uses and an entry where you are to move, whose baseline is its own table.
+- **Theory leaves**, which are scored with their own table, while the move into them is compared with its row in the parent table. Finished games (checkmate, stalemate, insufficient material) are scored exactly and form a third row when they occur.
+
+Together these reproduce the delta exactly; the build checks this for every color and chapter. Values are in score points per 1,000 games, so the total equals the delta times ten. Thinly sampled moves count in the totals but are left out of the ranked tables, as elsewhere.
 
 ### Position contributions
 

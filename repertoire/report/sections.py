@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
+from ..board_cache import san
 from ..preparation import line_text
 from ..schema import JsonObject
 from ..stats import cell
@@ -27,6 +28,7 @@ from .format import (
     evidence_date,
     gap_percentage,
     headline_delta,
+    interval_cell,
     line,
     number,
     opponent_rating,
@@ -463,6 +465,171 @@ def strengths_section(
             '',
         ]
     return text
+
+
+def edge_rows(scope: JsonObject | None, gains: bool) -> list[JsonObject]:
+    """Your moves by their share of the edge, largest first; thinly sampled comparisons are left out."""
+    rows = [
+        r
+        for r in non_sparse_rows((scope or {}).get('all_signed_rows', []))
+        if r['kind'] == 'own' and r.get('edge_pp') is not None and (r['edge_pp'] > 0 if gains else r['edge_pp'] < 0)
+    ]
+    return sorted(rows, key=lambda r: (-abs(r['edge_pp']), r['line']))
+
+
+def edge_table(rows: Sequence[JsonObject], scope: JsonObject, refs: Chapters) -> list[str]:
+    def move_gain(r: JsonObject) -> str:
+        gain = r.get('database_move_gain_pp')
+        if gain is None:
+            gain = 100 * (r['move_database_score'] - r['reference_score'])
+        return score_points(gain, signed=True) + '<br>95%: ' + interval_cell(r.get('database_move_gain_interval_pp'))
+
+    refs = refs.for_scope(scope.get('id'))
+    return table(
+        ['Line', 'Chapter source', 'Move reach', 'Move gain', 'Edge per 1,000 games'],
+        [
+            [
+                refs.move_cell(r),
+                refs.sources(r),
+                reach_cell(r['branch_reach']),
+                move_gain(r),
+                per_thousand(r['edge_pp'], signed=True),
+            ]
+            for r in rows
+        ],
+    )
+
+
+def other_edge_pp(ledger: JsonObject) -> float:
+    """Everything but your moves: move orders at transpositions, theory leaves and finished games."""
+    return ledger['move_orders_pp'] + ledger['theory_leaves_pp'] + ledger['finished_games_pp']
+
+
+def edge_totals(ledger: JsonObject) -> list[str]:
+    rows = [[f"Your moves ({ledger['decision_count']:,})", per_thousand(ledger['decisions_pp'], signed=True)]]
+    for key, label in (
+        ('move_orders_pp', 'Move orders at transpositions'),
+        ('theory_leaves_pp', 'Theory leaves'),
+        ('finished_games_pp', 'Finished games'),
+    ):
+        if abs(ledger[key]) > 1e-12:
+            rows.append([label, per_thousand(ledger[key], signed=True)])
+    rows.append(['**Total: the delta**', '**' + per_thousand(ledger['delta_pp'], signed=True) + '**'])
+    return table(['Part', 'Per 1,000 games'], rows)
+
+
+def edge_sentence(ledger: JsonObject, shares: bool = True) -> str:
+    """What your moves cost, and with `shares` how concentrated the edge is; shares need a positive edge, and
+    move numbers mean little on chapter pages, which start part-way into a game."""
+    costs = (
+        f"{ledger['costing_count']:,} of your moves score below their position, costing "
+        f"{per_thousand(-ledger['costs_pp'])} per 1,000 games in all."
+    )
+    delta = ledger['delta_pp']
+    if not shares or delta <= 0:
+        return costs
+    middle = sum(g['edge_pp'] for g in ledger['by_move_number'] if g['moves'] in ('2-3', '4-6'))
+    return (
+        f"Your top {ledger['top_decisions']} moves earn {percentage(ledger['top_decisions_pp'] / delta)} of the "
+        f'edge, and your moves 2 to 6 earn {percentage(middle / delta)}. {costs}'
+    )
+
+
+def summary_edge_section(scope: JsonObject | None, refs: Chapters, color: str, top: int = 5) -> list[str]:
+    ledger = (scope or {}).get('edge') or {}
+    rows = edge_rows(scope, gains=True)[:top]
+    if ledger.get('status') != Status.RESOLVED or not rows:
+        return []
+    return [
+        '<details>',
+        '<summary>Where your edge comes from</summary>',
+        '',
+        'Each of your moves earns how often you play it times its move gain: the database score after the move '
+        f'minus the database score of the position. Unlike other tables, these rows add up. {about("edge")}.',
+        '',
+        *edge_table(rows, cast(JsonObject, scope), refs),
+        f"Your {ledger['decision_count']:,} moves add up to {per_thousand(ledger['decisions_pp'], signed=True)} "
+        f'per 1,000 games and move orders at transpositions to {per_thousand(other_edge_pp(ledger), signed=True)}, '
+        f"for the delta of {per_thousand(ledger['delta_pp'], signed=True)}. {edge_sentence(ledger)}",
+        '',
+        f'[All of your edge, move by move](#{color}-edge).',
+        '',
+        '</details>',
+        '',
+    ]
+
+
+def edge_section(
+    scope: JsonObject | None,
+    refs: Chapters,
+    top: int,
+    level: str = '###',
+    anchor: str | None = None,
+    detailed: bool = True,
+) -> list[str]:
+    """The delta split into parts that add up; `detailed` adds the move-number and transposition tables."""
+    ledger = (scope or {}).get('edge') or {}
+    if ledger.get('status') != Status.RESOLVED:
+        return []
+    scope = cast(JsonObject, scope)
+    text = [
+        *section(f'{level} Where your edge comes from', anchor),
+        'The delta splits into parts that add up. Each of your moves earns how often you play it times its move '
+        'gain: the database score after the move minus the database score of the position. Unlike the gains in '
+        'the strengths tables, these do not overlap. Move orders at transpositions account for the database '
+        'pooling every move order into a position while your repertoire arrives in its own proportions. '
+        f'{about("edge")}.',
+        '',
+        *edge_totals(ledger),
+        edge_sentence(ledger, shares=detailed),
+        '',
+    ]
+    if detailed:
+        text += table(
+            ['Your move number', 'Per 1,000 games'],
+            [[g['moves'], per_thousand(g['edge_pp'], signed=True)] for g in ledger['by_move_number']],
+        )
+    for gains, name in ((True, 'Moves earning the most'), (False, 'Moves costing the most')):
+        rows = edge_rows(scope, gains)[:top]
+        if rows:
+            text += [f'**{name}**', '', *edge_table(rows, scope, refs)]
+    shown = ledger['transpositions'][:top] if detailed else []
+    if shown:
+        text += [
+            '<details>',
+            '<summary>Move orders at transpositions</summary>',
+            '',
+            'Positions your repertoire reaches through several move orders in other proportions than database '
+            "games do. Each arrival shows its share of the position's reach and the database score of its move.",
+            '',
+            *table(
+                ['Position', 'Arrivals', 'Effect per 1,000 games'],
+                [
+                    [
+                        refs.position_cell(t),
+                        '<br>'.join(arrival_text(a, t, refs) for a in t['arrivals']),
+                        per_thousand(t['effect_pp'], signed=True),
+                    ]
+                    for t in shown
+                ],
+            ),
+            '</details>',
+            '',
+        ]
+    return text
+
+
+def arrival_text(arrival: JsonObject, transposition: JsonObject, refs: Chapters) -> str:
+    total = sum(a['reach'] for a in transposition['arrivals'])
+    share = percentage(arrival['reach'] / total) if total else 'n/a'
+    if arrival['parent_position'] is None:
+        label = 'chapter entry'
+    else:
+        parent = arrival['parent_position']
+        label = line(
+            refs.move_route(dict(position=parent, move_san=san(parent, arrival['move']), line=arrival['line']))
+        )
+    return f"{label}: {share} at {percentage(arrival['score'])}"
 
 
 def alternatives_section(

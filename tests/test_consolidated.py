@@ -649,6 +649,7 @@ def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(comple
         move_san=None,
         local_gain_pp=10.0,
         local_drop_pp=10.0,
+        edge_pp=1.0,
         sample_count=100,
         parent_sample_count=100,
     )
@@ -667,7 +668,28 @@ def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(comple
                 dict(reply, line=f'Supported {label} reply', prepared=prepared, sparse=False, move_san=None),
             ]
         )
-    scope = dict(id='overall', rankings={'own': own_rows, 'opponent': replies}, strengths=own_rows)
+    ledger = dict(
+        status='resolved',
+        delta_pp=4.0,
+        decisions_pp=4.0,
+        move_orders_pp=0.0,
+        theory_leaves_pp=0.0,
+        finished_games_pp=0.0,
+        decision_count=4,
+        costing_count=0,
+        costs_pp=0.0,
+        top_decisions=10,
+        top_decisions_pp=4.0,
+        by_move_number=[dict(moves='2-3', edge_pp=4.0)],
+        transpositions=[],
+    )
+    scope = dict(
+        id='overall',
+        rankings={'own': own_rows, 'opponent': replies},
+        strengths=own_rows,
+        all_signed_rows=own_rows,
+        edge=ledger,
+    )
 
     def reached(path, route, reach, games, kind='opponent_reply', **extra):
         return dict(
@@ -708,8 +730,10 @@ def test_sparse_rankings_filter_before_limits_and_keep_summary_consistent(comple
     summary = summary_report([bundle])
     review_blocks = dict(re.findall(r'<details>\n<summary>([^<]+)</summary>\n(.*?)</details>', summary, re.S))
     review_blocks['Own moves to review'] = summary.split('### Own moves to review', 1)[1].split('<details>', 1)[0]
-    for title in ('Own moves to review', 'Costly unprepared replies', 'Strongest moves'):
+    assert 'Strongest moves' not in review_blocks
+    for title in ('Own moves to review', 'Costly unprepared replies', 'Where your edge comes from'):
         assert 'EXCLUDED_' not in review_blocks[title]
+    assert 'Supported own move' in review_blocks['Where your edge comes from']
     assert '### Largest position contributions' not in summary
     assert 'Supported own move' in review_blocks['Own moves to review']
     assert 'Supported unprepared reply' in review_blocks['Costly unprepared replies']
@@ -887,6 +911,7 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
             'Openings reached',
             'Vulnerabilities',
             'Strengths',
+            'Where your edge comes from',
             'Equivalent gap reach',
             'Prepared-depth distribution',
             'Branch score spread',

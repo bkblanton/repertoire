@@ -34,6 +34,7 @@ from .sections import (
     comparisons_section,
     correlations_section,
     depth_section,
+    edge_section,
     entry_routes_section,
     evidence_snapshot,
     exits_section,
@@ -46,6 +47,7 @@ from .sections import (
     rating_correlations_section,
     snapshot_notes,
     strengths_section,
+    summary_edge_section,
     vulnerabilities_section,
 )
 from .tables import chapter_table, leading_entries, summary_own_priorities
@@ -200,6 +202,7 @@ def chapter_page(
         ('common-positions', 'Most common positions'),
         ('vulnerabilities', 'Vulnerabilities'),
         ('strengths', 'Strengths'),
+        ('edge', 'Where your edge comes from'),
         ('gaps', 'Equivalent gap reach'),
         ('prepared-depth', 'Prepared-depth distribution'),
         ('spread', 'Branch score spread'),
@@ -304,6 +307,9 @@ def chapter_page(
         sparse_threshold=r['manifest']['sparse_threshold'],
         anchor=f'{anchor}-strengths',
     ) or section('## Strengths', f'{anchor}-strengths') + ['Strength analysis pending.', '']
+    text += edge_section(
+        vulnerabilities.get(cid), refs, chapter_top, level='##', anchor=f'{anchor}-edge', detailed=False
+    ) or section('## Where your edge comes from', f'{anchor}-edge') + ['Edge ledger pending.', '']
     text += gap_section(char, level='##', refs=refs, top=chapter_top, anchor=f'{anchor}-gaps')
     text += depth_section(preparation.get(cid), level='##', anchor=f'{anchor}-prepared-depth')
     text += branch_spread_section(char, level='##', anchor=f'{anchor}-spread') or section(
@@ -398,6 +404,7 @@ def full_report(
             top,
             sparse_threshold=r['manifest']['sparse_threshold'],
         )
+        text += edge_section(b.get('vulnerabilities', {}).get('overall'), refs, top, anchor=f'{color}-edge')
         text += gap_section(characters.get('overall'), refs=refs, top=top)
         text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
         text += branch_spread_section(characters.get('overall'))
@@ -540,7 +547,6 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
         text += exits_section(char, refs, 5)
         text += [f'[More exit points](#{color}-exits) · [All positions and gaps](#{color}-common-positions)', '']
         own_bad = own_priorities(moves.get('rankings', {}).get('own', []))
-        own_good = own_priorities(moves.get('strengths', []), strongest=True)
         replies = [x for x in non_sparse_rows(moves.get('rankings', {}).get('opponent', [])) if not x['prepared']][:5]
         if own_bad:
             text += [
@@ -636,21 +642,7 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                 '</details>',
                 '',
             ]
-        if own_good:
-            text += [
-                '<details>',
-                '<summary>Strongest moves</summary>',
-                '',
-                'Your moves that score above the database score of their position, ranked by move reach × gain. '
-                'Each gain is split into the move itself and the preparation after it. Rows overlap, so do not '
-                'add them.',
-                '',
-                *summary_own_priorities(own_good[:5], refs, strongest=True),
-                f'[All strengths and position contributions](#{color}-strengths).',
-                '',
-                '</details>',
-                '',
-            ]
+        text += summary_edge_section(b.get('vulnerabilities', {}).get('overall'), refs, color)
         metrics = [['Expected prepared depth', number(depth, 1) + ' own moves']]
         if median is not None:
             metrics.append(['Median prepared depth', f'{median} own moves'])

@@ -87,6 +87,8 @@ TEXT_COLUMNS = (
     'Most common reply',
     'Example route',
     'Comparison',
+    'Part',
+    'Arrivals',
 )
 
 # Numeric headers that share a prefix with a text column.

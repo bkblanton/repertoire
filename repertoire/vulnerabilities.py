@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from . import edge
 from .attribution import enrich
 from .board_cache import fen_number, move_text, route_line, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
@@ -224,6 +225,10 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     reach = reaches(model, order, sampled, roots)
     lines = representative_lines(graph, model, order, sampled, roots)
     overall_scope = rank_scope(local, reach, lines)
+    overall_scope['edge'] = edge.summarize(
+        edge.ledger(model, sampled, values, reach, roots, evidence, arrivals, color, lines),
+        overall_scope['all_signed_rows'],
+    )
     chapters: list[JsonObject] = []
     for chapter in saved['chapters']:
         context = contexts[json.dumps(chapter.get('policy_overrides', {}), sort_keys=True)]
@@ -257,12 +262,29 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
             scope_lines = representative_lines(
                 graph, chapter_model, chapter_order, chapter_sampled, weights, context['lines']
             )
-            scope = rank_scope(
-                context['local'],
-                reaches(chapter_model, chapter_order, chapter_sampled, weights),
-                scope_lines,
-                reported_probability,
+            chapter_reach = reaches(chapter_model, chapter_order, chapter_sampled, weights)
+            scope = rank_scope(context['local'], chapter_reach, scope_lines, reported_probability)
+            scope['edge'] = edge.summarize(
+                edge.ledger(
+                    chapter_model,
+                    chapter_sampled,
+                    chapter_values,
+                    chapter_reach,
+                    weights,
+                    evidence,
+                    arrivals,
+                    color,
+                    scope_lines,
+                ),
+                scope['all_signed_rows'],
             )
+            difference = chapter.get('entry_baseline', {}).get('difference_pp')
+            if (
+                scope['edge'].get('status') == Status.RESOLVED
+                and difference is not None
+                and not np.isclose(scope['edge']['delta_pp'], difference, atol=edge.TOLERANCE, rtol=0)
+            ):
+                raise AssertionError('Chapter edge ledger does not reproduce the entry-baseline delta')
         else:
             scope = dict(rankings={'opponent': [], 'own': []}, all_signed_rows=[], unresolved_rows=[], evaluated_rows=0)
         chapters.append(
@@ -302,6 +324,14 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     used = {k: analysis.provenance[k] for k in evidence}
     baseline = saved.get('starting_position_reference', {}).get('owner_score')
     total_score = saved['overall']['raw_empirical_score']
+    if (
+        overall_scope['edge'].get('status') == Status.RESOLVED
+        and baseline is not None
+        and not np.isclose(
+            overall_scope['edge']['delta_pp'], 100 * (total_score - baseline), atol=edge.TOLERANCE, rtol=0
+        )
+    ):
+        raise AssertionError('Edge ledger does not reproduce the overall delta')
     result: JsonObject = dict(
         color=saved['color'],
         overall_score=total_score,
@@ -316,6 +346,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
             probability_conservation=True,
             max_opponent_balance_error=max_balance_error,
             own_decision_positions=len(own_positions),
+            edge_ledger_reproduces_delta=True,
         ),
     )
     result['manifest']['own_score_basis'] = 'prepared repertoire continuation'
