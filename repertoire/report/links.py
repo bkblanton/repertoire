@@ -1,7 +1,10 @@
 """Board labels, Lichess analysis links and chapter attribution cells."""
 
+import re
 from collections.abc import Mapping
+from functools import lru_cache
 from typing import Self, cast
+from urllib.parse import quote
 
 import chess
 
@@ -11,17 +14,41 @@ from .format import escape, line, percentage, plies
 from .markdown import SourceCell
 
 LICHESS_ANALYSIS = 'https://lichess.org/analysis/standard/'
+LICHESS_PGN = 'https://lichess.org/analysis/pgn/'
 
 
-def analysis_url(position: Position, route: str = '') -> str:
-    """Open an exact canonical board on the Lichess analysis board and opening explorer."""
+@lru_cache(maxsize=4096)
+def route_moves(route: str, position: Position) -> tuple[str, ...] | None:
+    """SAN moves of a route from the standard start, only when they legally reach the exact board."""
+    tokens = tuple(re.sub(r'^\d+\.(\.\.)?', '', t) for t in route.split())
+    if not tokens or route.strip() == '(PGN root)':
+        return None
+    board = chess.Board()
+    try:
+        for san in tokens:
+            board.push_san(san)
+    except ValueError:
+        return None
+    reached = board.fen(en_passant='legal').split()[:4]
+    return tokens if reached == position.split()[:4] else None
+
+
+def analysis_url(position: Position, route: str = '', color: str | None = None) -> str:
+    """Open the line on the Lichess analysis board with its moves, or the exact board when the line cannot reach it.
+
+    Boards face the repertoire owner when the color is known, else the side to move.
+    """
+    orientation = color or ('white' if position.split()[1] == 'w' else 'black')
+    moves = route_moves(route, position)
+    if moves:
+        return LICHESS_PGN + quote(' '.join(moves), safe='+=') + f'?color={orientation}'
     fields = position.split()[:4]
-    return LICHESS_ANALYSIS + '_'.join(fields + ['0', str(plies(route) // 2 + 1)])
+    return LICHESS_ANALYSIS + '_'.join(fields + ['0', str(plies(route) // 2 + 1)]) + f'?color={orientation}'
 
 
-def linked_line(route: str, position: Position | None) -> str:
+def linked_line(route: str, position: Position | None, color: str | None = None) -> str:
     text = line(route)
-    return f'[{text}]({analysis_url(position, route)})' if position else text
+    return f'[{text}]({analysis_url(position, route, color)})' if position else text
 
 
 class Chapters:
@@ -48,7 +75,7 @@ class Chapters:
     def position_cell(self, row: JsonObject, route: str | None = None) -> str:
         """Board label linked to the Lichess analysis board at that exact position."""
         route = self.route(row.get('position'), row.get('line', '')) if route is None else route
-        return linked_line(route, row.get('position'))
+        return linked_line(route, row.get('position'), self.color)
 
     def move_route(self, row: JsonObject) -> str:
         """The parent board's shared label plus this move, so a board reads the same in every table."""
@@ -61,13 +88,20 @@ class Chapters:
         return token if plies(prefix) == 0 else f'{prefix} {token}'
 
     def move_cell(self, row: JsonObject) -> str:
-        """Links open the board where the repertoire owner chooses: before our move, after their reply."""
+        """Links open the full line shown, ending after the move."""
         route = self.move_route(row)
-        if row.get('kind') == 'opponent' and row.get('target'):
-            return linked_line(route, row['target'])
-        parent_route = ' '.join(route.split()[:-1])
+        target = row.get('target')
+        if not target and row.get('position') and row.get('move_san'):
+            try:
+                board = chess.Board(cast(Position, row['position']) + ' 0 1')
+                board.push_san(row['move_san'])
+                target = ' '.join(board.fen(en_passant='legal').split()[:4])
+            except ValueError:
+                target = None
+        if target:
+            return linked_line(route, target, self.color)
         text = line(route)
-        return f'[{text}]({analysis_url(row["position"], parent_route)})' if row.get('position') else text
+        return f'[{text}]({analysis_url(row["position"], route, self.color)})' if row.get('position') else text
 
     def page(self, cid: str) -> str:
         return f'{self.color[0].upper()}{self.entries[cid][0]}.md'
@@ -176,7 +210,7 @@ def bundle_refs(bundle: Bundle) -> Chapters:
     return Chapters(bundle['report'], bundle.get('openings'), board_routes(bundle))
 
 
-def exit_reply(stop: JsonObject, parent_route: str) -> str:
+def exit_reply(stop: JsonObject, parent_route: str, color: str | None = None) -> str:
     """Linked reply label numbered from the parent board's shared route."""
     try:
         board = chess.Board(stop['parent_position'] + ' 0 1')
@@ -186,4 +220,4 @@ def exit_reply(stop: JsonObject, parent_route: str) -> str:
     number = plies(parent_route) // 2 + 1
     token = f'{number}.{san}' if board.turn else f'{number}...{san}'
     route = token if plies(parent_route) == 0 else f'{parent_route} {token}'
-    return f'[{line(token)}]({analysis_url(stop["position"], route)})'
+    return f'[{line(token)}]({analysis_url(stop["position"], route, color)})'

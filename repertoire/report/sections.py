@@ -371,7 +371,7 @@ def character_section(
             [
                 escape(r['value']),
                 percentage(r['probability']),
-                linked_line(r['example_line'], r.get('example_position')),
+                linked_line(r['example_line'], r.get('example_position'), refs.color),
                 refs.sources(
                     {'position': r.get('example_position'), 'chapter_attribution': r.get('example_chapter_attribution')}
                 ),
@@ -747,7 +747,7 @@ def transposing_cell(row: JsonObject, refs: Chapters) -> str:
         else (f"{number}...{row['transposing_san']}")
     )
     chapters = refs.chapter_sources({'chapter_attribution': {'source_ids': row['target_chapters']}})
-    link = analysis_url(row['transposition_target'], f'{route} {token}')
+    link = analysis_url(row['transposition_target'], f'{route} {token}', refs.color)
     loss = (row.get('engine') or {}).get('loss_pp')
     engine = '' if loss is None else f'<br>engine loss {score_points(loss)}'
     return f'[{line(token)}]({link})<br>to {chapters}{engine}'
@@ -1412,11 +1412,11 @@ def exits_section(
     for row in shown:
         route = refs.route(row['position'], row['line'])
         if row['is_starting_position']:
-            label = f'[Starting position]({analysis_url(row["position"])})'
+            label = f'[Starting position]({analysis_url(row["position"], color=color)})'
         else:
-            label = linked_line(route, row['position'])
+            label = linked_line(route, row['position'], color)
         replies = row['replies']
-        listed = '<br>'.join(exit_reply(r, route) + ' ' + percentage(r['reach']) for r in replies[:3])
+        listed = '<br>'.join(exit_reply(r, route, color) + ' ' + percentage(r['reach']) for r in replies[:3])
         if len(replies) > 3:
             listed += f'<br>and {len(replies) - 3:,} more'
         if row['unrecorded']:
@@ -1492,7 +1492,7 @@ def position_tree(scope: JsonObject | None, refs: Chapters, limit: int = 12) -> 
         moves = line(' '.join(node['tokens'][start:]))
         opening = refs.opening_source(row)
         text.append(
-            '  ' * depth + f"- **[{moves}]({analysis_url(row['position'], ' '.join(node['tokens']))})**: "
+            '  ' * depth + f"- **[{moves}]({analysis_url(row['position'], ' '.join(node['tokens']), refs.color)})**: "
             f"{percentage(row['reach'])} of games, score {percentage(row.get('repertoire_score'))}"
             + ('' if opening == 'unavailable' else f' · {opening}')
         )
@@ -1578,7 +1578,7 @@ def entry_routes_section(chapter: JsonObject, scope: JsonObject | None, refs: Ch
             example = r['example']
             rows.append(
                 [
-                    linked_line(example['line'], r['position']),
+                    linked_line(example['line'], r['position'], refs.color),
                     refs.sources(dict(original, _opening_entry=True)),
                     percentage(r['conditional_first_entry_weight']),
                     percentage(example['conditional_probability']),
@@ -1608,7 +1608,7 @@ def entry_routes_section(chapter: JsonObject, scope: JsonObject | None, refs: Ch
         ['Entry position', 'Chapter source', 'Share of entries', 'Opponent rating'],
         [
             [
-                linked_line(' '.join(e['path']), e['position']),
+                linked_line(' '.join(e['path']), e['position'], refs.color),
                 refs.sources(dict(e, _opening_entry=True)),
                 percentage(e.get('conditional_first_entry_weight')),
                 opponent_rating(e.get('opponent_rating')),

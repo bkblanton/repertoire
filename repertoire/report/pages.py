@@ -108,7 +108,7 @@ def opening_details_page(bundle: Bundle, refs: Chapters, warnings: Sequence[str]
             source = refs.sources({'chapter_attribution': {'source_ids': entry['chapter_ids']}})
             values.append(
                 [
-                    linked_line(entry['example']['line'], entry['position']),
+                    linked_line(entry['example']['line'], entry['position'], refs.color),
                     SourceCell(
                         str(source),
                         refs.opening_source({'position': entry['position']}),
@@ -481,7 +481,7 @@ def full_report(
             ],
             [
                 [
-                    linked_line(' '.join(e['representative_path_san']), e.get('position')),
+                    linked_line(' '.join(e['representative_path_san']), e.get('position'), refs.color),
                     refs.sources(e),
                     per_thousand(100 * e['uncertainty_priority']),
                     count(e['sample_count']),

@@ -226,7 +226,7 @@ def leading_entries(chapter: JsonObject, scope: JsonObject | None, refs: Chapter
             cell = SourceCell(str(cell), labels[0], 'Also: ' + '; '.join(labels[1:]) if len(labels) > 1 else '')
         rows.append(
             [
-                linked_line(route['example']['line'], route['position']),
+                linked_line(route['example']['line'], route['position'], refs.color),
                 cell,
                 percentage(route['conditional_first_entry_weight']),
                 opponent_rating(original.get('opponent_rating')),

@@ -190,3 +190,27 @@ def test_new_insights_are_automated_in_report_and_summary(complete):
         for s in bundle['preparation']['scopes']
         for r in s.get('entry_routes', {}).get('positions', [])
     )
+
+
+def test_line_links_open_the_full_line_shown():
+    from repertoire.report.links import analysis_url
+
+    start = ' '.join(chess.Board().fen().split()[:4])
+    after = chess.Board()
+    after.push_san('e4')
+    e4 = ' '.join(after.fen(en_passant='legal').split()[:4])
+    refs = Chapters({'color': 'black', 'chapters': []}, boards={start: ''})
+    # An own move links to the board after it, with the moves that reach it.
+    own = refs.move_cell({'position': start, 'move_san': 'e4', 'line': '1.e4', 'kind': 'own'})
+    assert own == '[1. e4](https://lichess.org/analysis/pgn/e4?color=black)'
+    route = '1.e4 1...e5 2.Qh5 2...Nc6 3.Bc4 3...Nf6 4.Qxf7#'
+    board = chess.Board()
+    for san in route.split():
+        board.push_san(re.sub(r'^\d+\.(\.\.)?', '', san))
+    mated = ' '.join(board.fen(en_passant='legal').split()[:4])
+    assert analysis_url(mated, route, 'white') == (
+        'https://lichess.org/analysis/pgn/e4%20e5%20Qh5%20Nc6%20Bc4%20Nf6%20Qxf7%23?color=white'
+    )
+    # A route that does not reach the board falls back to the exact board.
+    assert analysis_url(mated, '1.e4', 'white').startswith('https://lichess.org/analysis/standard/')
+    assert analysis_url(e4, '(PGN root)').endswith('_0_1?color=black')

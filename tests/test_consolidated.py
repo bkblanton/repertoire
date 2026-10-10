@@ -107,7 +107,7 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     anchors = set(re.findall(r'<a id="([^"]+)"', full))
     assert all(target in anchors for target in re.findall(r'\]\(#([^)]+)\)', full))
     assert all(target in anchors for target in re.findall(r'\]\(report.md#([^)]+)\)', summary))
-    assert '](chapters/W1.md)' in full + summary and '](https://lichess.org/analysis/standard/' in full + summary
+    assert '](chapters/W1.md)' in full + summary and '](https://lichess.org/analysis/pgn/' in full + summary
     check_links(path.parent)
     assert full.count('<details>') == full.count('</details>')
     assert not list(path.parent.glob('*.study-description.md'))
@@ -957,7 +957,7 @@ def test_common_positions_are_prominent_and_link_to_chapters(complete):
     assert '| Position | Position reach | Repertoire score | Score spread | Games | Opponent rating |' in block
     scope = bundles[0]['character']['scopes'][0]
     e4 = next(r for r in scope['positions'] if r['line'] == '1.e4')
-    url = 'https://lichess.org/analysis/standard/' + '_'.join(e4['position'].split() + ['0', '1'])
+    url = 'https://lichess.org/analysis/pgn/e4?color=white'
     assert f'| [1. e4]({url})<br>' in block
     assert f"| 100.0%<br>every game | 40.0% | {spread_display(e4['branch_score_spread'])} | 100 |" in block
     assert '(PGN root)' not in block
