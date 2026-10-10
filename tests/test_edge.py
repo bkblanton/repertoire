@@ -7,6 +7,7 @@ import pytest
 from helpers import cache_row, data, position
 
 from repertoire import score
+from repertoire.evaluate import dominators
 from repertoire.graph import parse
 from repertoire.vulnerabilities import analyze
 
@@ -105,3 +106,42 @@ def test_chapter_ledgers_add_up_to_the_entry_baseline_delta(scored):
         assert ledger['delta_pp'] == pytest.approx(deltas[chapter['id']], abs=1e-12)
         parts = sum(ledger[k] for k in ('decisions_pp', 'move_orders_pp', 'theory_leaves_pp', 'finished_games_pp'))
         assert parts == pytest.approx(ledger['delta_pp'], abs=1e-12)
+
+
+def test_dominators_follow_every_route():
+    # a -> b -> d and a -> c -> d: d is dominated by a only; e after d is dominated by d.
+    model = {
+        'a': SimpleNamespace(branches=[SimpleNamespace(target='b'), SimpleNamespace(target='c')]),
+        'b': SimpleNamespace(branches=[SimpleNamespace(target='d')]),
+        'c': SimpleNamespace(branches=[SimpleNamespace(target='d')]),
+        'd': SimpleNamespace(branches=[SimpleNamespace(target='e'), SimpleNamespace(target='x')]),
+        'e': SimpleNamespace(branches=[]),
+        'x': SimpleNamespace(branches=[]),
+    }
+    sampled = {k: [(0.5, None)] * len(n.branches) for k, n in model.items()}
+    sampled['d'] = [(1.0, None), (0.0, None)]
+    order = ['x', 'e', 'd', 'c', 'b', 'a']
+    idom = dominators(model, order, sampled, {'a': 1.0})
+    assert idom == {'a': None, 'b': 'a', 'c': 'a', 'd': 'a', 'e': 'd'}
+
+
+def test_effort_ranks_disjoint_pruning_lines_and_rare_moves(scored):
+    path, cache, saved = scored
+    result = analyze(path, cache)
+    rows = {r['id']: r for r in result['overall']['all_signed_rows'] if r['kind'] == 'own'}
+    effort = result['overall']['effort']
+    root = next(r for r in rows.values() if r['position'] == position(''))
+    assert root['decisions_dropped'] == len(rows)
+    for row in rows.values():
+        assert row['drop_value_pp'] == pytest.approx(row['branch_reach'] * row['local_gain_pp'])
+        expected = row['drop_value_pp'] * (1 - row['branch_reach']) ** effort['recent_games']
+        assert row['review_priority_pp'] == pytest.approx(expected)
+    ranked = [rows[i] for i in effort['review']]
+    assert ranked == sorted(ranked, key=lambda r: -r['review_priority_pp'])
+    pruned = [rows[i] for i in effort['pruning']]
+    assert all(r['decisions_dropped'] >= effort['prune_min_decisions'] for r in pruned)
+    assert effort['decisions'] == len(rows)
+    counts = {c['id']: c['decisions'] for c in effort['chapters']}
+    for chapter in saved['chapters']:
+        recorded = [r for r in rows.values() if chapter['id'] in r['chapter_attribution']['source_ids']]
+        assert counts[chapter['id']] == len(recorded) > 0

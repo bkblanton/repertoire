@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from . import edge
+from . import edge, effort
 from .attribution import enrich
 from .board_cache import fen_number, move_text, route_line, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
@@ -306,6 +306,9 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
                 **scope,
             )
         )
+    overall_scope['effort'] = effort.effort(
+        model, order, sampled, roots, overall_scope['all_signed_rows'], overall_scope['edge']
+    )
     # The signed deviations from each opponent mean must cancel, including residual stops.
     max_balance_error = 0.0
     for context in contexts.values():
@@ -350,7 +353,10 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
         ),
     )
     result['manifest']['own_score_basis'] = 'prepared repertoire continuation'
-    return enrich(result, graph)
+    result = enrich(result, graph)
+    # Chapter effort counts the moves each chapter records, which the attribution above supplies.
+    overall_scope['effort']['chapters'] = effort.chapter_efforts(chapters, overall_scope['all_signed_rows'])
+    return result
 
 
 def main() -> None:

@@ -632,6 +632,109 @@ def arrival_text(arrival: JsonObject, transposition: JsonObject, refs: Chapters)
     return f"{label}: {share} at {percentage(arrival['score'])}"
 
 
+def rare_moves_metric(scope: JsonObject | None) -> list[str] | None:
+    """The summary row on moves met less than once per 1,000 games, as a share of the edge when it is positive."""
+    effort = (scope or {}).get('effort')
+    if not effort:
+        return None
+    rare, total, delta = effort['rare_decisions'], effort['decisions'], effort.get('delta_pp')
+    earned = (
+        f'{percentage(effort["rare_edge_pp"] / delta)} of the edge'
+        if delta is not None and delta > 0
+        else f'{per_thousand(effort["rare_edge_pp"], signed=True)} per 1,000 games'
+    )
+    games = f'{round(1 / effort["rare_reach"]):,}'
+    return [f'Moves met less than once in {games} games', f'{rare:,} of {total:,}, earning {earned}']
+
+
+def effort_section(
+    bundle: Bundle, refs: Chapters, top: int, level: str = '###', anchor: str | None = None
+) -> list[str]:
+    scope = bundle.get('vulnerabilities', {}).get('overall') or {}
+    effort = scope.get('effort')
+    if not effort:
+        return []
+    rows = {r['id']: r for r in scope.get('all_signed_rows', [])}
+    color = refs.color
+    text = [
+        *section(f'{level} Effort and value', anchor),
+        'What your preparation earns for the moves it takes to know. Edge per 1,000 games is the same as in '
+        f'[where your edge comes from](#{color}-edge). {about("effort")}.',
+        '',
+    ]
+    chapters = [c for c in effort.get('chapters', []) if c.get('edge_pp') is not None and c['decisions']]
+    if chapters:
+        text += [
+            '**Chapters by edge per move**',
+            '',
+            "A chapter's edge is its chance of being entered times its delta; its moves are the ones it records "
+            'that games reach. A move recorded in several chapters counts in each.',
+            '',
+            *table(
+                ['Chapter', 'Moves', 'Edge per 1,000 games', 'Per move'],
+                [
+                    [
+                        refs.label(c['id'], True),
+                        f"{c['decisions']:,}",
+                        per_thousand(c['edge_pp'], signed=True),
+                        per_thousand(c['edge_per_decision_pp'], signed=True),
+                    ]
+                    for c in sorted(chapters, key=lambda c: (-c['edge_per_decision_pp'], c['id']))
+                ],
+            ),
+        ]
+    pruning = [rows[i] for i in effort.get('pruning', []) if i in rows][:top]
+    if pruning:
+        text += [
+            '**Lines to consider pruning**',
+            '',
+            'Each row is one of your moves with every move that can only be reached through it. Value is what '
+            'dropping them would lose, reach × gain, and rows are ranked by value per move. Rows do not overlap. '
+            f'Lines with at least {effort["prune_min_decisions"]} moves are shown; moves that lose score on their '
+            f'own are in [vulnerabilities](#{color}-vulnerabilities).',
+            '',
+            *table(
+                ['Line', 'Chapter source', 'Move reach', 'Moves', 'Value per 1,000 games'],
+                [
+                    [
+                        refs.move_cell(r),
+                        refs.sources(r),
+                        reach_cell(r['branch_reach']),
+                        f"{r['decisions_dropped']:,}",
+                        per_thousand(r['drop_value_pp'], signed=True),
+                    ]
+                    for r in pruning
+                ],
+            ),
+        ]
+    review = [rows[i] for i in effort.get('review', []) if i in rows][:top]
+    if review:
+        games = effort['recent_games']
+        text += [
+            '**Valuable moves you rarely play**',
+            '',
+            'Moves worth reviewing because they come up too seldom to stay fresh through play: ranked by reach × gain '
+            f'times the chance that none of your last {games} games reached them.',
+            '',
+            *table(
+                ['Line', 'Chapter source', 'Move reach', 'Gain', f'Not met in {games} games'],
+                [
+                    [
+                        refs.move_cell(r),
+                        refs.sources(r),
+                        reach_cell(r['branch_reach']),
+                        score_points(r['local_gain_pp'], signed=True)
+                        + '<br>95%: '
+                        + interval_cell(r.get('local_gain_interval_pp')),
+                        percentage((1 - r['branch_reach']) ** games),
+                    ]
+                    for r in review
+                ],
+            ),
+        ]
+    return text
+
+
 def alternatives_section(
     report: JsonObject, refs: Chapters, level: str = '###', anchor: str | None = None
 ) -> list[str]:

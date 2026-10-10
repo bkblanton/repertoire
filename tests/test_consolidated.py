@@ -912,6 +912,7 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
             'Vulnerabilities',
             'Strengths',
             'Where your edge comes from',
+            'Effort and value',
             'Equivalent gap reach',
             'Prepared-depth distribution',
             'Branch score spread',

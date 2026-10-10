@@ -204,6 +204,42 @@ def reaches(
     return mass
 
 
+def dominators(
+    model: Model, order: list[Position], sampled: Sampled, roots: Weights
+) -> dict[Position, Position | None]:
+    """The immediate dominator of each position games reach: the last position every route from the roots passes
+    through before it, or None where routes from different roots, or a root itself, lead there.
+
+    Dropping the move at a position with one move removes exactly the positions it dominates from preparation.
+    """
+    parents: dict[Position, list[Position | None]] = {k: [None] for k, w in roots.items() if w}
+    for k in reversed(order):
+        if k not in parents:
+            continue
+        for b, (p, _) in zip(model[k].branches, sampled[k]):
+            if b.target is not None and p > 0:
+                parents.setdefault(b.target, []).append(k)
+    idom: dict[Position, Position | None] = {}
+    depth: dict[Position | None, int] = {None: 0}
+
+    def meet(a: Position | None, b: Position | None) -> Position | None:
+        while a != b:
+            if depth[a] < depth[b]:
+                a, b = b, a
+            a = idom[cast(Position, a)]
+        return a
+
+    for k in reversed(order):
+        if k not in parents:
+            continue
+        common = parents[k][0]
+        for parent in parents[k][1:]:
+            common = meet(common, parent)
+        idom[k] = common
+        depth[k] = depth[common] + 1
+    return idom
+
+
 def better_route(a: Route, b: Route) -> bool:
     """Whether route `a` beats `b`: more likely, with exact ties going to the earlier root and then earlier moves."""
     return a[0] > b[0] or (a[0] == b[0] and a[1:] < b[1:])

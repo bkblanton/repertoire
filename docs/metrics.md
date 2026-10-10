@@ -24,6 +24,7 @@ A few rules hold throughout:
   - [Gaps](#gaps)
   - [Score spread and outcome volatility](#score-spread-and-outcome-volatility)
   - [Reuse, reply variety and position profiles](#reuse-reply-variety-and-position-profiles)
+  - [Effort and value](#effort-and-value)
   - [Opening names](#opening-names)
   - [Opponent ratings](#opponent-ratings)
   - [Correlations](#correlations)
@@ -43,7 +44,7 @@ Collapsed sections follow: the most common positions as a tree, chapter comparis
 
 ### The full report, chapter and opening pages
 
-`reports/report.md` holds the detail for both colors: chapter tables, exit points, positions, openings, vulnerabilities, strengths, where the edge comes from, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
+`reports/report.md` holds the detail for both colors: chapter tables, exit points, positions, openings, vulnerabilities, strengths, where the edge comes from, effort and value, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
 
 Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, its exit points, positions, vulnerabilities, strengths, where its edge comes from, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
 
@@ -160,6 +161,16 @@ A **gap** is the first position a game reaches where you have no prepared move.
 **Reply predictability** is the entropy of the opponent's replies at each of their positions, shown as effective replies, `2 ** H`. The summary averages the entropy by reach. Games with no listed move count as missing coverage, never as another move.
 
 **Position profiles** describe the positions where preparation ends, including after an unprepared reply: queens on the board, king wings, bishop pairs, isolated, doubled and passed pawns, isolated d-pawns and pawn structures, with an effective number of pawn structures. King wings are current files, not castling history. Profiles describe where preparation ends, not the middlegames that follow.
+
+### Effort and value
+
+The full report weighs what your preparation earns against the moves it takes to know. Values are in score points per 1,000 games with that color, as in the [edge ledger](#where-your-edge-comes-from).
+
+- **Chapters by edge per move.** A chapter's edge is its entry probability times its delta, and its moves are the own moves it records that games reach. A move recorded in several chapters counts in each, since you study it in each. Chapters near the bottom earn little for what they ask you to remember.
+- **Lines to consider pruning.** Dropping one of your moves leaves preparation at that position, so it loses `move reach * gain`, where the gain is the repertoire score after the move minus the database score of the position. It also removes every move of yours that can only be reached through it: the positions it dominates, with transpositions accounted for. Each row is such a move with everything it dominates, ranked by value per move, showing groups of at least three moves. The rows never overlap, because a smaller group inside a listed one is not listed again. Moves that lose score on their own belong to the vulnerability tables instead.
+- **Valuable moves you rarely play.** A move reached with probability `p` per game is missing from your last 100 games with probability `(1 - p) ** 100`. Ranking `reach * gain` by that chance favors moves worth a lot that come up about once per hundred games: common moves are practised in play, and very rare ones are worth little.
+
+The summary's preparation table adds one line: how many of your moves come up less than once in 1,000 games, and their share of the edge. Thinly sampled moves are left out of both lists.
 
 ### Opening names
 

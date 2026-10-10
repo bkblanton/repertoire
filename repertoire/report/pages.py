@@ -35,6 +35,7 @@ from .sections import (
     correlations_section,
     depth_section,
     edge_section,
+    effort_section,
     entry_routes_section,
     evidence_snapshot,
     exits_section,
@@ -44,6 +45,7 @@ from .sections import (
     overview_notes,
     position_tree,
     preparation_gain_sentence,
+    rare_moves_metric,
     rating_correlations_section,
     snapshot_notes,
     strengths_section,
@@ -405,6 +407,7 @@ def full_report(
             sparse_threshold=r['manifest']['sparse_threshold'],
         )
         text += edge_section(b.get('vulnerabilities', {}).get('overall'), refs, top, anchor=f'{color}-edge')
+        text += effort_section(b, refs, top, anchor=f'{color}-effort')
         text += gap_section(characters.get('overall'), refs=refs, top=top)
         text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
         text += branch_spread_section(characters.get('overall'))
@@ -658,6 +661,9 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                     ]
                 )
             metrics.append(['Effective opponent replies', number(pred['effective_replies'], 1)])
+        rare = rare_moves_metric(b.get('vulnerabilities', {}).get('overall'))
+        if rare:
+            metrics.append(rare)
         metrics.append(['Equivalent gap reach', gap_percentage(char.get('gap_coverage'))])
         metrics.append(
             ['Branch score spread', percentage((char.get('branch_score_spread') or {}).get('standard_deviation'))]
@@ -669,6 +675,8 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
             )
         if char.get('branch_score_spread'):
             detail_links.append(f'[Branch spread and outcome volatility](#{color}-branch-score-spread)')
+        if rare:
+            detail_links.append(f'[Effort and value](#{color}-effort)')
         text += [
             '<details>',
             '<summary>Preparation and variability</summary>',
