@@ -31,8 +31,10 @@ from .format import (
     headline_delta,
     interval_cell,
     line,
+    move_reach_label,
     number,
     opponent_rating,
+    pawns,
     per_thousand,
     percentage,
     plies,
@@ -811,8 +813,16 @@ def free_transpositions_section(
     return text
 
 
-def pawns(centipawns: float | None) -> str:
-    return 'n/a' if centipawns is None else f'{centipawns / 100:+.2f}'
+NO_EVALUATIONS = 'No engine evaluations yet: download the Lichess evaluation export and run `repertoire evals import`.'
+
+
+def engine_resolved(bundle: Bundle) -> bool:
+    return (bundle.get('engine') or {}).get('status') == Status.RESOLVED
+
+
+def engine_missing(bundles: Sequence[Bundle]) -> bool:
+    """Whether an engine analysis ran but found no evaluations; reports say so once per page."""
+    return any(b.get('engine') is not None and not engine_resolved(b) for b in bundles)
 
 
 def engine_value(evaluation: JsonObject | None) -> str:
@@ -822,13 +832,6 @@ def engine_value(evaluation: JsonObject | None) -> str:
     if evaluation.get('mate') is not None:
         return f"#{evaluation['mate']}"
     return pawns(evaluation.get('cp'))
-
-
-def engine_mean(score: float | None) -> str:
-    """An average engine expected score, with its pawn equivalent on the same curve."""
-    if score is None:
-        return 'unavailable'
-    return pawns(centipawn_equivalent(score)) + '<br>' + percentage(score)
 
 
 def engine_coverage(exits: JsonObject) -> str:
@@ -842,20 +845,24 @@ def engine_coverage(exits: JsonObject) -> str:
     return text + '.'
 
 
-def engine_sentence(bundle: Bundle) -> str | None:
-    """The summary's one line on the engine's view where preparation ends."""
-    engine = bundle.get('engine')
-    if engine is None:
+def engine_exits_sentence(exits: JsonObject, bold: bool = False) -> str | None:
+    score = exits.get('engine_score')
+    if score is None:
         return None
-    exits = scope_by_id(engine).get('overall', {}).get('exits', {})
-    if engine.get('status') != Status.RESOLVED or exits.get('engine_score') is None:
-        return 'No engine evaluations yet: download the Lichess evaluation export and run `repertoire evals import`.'
-    score = exits['engine_score']
+    value = pawns(centipawn_equivalent(score))
+    if bold:
+        value = f'**{value}**'
     return (
-        f'Where preparation ends, the engine gives you **{pawns(centipawn_equivalent(score))}** '
-        f"({percentage(score)}) on average, against the database's {percentage(exits['database_score'])}. "
-        f'{engine_coverage(exits)}'
+        f'Where preparation ends, the engine gives you {value} ({percentage(score)}) on average, against the '
+        f"database's {percentage(exits['database_score'])} over the same games. {engine_coverage(exits)}"
     )
+
+
+def engine_sentence(bundle: Bundle) -> str | None:
+    """The summary's line on the engine's view where preparation ends, when there are evaluations."""
+    if not engine_resolved(bundle):
+        return None
+    return engine_exits_sentence(scope_by_id(bundle.get('engine')).get('overall', {}).get('exits', {}), bold=True)
 
 
 def judged(value: float | None, name: str | None, signed: bool = True) -> str:
@@ -863,48 +870,39 @@ def judged(value: float | None, name: str | None, signed: bool = True) -> str:
 
 
 def engine_section(
-    bundle: Bundle, refs: Chapters, top: int, level: str = '###', anchor: str | None = None
+    bundle: Bundle,
+    refs: Chapters,
+    top: int,
+    level: str = '###',
+    anchor: str | None = None,
+    scope_id: str = 'overall',
 ) -> list[str]:
+    """The engine's view of one scope: the whole color, or on a chapter page that chapter. Without evaluations a
+    chapter page says so in place of the section; the full report says it once near the top."""
     engine = bundle.get('engine')
-    if engine is None or engine.get('status') != Status.RESOLVED:
+    if engine is None:
         return []
-    scopes = scope_by_id(engine)
-    exits = scopes.get('overall', {}).get('exits', {})
+    heading = section(f'{level} Engine view', anchor)
+    if not engine_resolved(bundle):
+        return [*heading, NO_EVALUATIONS, ''] if scope_id != 'overall' else []
+    refs = refs.for_scope(scope_id)
+    vulnerabilities = bundle.get('vulnerabilities', {})
+    scope = (
+        vulnerabilities.get('overall')
+        if scope_id == 'overall'
+        else scope_by_id(vulnerabilities, 'chapters').get(scope_id)
+    ) or {}
     text = [
-        *section(f'{level} Engine view', anchor),
+        *heading,
         'Stockfish evaluations from the Lichess evaluation export, converted to your expected score with the Lichess '
         'win-chance curve, so they read on the same scale as database scores. They judge positions objectively and '
         f'never change a score. {about("engine")}.',
         '',
-        f"Where preparation ends, the engine gives you {pawns(centipawn_equivalent(exits['engine_score']))} "
-        f"({percentage(exits['engine_score'])}) on average and the database {percentage(exits['database_score'])}, "
-        f'over the same games. {engine_coverage(exits)}',
-        '',
     ]
-    chapters = [(c, scopes.get(c['id'], {}).get('exits', {})) for c in bundle['report']['chapters']]
-    rows = [(c, e) for c, e in chapters if e.get('engine_score') is not None]
-    if rows:
-
-        def coverage(e: JsonObject) -> str:
-            share = e['evaluated_reach'] / e['reach'] if e.get('reach') else 1.0
-            return f'<br>covers {percentage(share)}' if share < 0.995 else ''
-
-        text += [
-            '**Chapters where preparation ends**',
-            '',
-            *table(
-                ['Chapter', 'Database where prep ends', 'Engine where prep ends'],
-                [
-                    [
-                        refs.label(c['id'], True),
-                        percentage(e['database_score']),
-                        engine_mean(e['engine_score']) + coverage(e),
-                    ]
-                    for c, e in rows
-                ],
-            ),
-        ]
-    moves = (bundle.get('vulnerabilities', {}).get('overall') or {}).get('all_signed_rows', [])
+    sentence = engine_exits_sentence(scope_by_id(engine).get(scope_id, {}).get('exits', {}))
+    if sentence:
+        text += [sentence, '']
+    moves = scope.get('all_signed_rows', [])
     own = sorted(
         (
             r
@@ -924,7 +922,7 @@ def engine_section(
             'the move scores well in practice anyway.',
             '',
             *table(
-                ['Line', 'Chapter source', 'Move reach', 'Move gain', 'Engine loss'],
+                ['Line', 'Chapter source', move_reach_label(scope), 'Move gain', 'Engine loss'],
                 [
                     [
                         refs.move_cell(r),
@@ -954,7 +952,7 @@ def engine_section(
             'score for unprepared ones.',
             '',
             *table(
-                ['Line', 'Chapter source', 'Move reach', 'Engine gain', 'Your score after'],
+                ['Line', 'Chapter source', move_reach_label(scope), 'Engine gain', 'Your score after'],
                 [
                     [
                         refs.move_cell(r),
@@ -967,18 +965,16 @@ def engine_section(
                 ],
             ),
         ]
-    stops = {
-        (s.get('parent_position'), s.get('move'), s['position']): s
-        for s in scope_by_id(bundle.get('preparation')).get('overall', {}).get('stops', [])
-    }
-    disagreements = []
-    for item in engine.get('exits', []):
-        stop = stops.get((item['parent_position'], item['move'], item['position']))
-        if item['basis'] != 'evaluated' or stop is None or stop.get('sparse') or stop.get('score') is None:
-            continue
-        disagreements.append((stop, item))
-    disagreements.sort(key=lambda p: (-p[0]['reach'] * abs(p[0]['score'] - p[1]['engine_score']), p[0]['position']))
-    if disagreements:
+    positions = engine.get('positions', {})
+    stops = [
+        s
+        for s in scope_by_id(bundle.get('preparation')).get(scope_id, {}).get('stops', [])
+        if s['position'] in positions and not s.get('sparse') and s.get('score') is not None and s.get('reach')
+    ]
+    stops.sort(
+        key=lambda s: (-s['reach'] * abs(s['score'] - positions[s['position']]['expected_score']), s['position'])
+    )
+    if stops:
         text += [
             '**Where the database and the engine disagree**',
             '',
@@ -990,13 +986,15 @@ def engine_section(
                 ['Line', 'Chapter source', 'Games leaving prep here', 'Database', 'Engine'],
                 [
                     [
-                        stop_cell(stop, refs),
-                        refs.sources(stop),
-                        reach_cell(stop['reach']),
-                        percentage(stop['score']),
-                        engine_value(item['engine']) + '<br>' + percentage(item['engine_score']),
+                        stop_cell(s, refs),
+                        refs.sources(s),
+                        reach_cell(s['reach']),
+                        percentage(s['score']),
+                        engine_value(positions[s['position']])
+                        + '<br>'
+                        + percentage(positions[s['position']]['expected_score']),
                     ]
-                    for stop, item in disagreements[:top]
+                    for s in stops[:top]
                 ],
             ),
         ]
@@ -1009,17 +1007,6 @@ def stop_cell(stop: JsonObject, refs: Chapters) -> str:
     if not parent or not move:
         return refs.position_cell(stop)
     return refs.move_cell(dict(position=parent, move_san=san(parent, move), line=stop['line'], kind='opponent'))
-
-
-def chapter_engine_fact(bundle: Bundle, chapter: str) -> str | None:
-    exits = scope_by_id(bundle.get('engine')).get(chapter, {}).get('exits', {})
-    if exits.get('engine_score') is None:
-        return None
-    return (
-        f"**Engine:** where preparation ends, the engine gives {pawns(centipawn_equivalent(exits['engine_score']))} "
-        f"({percentage(exits['engine_score'])}) and the database {percentage(exits['database_score'])}. "
-        f'{engine_coverage(exits)} {about("engine")}.'
-    )
 
 
 def alternatives_section(

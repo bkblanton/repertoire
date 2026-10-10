@@ -70,7 +70,13 @@ def test_engine_view_scores_moves_exits_and_transpositions(scored, evaluation_st
     assert overall['evaluated_reach'] > 0 and overall['floored_reach'] > 0
     total = overall['evaluated_reach'] + overall['floored_reach'] + overall['missing_reach']
     assert total == pytest.approx(overall['reach'])
-    assert {e['basis'] for e in result['exits']} == {'evaluated', 'floor'}
+    assert set(result['positions']) == {
+        position('e4 e5 Nc3 Qf6'),
+        position('e4 e5 Nc3 Qf6 Nd5'),
+        position('e4 e5 Nc3 Qf6 Nd5 Qd8'),
+        position('e4 e5 Nc3'),
+    }
+    assert result['positions'][position('e4 e5 Nc3')]['cp'] == 30
 
 
 def test_without_a_store_the_engine_view_is_unresolved(scored):  # noqa: F811
@@ -101,3 +107,17 @@ def test_report_shows_the_engine_view_and_the_summary_line(scored, evaluation_st
     assert engine_sentence(bundle).startswith('Where preparation ends, the engine gives you')
     path.with_suffix('.engine.json').unlink()
     assert engine_sentence(load([path], strict=False)[0]) is None
+
+
+def test_missing_evaluations_are_mentioned_once_per_page(complete, tmp_path):
+    from repertoire.report.generate import generate
+    from repertoire.report.sections import NO_EVALUATIONS
+
+    path, _ = complete
+    out = tmp_path / 'out'
+    generate([path], out / 'report.md', out / 'summary.md')
+    for name in ('summary.md', 'report.md'):
+        assert (out / name).read_text(encoding='utf-8').count(NO_EVALUATIONS) == 1
+    pages = list((out / 'chapters').glob('*.md'))
+    assert pages and all(p.read_text(encoding='utf-8').count(NO_EVALUATIONS) == 1 for p in pages)
+    assert 'Engine where prep ends' not in (out / 'report.md').read_text(encoding='utf-8')

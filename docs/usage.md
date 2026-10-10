@@ -274,7 +274,7 @@ Both commands end with the coverage for each color, which **`status`** prints on
 
 For each position the store keeps the deepest search in the export, with every line it reports, in `.cache/evals/evals.sqlite`.
 
-`build` then adds an engine view to the reports (see [Engine view](metrics.md#engine-view)) and reruns it whenever the store changes. Without a store, the reports say that no engine evaluations are available; everything else is unchanged.
+`build` then adds an engine view to the reports (see [Engine view](metrics.md#engine-view)) and reruns it whenever the store changes. The export is optional: without a store, each report page says once that no engine evaluations are available, the engine column and sections are left out, and everything else is unchanged.
 
 ## Running single stages
 

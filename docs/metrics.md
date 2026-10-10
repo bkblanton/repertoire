@@ -186,11 +186,13 @@ The summary's preparation table adds one line: how many of your moves come up le
 
 When you have [imported engine evaluations](usage.md#engine-evaluations), the reports add an engine's view beside the database's. Each position uses the deepest Stockfish evaluation in the Lichess export, first line, from your side, converted to an **expected score** with the Lichess win-chance curve `1 / (1 + exp(-0.00368208 * centipawns))`, the curve whose inverse gives the reports' centipawn equivalents. Mate counts as 100% or 0%. Engine and database scores are then on the same scale; pawn figures beside an average convert it back on the same curve.
 
-- **Where preparation ends.** The summary and the full report give the engine's average expected score at the positions where preparation ends, beside the database score over the same games, for each color and chapter. A database score above the engine's means opponents there go wrong in practice; one below means positions better than they play.
+- **Where preparation ends.** The summary, the full report and each chapter page give the engine's average expected score at the positions where preparation ends, beside the database score over the same games. The full report's chapter table adds it as a column, with its coverage when some positions have no evaluation. A database score above the engine's means opponents there go wrong in practice; one below means positions better than they play.
 - **Your moves the engine questions.** A move's engine loss is the expected score before it minus after it. 5, 10 and 15 points match Lichess's inaccuracy, mistake and blunder thresholds (0.1, 0.2 and 0.3 in winning chances). Moves of at least an inaccuracy are listed with their database move gain, so you can see which still score well in practice.
 - **Opponent mistakes.** Replies that raise your expected score by at least 5 points, with your score after them.
 - **Where the database and the engine disagree.** The places preparation ends whose database and engine scores differ most, weighted by how often games end there.
 - **Free transpositions** also show the engine loss of the transposing move: how much worse it is than the engine's best move after the reply.
+
+Each chapter page has its own engine view with these tables, for games entering the chapter.
 
 Evaluations exist only for positions someone analyzed on Lichess, so rare positions deep in a line often have none. They stay missing. Where preparation ends after such a reply, the position before the reply bounds it from below, because the engine evaluates that position with the opponent's best reply; the reports state how much of each average rests on evaluations and how much only on these floors, and averages use evaluated positions only. Engine figures never change a score, a ranking or a move choice.
 

@@ -6,6 +6,7 @@ from ..schema import JsonObject
 from .format import (
     count,
     delta_points,
+    engine_mean,
     escape,
     gain_split,
     gap_percentage,
@@ -26,8 +27,11 @@ from .links import Chapters, linked_line
 from .markdown import Cell, SourceCell, drop_uniform, table
 
 
-def chapter_table(report: JsonObject, refs: Chapters, detailed: bool = True) -> list[str]:
-    """One row per chapter: its page link, Lichess study link, and entry-conditional metrics."""
+def chapter_table(
+    report: JsonObject, refs: Chapters, detailed: bool = True, engine: Mapping[str, JsonObject] | None = None
+) -> list[str]:
+    """One row per chapter: its page link, Lichess study link, and entry-conditional metrics. `engine` (the
+    engine analysis's scopes) adds the engine's average where preparation ends, when there are evaluations."""
     alternatives = any(c.get('policy_overrides') for c in report['chapters'])
     rows: list[list[Cell]] = []
     for c in report['chapters']:
@@ -55,6 +59,7 @@ def chapter_table(report: JsonObject, refs: Chapters, detailed: bool = True) -> 
                 spread_display(s.get('branch_score_spread'), False),
                 gaps,
                 opponent_rating(c.get('opponent_ratings', {}).get('score_evidence')),
+                *([engine_cell(engine.get(c['id'], {}).get('exits', {}))] if engine is not None else []),
             ]
         )
     return table(
@@ -68,9 +73,18 @@ def chapter_table(report: JsonObject, refs: Chapters, detailed: bool = True) -> 
             'Score spread',
             'Equivalent gap reach' + ('<br>Weighted contribution' if detailed else ''),
             'Opponent rating',
+            *(['Engine where prep ends'] if engine is not None else []),
         ],
         rows,
     )
+
+
+def engine_cell(exits: JsonObject) -> str:
+    """The engine's average where a chapter's preparation ends, with its coverage when evaluations are missing."""
+    if exits.get('engine_score') is None:
+        return 'unavailable'
+    share = exits['evaluated_reach'] / exits['reach'] if exits.get('reach') else 1.0
+    return engine_mean(exits['engine_score']) + (f'<br>covers {percentage(share)}' if share < 0.995 else '')
 
 
 def own_move_table(rows: Iterable[JsonObject], scope: JsonObject, refs: Chapters, strongest: bool = False) -> list[str]:

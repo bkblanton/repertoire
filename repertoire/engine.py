@@ -97,17 +97,26 @@ def exits_summary(stops: Iterable[JsonObject], engine: Mapping[Position, float])
     )
 
 
+def move_rows(vulnerabilities: JsonObject) -> list[JsonObject]:
+    """Every move row once, from the overall repertoire and every chapter; a chapter whose moves lost to an
+    alternative has rows of its own."""
+    seen: dict[str, JsonObject] = {}
+    for scope in [vulnerabilities['overall'], *vulnerabilities.get('chapters', [])]:
+        for row in scope.get('all_signed_rows', []):
+            seen.setdefault(row['id'], row)
+    return list(seen.values())
+
+
 def wanted(vulnerabilities: JsonObject, preparation: JsonObject) -> set[Position]:
     """Every position the engine view looks up."""
     result: set[Position] = set()
     for scope in preparation['scopes']:
         for stop in scope.get('stops', []):
             result.update(k for k in (stop.get('position'), stop.get('parent_position')) if k)
-    overall = vulnerabilities['overall']
-    for row in overall['all_signed_rows']:
+    for row in move_rows(vulnerabilities):
         result.add(row['position'])
         result.add(row['target'] or children(row['position'])[row['move']])
-    for row in overall.get('free_transpositions', []):
+    for row in vulnerabilities['overall'].get('free_transpositions', []):
         result.update((row['exit_position'], row['transposition_target']))
     return result
 
@@ -131,28 +140,10 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Pa
     result['scopes'] = [
         dict(id=scope['id'], exits=exits_summary(scope.get('stops', []), engine)) for scope in preparation['scopes']
     ]
-    overall_stops = next(s for s in preparation['scopes'] if s['id'] == 'overall').get('stops', [])
-    exits: list[JsonObject] = []
-    for stop in overall_stops:
-        basis = (
-            'evaluated' if stop['position'] in engine else 'floor' if stop.get('parent_position') in engine else None
-        )
-        if basis is None or stop.get('score') is None:
-            continue
-        exits.append(
-            dict(
-                position=stop['position'],
-                parent_position=stop.get('parent_position'),
-                move=stop.get('move'),
-                basis=basis,
-                engine=display(
-                    evaluations[stop['position'] if basis == 'evaluated' else stop['parent_position']], color
-                ),
-                engine_score=engine[stop['position'] if basis == 'evaluated' else stop['parent_position']],
-            )
-        )
+    # Each evaluated position once, so every page can label the places its preparation ends.
+    positions = {k: display(evaluations[k], color) for k in sorted(engine)}
     moves: dict[str, JsonObject] = {}
-    for row in vulnerabilities['overall']['all_signed_rows']:
+    for row in move_rows(vulnerabilities):
         after_position = row['target'] or children(row['position'])[row['move']]
         before, after = engine.get(row['position']), engine.get(after_position)
         change = None if before is None or after is None else 100 * (after - before)
@@ -173,7 +164,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Pa
         transpositions[row['id']] = dict(before=before, after=after, loss_pp=loss, judgement=judgement(loss))
     analysis.require_source('engine analysis')
     result.update(
-        exits=exits,
+        positions=positions,
         moves=moves,
         transpositions=transpositions,
         manifest=analysis.companion_manifest(

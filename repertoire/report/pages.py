@@ -26,9 +26,9 @@ from .format import (
 from .links import Chapters, bundle_refs, linked_line
 from .markdown import Cell, SourceCell, about, drop_uniform, report_navigation, section, table
 from .sections import (
+    NO_EVALUATIONS,
     alternatives_section,
     branch_spread_section,
-    chapter_engine_fact,
     character_section,
     common_positions_for_scope,
     common_positions_section,
@@ -37,6 +37,8 @@ from .sections import (
     depth_section,
     edge_section,
     effort_section,
+    engine_missing,
+    engine_resolved,
     engine_section,
     engine_sentence,
     entry_routes_section,
@@ -210,6 +212,7 @@ def chapter_page(
         ('vulnerabilities', 'Vulnerabilities'),
         ('strengths', 'Strengths'),
         ('edge', 'Where your edge comes from'),
+        ('engine', 'Engine view'),
         ('gaps', 'Equivalent gap reach'),
         ('prepared-depth', 'Prepared-depth distribution'),
         ('spread', 'Branch score spread'),
@@ -286,9 +289,6 @@ def chapter_page(
         f"**Gaps:** adds {gap_percentage(chapter.get('gap_coverage'), weighted=True)} to the "
         f"{color.title()} equivalent gap reach. {about('gap-reach')}."
     )
-    engine = chapter_engine_fact(bundle, cid)
-    if engine:
-        facts.append(engine)
     interval = s.get('posterior', {}).get('credible_interval_95')
     if interval:
         facts.append(
@@ -332,6 +332,9 @@ def chapter_page(
     text += edge_section(
         vulnerabilities.get(cid), refs, chapter_top, level='##', anchor=f'{anchor}-edge', detailed=False
     ) or section('## Where your edge comes from', f'{anchor}-edge') + ['Edge ledger pending.', '']
+    text += engine_section(bundle, refs, chapter_top, level='##', anchor=f'{anchor}-engine', scope_id=cid) or section(
+        '## Engine view', f'{anchor}-engine'
+    ) + ['Engine analysis pending.', '']
     text += gap_section(char, level='##', refs=refs, top=chapter_top, anchor=f'{anchor}-gaps')
     text += depth_section(preparation.get(cid), level='##', anchor=f'{anchor}-prepared-depth')
     text += branch_spread_section(char, level='##', anchor=f'{anchor}-spread') or section(
@@ -396,6 +399,7 @@ def full_report(
         *overview(bundles),
         overview_notes(bundles),
         '',
+        *([NO_EVALUATIONS, ''] if engine_missing(bundles) else []),
     ]
     for b in bundles:
         r = b['report']
@@ -412,7 +416,7 @@ def full_report(
             'own page. Chapters overlap only where one chapter\'s line transposes onto another\'s entry position, '
             f'and some games reach no chapter, so reaches and scores are not additive. {about("entry")}.',
             '',
-            *chapter_table(r, refs),
+            *chapter_table(r, refs, engine=scope_by_id(b.get('engine')) if engine_resolved(b) else None),
         ]
         text += alternatives_section(r, refs)
         text += exits_section(characters.get('overall'), refs, top, anchor=f'{color}-exits')
@@ -547,6 +551,7 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
         '',
         LINKS_NOTE,
         '',
+        *([NO_EVALUATIONS, ''] if engine_missing(bundles) else []),
     ]
     for b in bundles:
         r = b['report']

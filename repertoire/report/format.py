@@ -134,6 +134,17 @@ def centipawn_equivalent(score: float | None) -> float | None:
     return math.log(score / (1 - score)) / LICHESS_WIN_CHANCE_COEFFICIENT
 
 
+def pawns(centipawns: float | None) -> str:
+    return 'n/a' if centipawns is None else f'{centipawns / 100:+.2f}'
+
+
+def engine_mean(score: float | None) -> str:
+    """An average engine expected score, with its pawn equivalent on the same curve."""
+    if score is None:
+        return 'unavailable'
+    return pawns(centipawn_equivalent(score)) + '<br>' + percentage(score)
+
+
 def centipawn_delta(after: float | None, before: float | None) -> float | None:
     """Convert both scores first, then subtract before from after."""
     converted = [centipawn_equivalent(p) for p in (after, before)]
