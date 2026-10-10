@@ -20,6 +20,7 @@ COMMANDS = [
     ('ratings', 'ratings', 'Opponent rating contexts for chapters and lines'),
     ('openings', 'openings', 'Opening names, reach and first-entry cohorts'),
     ('insights', 'report_insights', 'Gap priorities, branch-score spread and gain intervals'),
+    ('engine', 'engine', 'Engine evaluations where preparation ends and of the moves, from the evaluation store'),
     ('correlations', 'position_correlations', 'Prepared depth versus continuation gain'),
     ('rating-correlations', 'rating_correlations', 'Opponent rating versus score within parent positions'),
 ]

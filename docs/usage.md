@@ -38,7 +38,7 @@ Everything runs through `uv run repertoire <command>`. Add `--help` to any comma
 | `evals` | Import Lichess cloud evaluations for your positions from the downloaded export. See [Engine evaluations](#engine-evaluations). |
 | `report` | Render the Markdown reports from saved results, offline. |
 | `score` | Inspect or score one repertoire PGN. |
-| `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. See [Running single stages](#running-single-stages). |
+| `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `engine`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. See [Running single stages](#running-single-stages). |
 
 ## Building the reports
 
@@ -274,6 +274,8 @@ Both commands end with the coverage for each color, which **`status`** prints on
 
 For each position the store keeps the deepest search in the export, with every line it reports, in `.cache/evals/evals.sqlite`.
 
+`build` then adds an engine view to the reports (see [Engine view](metrics.md#engine-view)) and reruns it whenever the store changes. Without a store, the reports say that no engine evaluations are available; everything else is unchanged.
+
 ## Running single stages
 
 `build` runs every stage in order and is the normal way to update results. The stage commands are useful for investigating one analysis.
@@ -306,6 +308,7 @@ These read saved scores and the cache and refresh the reports when they finish. 
 | `ratings` | `<color>.ratings.json` | Needs vulnerabilities, preparation and character. |
 | `openings` | `<color>.openings.json` | |
 | `insights` | `<color>.insights.json` | Needs preparation, character, vulnerabilities and openings. |
+| `engine` | `<color>.engine.json` | Needs vulnerabilities and preparation; reads the [evaluation store](#engine-evaluations). |
 | `correlations` | `prepared-depth-gain-correlation.json` | Needs vulnerabilities. |
 | `rating-correlations` | `opponent-rating-score-correlation.json` | Needs ratings and vulnerabilities. Also writes `reports/comparisons/opponent-rating-score.md`. |
 

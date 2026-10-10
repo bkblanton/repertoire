@@ -27,7 +27,7 @@ All code is in the `repertoire` package.
 | PGN and positions | `graph.py` parses PGNs into the merged position graph and finds automatic chapter entries; `board_cache.py` caches move text, child positions and results. |
 | Evidence | `explorer.py` fetches, validates and caches Explorer tables. `evals.py` imports Lichess cloud evaluations from the downloaded export file into a local SQLite store; it makes no requests. |
 | Scoring | `score.py` plans and scores one color; `model.py` turns evidence into probabilities; `evaluate.py` traverses the graph; `uncertainty.py` computes posterior means, variances and intervals; `baseline.py`, `depth.py` and `transitions.py` compute entry baselines, prepared depth and chapter transitions. |
-| Analysis stages | `vulnerabilities.py`, `preparation.py` (with `routes.py`), `character.py` (with `gaps.py`, `sharpness.py` and `spread.py`), `ratings.py`, `openings.py` (with `opening_names.py`), `report_insights.py`, `position_correlations.py` and `rating_correlations.py`, sharing `context.py` for loading saved scores and `stats.py` for weighted statistics. |
+| Analysis stages | `vulnerabilities.py`, `preparation.py` (with `routes.py`), `character.py` (with `gaps.py`, `sharpness.py` and `spread.py`), `ratings.py`, `openings.py` (with `opening_names.py`), `report_insights.py`, `engine.py`, `position_correlations.py` and `rating_correlations.py`, sharing `context.py` for loading saved scores and `stats.py` for weighted statistics. |
 | Attribution | `attribution.py` links each line to the chapters that contain it. |
 | Comparisons | `alternatives.py` finds decision points and builds hypothetical repertoires; `compare.py` is the `compare` command. |
 | Reports | The `report` package renders every page from saved JSON: `bundle` loads matching analyses, `derive` and `tables` build rows, `format`, `markdown` and `links` format numbers, tables and lines, `sections` and `pages` lay out the pages, `generate` writes them and resolves links between them, and `comparison` renders comparison pages. `definitions.md` is the glossary. `render.py` is the `report` command. |
@@ -38,9 +38,9 @@ All code is in the `repertoire` package.
 
 A full build runs these stages in order:
 
-`export → fetch → scores → vulnerabilities → preparation → character → ratings → openings → insights → correlations → rating correlations → saved comparisons → render`
+`export → fetch → scores → vulnerabilities → preparation → character → ratings → openings → insights → engine → correlations → rating correlations → saved comparisons → render`
 
-Only `export` and `fetch` use the network. Every later stage reads the cache and saved JSON, so it can be rerun offline. Ratings depend on vulnerabilities, preparation and character; insights also depend on openings; the correlations depend on vulnerabilities and ratings.
+Only `export` and `fetch` use the network. Every later stage reads the cache and saved JSON, so it can be rerun offline. Ratings depend on vulnerabilities, preparation and character; insights also depend on openings; the engine view depends on vulnerabilities, preparation and the evaluation store; the correlations depend on vulnerabilities and ratings.
 
 Each stage saves a manifest with the hashes of its inputs: the source PGN, the score it builds on, the analyses it depends on and the cache entries it read. `build` reruns a stage only when one of these, the code or the settings changed, and checkpoints progress in `reports/data/.build-state.json`. The renderer refuses to combine analyses whose hashes do not match. Never edit hashes or numerical JSON by hand to get past a mismatch.
 

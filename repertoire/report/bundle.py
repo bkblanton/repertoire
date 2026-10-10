@@ -11,8 +11,21 @@ from ..schema import JsonObject
 from ..sharpness import stopping_wdl
 from ..sharpness import summarize as summarize_outcomes
 
-Family = Literal['vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights']
-FAMILIES: tuple[Family, ...] = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights')
+Family = Literal['vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights', 'engine']
+FAMILIES: tuple[Family, ...] = (
+    'vulnerabilities',
+    'preparation',
+    'character',
+    'ratings',
+    'openings',
+    'insights',
+    'engine',
+)
+# Companions built from other companions, which must still match the files they were built from.
+SUPPORTED: dict[str, set[str]] = {
+    'insights': {'preparation', 'character', 'vulnerabilities', 'openings'},
+    'engine': {'preparation', 'vulnerabilities'},
+}
 
 
 class Bundle(TypedDict):
@@ -33,6 +46,7 @@ class Bundle(TypedDict):
     ratings: NotRequired[JsonObject]
     openings: NotRequired[JsonObject]
     insights: NotRequired[JsonObject]
+    engine: NotRequired[JsonObject]
 
 
 def load(paths: Iterable[str | Path], strict: bool = True, require_complete: bool = False) -> list[Bundle]:
@@ -97,23 +111,18 @@ def load(paths: Iterable[str | Path], strict: bool = True, require_complete: boo
                             reason = 'missing rating provenance'
                             if strict:
                                 raise ValueError(f'{companion}: {reason}')
-                    if family == 'insights':
-                        if set(m.get('supporting_sha256', {})) != {
-                            'preparation',
-                            'character',
-                            'vulnerabilities',
-                            'openings',
-                        }:
-                            reason = 'missing report insight provenance'
+                    if family in SUPPORTED:
+                        if set(m.get('supporting_sha256', {})) != SUPPORTED[family]:
+                            reason = f'missing {family} provenance'
                         elif any(
                             name not in bundle
                             or not path.with_suffix(f'.{name}.json').exists()
                             or hashlib.sha256(path.with_suffix(f'.{name}.json').read_bytes()).hexdigest() != digest
                             for name, digest in m['supporting_sha256'].items()
                         ):
-                            reason = 'supporting analysis changed since insight generation'
+                            reason = f'supporting analysis changed since the {family} analysis'
                         if reason and strict:
-                            raise ValueError(f'{companion}: {reason}; regenerate report insights')
+                            raise ValueError(f'{companion}: {reason}; regenerate the {family} analysis')
                     if reason is None:
                         bundle[family] = data
             if reason:
@@ -132,6 +141,7 @@ def load(paths: Iterable[str | Path], strict: bool = True, require_complete: boo
             chapter['score']['outcomes'] = gap_scopes.get(chapter['id'], {}).get('outcomes')
         attach_outcomes(bundle)
         attach_insights(bundle)
+        attach_engine(bundle)
         bundles.append(bundle)
     return sorted(bundles, key=lambda b: b['report']['color'] != 'white')
 
@@ -250,6 +260,23 @@ def attach_insights(bundle: Bundle) -> None:
             rows.extend(values)
         for row in rows:
             row.update(added.get(row['id'], {}))
+
+
+def attach_engine(bundle: Bundle) -> None:
+    """Each move row gets its engine evaluations before and after, keyed like the vulnerability rows."""
+    engine = bundle.get('engine')
+    if not engine:
+        return
+    moves, transpositions = engine.get('moves', {}), engine.get('transpositions', {})
+    vulnerabilities = bundle.get('vulnerabilities', {})
+    for scope in [vulnerabilities.get('overall', {}), *vulnerabilities.get('chapters', [])]:
+        rows = list(scope.get('all_signed_rows', [])) + list(scope.get('strengths', []))
+        for values in scope.get('rankings', {}).values():
+            rows.extend(values)
+        for row in rows:
+            row['engine'] = moves.get(row['id'])
+        for row in scope.get('free_transpositions', []):
+            row['engine'] = transpositions.get(row['id'])
 
 
 def scope_by_id(data: JsonObject | None, key: str = 'scopes') -> dict[str, JsonObject]:

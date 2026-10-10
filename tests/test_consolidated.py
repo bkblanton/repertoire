@@ -363,6 +363,7 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
 
     from repertoire import (
         character,
+        engine,
         openings,
         position_correlations,
         preparation,
@@ -378,7 +379,7 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     report, cache = run_fixture(data, monkeypatch)
     path = data / 'white.json'
     original = path.read_bytes()
-    for module in [vulnerabilities, preparation, character, ratings, openings, report_insights]:
+    for module in [vulnerabilities, preparation, character, ratings, openings, report_insights, engine]:
         monkeypatch.setattr(sys, 'argv', ['analysis', str(path), '--cache', str(cache)])
         module.main()
     monkeypatch.setattr(sys, 'argv', ['correlations', str(path), '--cache', str(cache)])

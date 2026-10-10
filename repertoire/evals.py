@@ -79,7 +79,11 @@ class Store:
 
     One SQLite file rather than a file per position: an import adds tens of thousands of positions at once."""
 
-    def __init__(self, path: str | Path = STORE) -> None:
+    def __init__(self, path: str | Path = STORE, read_only: bool = False) -> None:
+        if read_only:
+            # Analyses only read the store, and must not touch the file the build hashes.
+            self.db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
+            return
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path)
         self.db.executescript(SCHEMA)
@@ -91,7 +95,8 @@ class Store:
         self.close()
 
     def close(self) -> None:
-        self.db.commit()
+        if self.db.in_transaction:
+            self.db.commit()
         self.db.close()
 
     def commit(self) -> None:

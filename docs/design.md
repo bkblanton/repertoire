@@ -137,6 +137,16 @@ Entry is the first arrival at any entry, by any route, under the chapter's moves
 
 Chapters can overlap, so their contributions need not sum to the overall score, which is computed independently from the starting position. A chapter that starts from a custom position with no route to it gets a conditional score, but not an absolute reach, unless root weights are configured.
 
+## Engine evaluations
+
+Engine evaluations are a separate view, never an input to the model. When the Lichess evaluation export has been imported, each position's deepest Stockfish evaluation is converted to an expected score for you with the Lichess win-chance curve,
+
+$$
+E = \frac{1}{1 + e^{-0.00368208\,c}},
+$$
+
+where $c$ is the evaluation in centipawns from your side, and mate counts as 1 or 0. The reports compare $E$ with database scores where preparation ends and use its changes to judge single moves. A position without an evaluation stays missing. After an unprepared reply without one, the evaluation of the position before the reply, which assumes the opponent's best reply, is a lower bound, and is reported apart from evaluations.
+
 ## Outputs
 
 Each score is saved as JSON containing:

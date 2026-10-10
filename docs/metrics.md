@@ -26,6 +26,7 @@ A few rules hold throughout:
   - [Score spread and outcome volatility](#score-spread-and-outcome-volatility)
   - [Reuse, reply variety and position profiles](#reuse-reply-variety-and-position-profiles)
   - [Effort and value](#effort-and-value)
+  - [Engine view](#engine-view)
   - [Opening names](#opening-names)
   - [Opponent ratings](#opponent-ratings)
   - [Correlations](#correlations)
@@ -45,7 +46,7 @@ Collapsed sections follow: the most common positions as a tree, chapter comparis
 
 ### The full report, chapter and opening pages
 
-`reports/report.md` holds the detail for both colors: chapter tables, exit points, free transpositions, positions, openings, vulnerabilities, strengths, where the edge comes from, effort and value, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
+`reports/report.md` holds the detail for both colors: chapter tables, exit points, free transpositions, positions, openings, vulnerabilities, strengths, where the edge comes from, effort and value, the engine view, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
 
 Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, its exit points, free transpositions, positions, vulnerabilities, strengths, where its edge comes from, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
 
@@ -180,6 +181,18 @@ The full report weighs what your preparation earns against the moves it takes to
 - **Valuable moves you rarely play.** A move reached with probability `p` per game is missing from your last 100 games with probability `(1 - p) ** 100`. Ranking `reach * gain` by that chance favors moves worth a lot that come up about once per hundred games: common moves are practised in play, and very rare ones are worth little.
 
 The summary's preparation table adds one line: how many of your moves come up less than once in 1,000 games, and their share of the edge. Thinly sampled moves are left out of both lists.
+
+### Engine view
+
+When you have [imported engine evaluations](usage.md#engine-evaluations), the reports add an engine's view beside the database's. Each position uses the deepest Stockfish evaluation in the Lichess export, first line, from your side, converted to an **expected score** with the Lichess win-chance curve `1 / (1 + exp(-0.00368208 * centipawns))`, the curve whose inverse gives the reports' centipawn equivalents. Mate counts as 100% or 0%. Engine and database scores are then on the same scale; pawn figures beside an average convert it back on the same curve.
+
+- **Where preparation ends.** The summary and the full report give the engine's average expected score at the positions where preparation ends, beside the database score over the same games, for each color and chapter. A database score above the engine's means opponents there go wrong in practice; one below means positions better than they play.
+- **Your moves the engine questions.** A move's engine loss is the expected score before it minus after it. 5, 10 and 15 points match Lichess's inaccuracy, mistake and blunder thresholds (0.1, 0.2 and 0.3 in winning chances). Moves of at least an inaccuracy are listed with their database move gain, so you can see which still score well in practice.
+- **Opponent mistakes.** Replies that raise your expected score by at least 5 points, with your score after them.
+- **Where the database and the engine disagree.** The places preparation ends whose database and engine scores differ most, weighted by how often games end there.
+- **Free transpositions** also show the engine loss of the transposing move: how much worse it is than the engine's best move after the reply.
+
+Evaluations exist only for positions someone analyzed on Lichess, so rare positions deep in a line often have none. They stay missing. Where preparation ends after such a reply, the position before the reply bounds it from below, because the engine evaluates that position with the opponent's best reply; the reports state how much of each average rests on evaluations and how much only on these floors, and averages use evaluated positions only. Engine figures never change a score, a ranking or a move choice.
 
 ### Opening names
 

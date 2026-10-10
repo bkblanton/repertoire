@@ -28,6 +28,7 @@ from .markdown import Cell, SourceCell, about, drop_uniform, report_navigation, 
 from .sections import (
     alternatives_section,
     branch_spread_section,
+    chapter_engine_fact,
     character_section,
     common_positions_for_scope,
     common_positions_section,
@@ -36,6 +37,8 @@ from .sections import (
     depth_section,
     edge_section,
     effort_section,
+    engine_section,
+    engine_sentence,
     entry_routes_section,
     evidence_snapshot,
     exits_section,
@@ -283,6 +286,9 @@ def chapter_page(
         f"**Gaps:** adds {gap_percentage(chapter.get('gap_coverage'), weighted=True)} to the "
         f"{color.title()} equivalent gap reach. {about('gap-reach')}."
     )
+    engine = chapter_engine_fact(bundle, cid)
+    if engine:
+        facts.append(engine)
     interval = s.get('posterior', {}).get('credible_interval_95')
     if interval:
         facts.append(
@@ -425,6 +431,7 @@ def full_report(
         )
         text += edge_section(b.get('vulnerabilities', {}).get('overall'), refs, top, anchor=f'{color}-edge')
         text += effort_section(b, refs, top, anchor=f'{color}-effort')
+        text += engine_section(b, refs, top, anchor=f'{color}-engine')
         text += gap_section(characters.get('overall'), refs=refs, top=top)
         text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
         text += branch_spread_section(characters.get('overall'))
@@ -564,6 +571,9 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
         gain = preparation_gain_sentence(correlations, color)
         if gain:
             text += [gain, '']
+        engine = engine_sentence(b)
+        if engine:
+            text += [engine, '']
         text += exits_section(char, refs, 5)
         text += [f'[More exit points](#{color}-exits) · [All positions and gaps](#{color}-common-positions)', '']
         own_bad = own_priorities(moves.get('rankings', {}).get('own', []))

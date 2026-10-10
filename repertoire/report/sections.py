@@ -22,6 +22,7 @@ from .derive import (
 )
 from .format import (
     _display,
+    centipawn_equivalent,
     count,
     elo_equivalent,
     escape,
@@ -747,7 +748,9 @@ def transposing_cell(row: JsonObject, refs: Chapters) -> str:
     )
     chapters = refs.chapter_sources({'chapter_attribution': {'source_ids': row['target_chapters']}})
     link = analysis_url(row['transposition_target'], f'{route} {token}')
-    return f'[{line(token)}]({link})<br>to {chapters}'
+    loss = (row.get('engine') or {}).get('loss_pp')
+    engine = '' if loss is None else f'<br>engine loss {score_points(loss)}'
+    return f'[{line(token)}]({link})<br>to {chapters}{engine}'
 
 
 def change_cell(row: JsonObject) -> str:
@@ -806,6 +809,217 @@ def free_transpositions_section(
             ),
         ]
     return text
+
+
+def pawns(centipawns: float | None) -> str:
+    return 'n/a' if centipawns is None else f'{centipawns / 100:+.2f}'
+
+
+def engine_value(evaluation: JsonObject | None) -> str:
+    """One position's evaluation from your side: pawns, or moves to mate (#-3 means you are mated)."""
+    if not evaluation:
+        return 'no evaluation'
+    if evaluation.get('mate') is not None:
+        return f"#{evaluation['mate']}"
+    return pawns(evaluation.get('cp'))
+
+
+def engine_mean(score: float | None) -> str:
+    """An average engine expected score, with its pawn equivalent on the same curve."""
+    if score is None:
+        return 'unavailable'
+    return pawns(centipawn_equivalent(score)) + '<br>' + percentage(score)
+
+
+def engine_coverage(exits: JsonObject) -> str:
+    total = exits.get('reach') or 0
+    if not total:
+        return ''
+    floored = exits['floored_reach'] / total
+    text = f"Evaluations cover {percentage(exits['evaluated_reach'] / total)} of those games"
+    if floored >= 0.0005:
+        text += f'; for another {percentage(floored)}, the position before the reply bounds the evaluation from below'
+    return text + '.'
+
+
+def engine_sentence(bundle: Bundle) -> str | None:
+    """The summary's one line on the engine's view where preparation ends."""
+    engine = bundle.get('engine')
+    if engine is None:
+        return None
+    exits = scope_by_id(engine).get('overall', {}).get('exits', {})
+    if engine.get('status') != Status.RESOLVED or exits.get('engine_score') is None:
+        return 'No engine evaluations yet: download the Lichess evaluation export and run `repertoire evals import`.'
+    score = exits['engine_score']
+    return (
+        f'Where preparation ends, the engine gives you **{pawns(centipawn_equivalent(score))}** '
+        f"({percentage(score)}) on average, against the database's {percentage(exits['database_score'])}. "
+        f'{engine_coverage(exits)}'
+    )
+
+
+def judged(value: float | None, name: str | None, signed: bool = True) -> str:
+    return 'unavailable' if value is None else score_points(value, signed=signed) + (f'<br>{name}' if name else '')
+
+
+def engine_section(
+    bundle: Bundle, refs: Chapters, top: int, level: str = '###', anchor: str | None = None
+) -> list[str]:
+    engine = bundle.get('engine')
+    if engine is None or engine.get('status') != Status.RESOLVED:
+        return []
+    scopes = scope_by_id(engine)
+    exits = scopes.get('overall', {}).get('exits', {})
+    text = [
+        *section(f'{level} Engine view', anchor),
+        'Stockfish evaluations from the Lichess evaluation export, converted to your expected score with the Lichess '
+        'win-chance curve, so they read on the same scale as database scores. They judge positions objectively and '
+        f'never change a score. {about("engine")}.',
+        '',
+        f"Where preparation ends, the engine gives you {pawns(centipawn_equivalent(exits['engine_score']))} "
+        f"({percentage(exits['engine_score'])}) on average and the database {percentage(exits['database_score'])}, "
+        f'over the same games. {engine_coverage(exits)}',
+        '',
+    ]
+    chapters = [(c, scopes.get(c['id'], {}).get('exits', {})) for c in bundle['report']['chapters']]
+    rows = [(c, e) for c, e in chapters if e.get('engine_score') is not None]
+    if rows:
+
+        def coverage(e: JsonObject) -> str:
+            share = e['evaluated_reach'] / e['reach'] if e.get('reach') else 1.0
+            return f'<br>covers {percentage(share)}' if share < 0.995 else ''
+
+        text += [
+            '**Chapters where preparation ends**',
+            '',
+            *table(
+                ['Chapter', 'Database where prep ends', 'Engine where prep ends'],
+                [
+                    [
+                        refs.label(c['id'], True),
+                        percentage(e['database_score']),
+                        engine_mean(e['engine_score']) + coverage(e),
+                    ]
+                    for c, e in rows
+                ],
+            ),
+        ]
+    moves = (bundle.get('vulnerabilities', {}).get('overall') or {}).get('all_signed_rows', [])
+    own = sorted(
+        (
+            r
+            for r in non_sparse_rows(moves)
+            if r['kind'] == 'own'
+            and (r.get('engine') or {}).get('judgement')
+            and r.get('move_database_score') is not None
+        ),
+        key=lambda r: (-r['branch_reach'] * r['engine']['loss_pp'], r['id']),
+    )[:top]
+    if own:
+        text += [
+            '**Your moves the engine questions**',
+            '',
+            'Your moves that lower your expected score by at least 5 points by the engine, which Lichess calls an '
+            'inaccuracy, ranked by move reach × engine loss. The move gain is the database view: a positive one means '
+            'the move scores well in practice anyway.',
+            '',
+            *table(
+                ['Line', 'Chapter source', 'Move reach', 'Move gain', 'Engine loss'],
+                [
+                    [
+                        refs.move_cell(r),
+                        refs.sources(r),
+                        reach_cell(r['branch_reach']),
+                        score_points(100 * (r['move_database_score'] - r['reference_score']), signed=True),
+                        judged(r['engine']['loss_pp'], r['engine']['judgement'], signed=False),
+                    ]
+                    for r in own
+                ],
+            ),
+        ]
+    replies = sorted(
+        (
+            r
+            for r in non_sparse_rows(moves)
+            if r['kind'] == 'opponent' and (r.get('engine') or {}).get('judgement') and r.get('move_score') is not None
+        ),
+        key=lambda r: (-r['branch_reach'] * r['engine']['swing_pp'], r['id']),
+    )[:top]
+    if replies:
+        text += [
+            '**Opponent mistakes**',
+            '',
+            'Opponent replies that raise your expected score by at least 5 points by the engine, ranked by move '
+            'reach × that gain. Your score after is your repertoire score for prepared replies and the database '
+            'score for unprepared ones.',
+            '',
+            *table(
+                ['Line', 'Chapter source', 'Move reach', 'Engine gain', 'Your score after'],
+                [
+                    [
+                        refs.move_cell(r),
+                        refs.sources(r),
+                        reach_cell(r['branch_reach']),
+                        judged(r['engine']['swing_pp'], r['engine']['judgement']),
+                        percentage(r['move_score']),
+                    ]
+                    for r in replies
+                ],
+            ),
+        ]
+    stops = {
+        (s.get('parent_position'), s.get('move'), s['position']): s
+        for s in scope_by_id(bundle.get('preparation')).get('overall', {}).get('stops', [])
+    }
+    disagreements = []
+    for item in engine.get('exits', []):
+        stop = stops.get((item['parent_position'], item['move'], item['position']))
+        if item['basis'] != 'evaluated' or stop is None or stop.get('sparse') or stop.get('score') is None:
+            continue
+        disagreements.append((stop, item))
+    disagreements.sort(key=lambda p: (-p[0]['reach'] * abs(p[0]['score'] - p[1]['engine_score']), p[0]['position']))
+    if disagreements:
+        text += [
+            '**Where the database and the engine disagree**',
+            '',
+            'Places where preparation ends whose database score differs most from the engine, weighted by how often '
+            'games end there. Database above engine: opponents there go wrong in practice. Engine above database: '
+            'a position better than it plays, worth learning to convert.',
+            '',
+            *table(
+                ['Line', 'Chapter source', 'Games leaving prep here', 'Database', 'Engine'],
+                [
+                    [
+                        stop_cell(stop, refs),
+                        refs.sources(stop),
+                        reach_cell(stop['reach']),
+                        percentage(stop['score']),
+                        engine_value(item['engine']) + '<br>' + percentage(item['engine_score']),
+                    ]
+                    for stop, item in disagreements[:top]
+                ],
+            ),
+        ]
+    return text
+
+
+def stop_cell(stop: JsonObject, refs: Chapters) -> str:
+    """A place where preparation ends, labeled like the reply rows: the parent board's route plus the reply."""
+    parent, move = stop.get('parent_position'), stop.get('move')
+    if not parent or not move:
+        return refs.position_cell(stop)
+    return refs.move_cell(dict(position=parent, move_san=san(parent, move), line=stop['line'], kind='opponent'))
+
+
+def chapter_engine_fact(bundle: Bundle, chapter: str) -> str | None:
+    exits = scope_by_id(bundle.get('engine')).get(chapter, {}).get('exits', {})
+    if exits.get('engine_score') is None:
+        return None
+    return (
+        f"**Engine:** where preparation ends, the engine gives {pawns(centipawn_equivalent(exits['engine_score']))} "
+        f"({percentage(exits['engine_score'])}) and the database {percentage(exits['database_score'])}. "
+        f'{engine_coverage(exits)} {about("engine")}.'
+    )
 
 
 def alternatives_section(

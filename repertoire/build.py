@@ -14,6 +14,8 @@ from typing import Any, cast
 from . import (
     character,
     compare,
+    engine,
+    evals,
     fetch,
     openings,
     position_correlations,
@@ -34,10 +36,11 @@ from .schema import JsonObject
 
 # Comparisons never affect the repertoire's own analyses; only their own step depends on this code.
 COMPARISON_CODE = ('compare.py', 'alternatives.py')
-FAMILIES = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights')
+FAMILIES = ('vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights', 'engine')
 DEPENDENCIES = {
     'ratings': ('preparation', 'character', 'vulnerabilities'),
     'insights': ('preparation', 'character', 'vulnerabilities', 'openings'),
+    'engine': ('preparation', 'vulnerabilities'),
 }
 MODULES = dict(
     vulnerabilities=vulnerabilities,
@@ -46,6 +49,7 @@ MODULES = dict(
     ratings=ratings,
     openings=openings,
     insights=report_insights,
+    engine=engine,
 )
 
 
@@ -234,6 +238,9 @@ def build(
         for family in FAMILIES:
             for path in paths:
                 required = [path] + [path.with_suffix(f'.{name}.json') for name in DEPENDENCIES.get(family, ())]
+                if family == 'engine':
+                    # A new import changes the evaluations the engine view reads.
+                    required.append(evals.STORE)
 
                 def analyze(path: Path = path, family: str = family) -> None:
                     value = MODULES[family].analyze(path, cache)

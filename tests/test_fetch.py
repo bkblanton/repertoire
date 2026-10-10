@@ -56,13 +56,13 @@ def test_build_fetches_every_table_first_then_runs_offline(lichess, monkeypatch,
     monkeypatch.setattr(build.Builder, 'step', step)
     options = dict(white_config=None, black_config=None, directory=tmp_path / 'data', cache=tmp_path / 'cache')
     result = build.build(white, black, **options)
-    assert result['built'] == 17
+    assert result['built'] == 19
     assert len(requests) == len(set(requests))
     out = capsys.readouterr().out
     assert f'white and black: {len(requests)} Explorer tables: 0 cached, {len(requests)} to fetch' in out
     assert out.index('to fetch') < out.index('Building white.score')
     requests.clear()
-    assert build.build(white, black, **options)['reused'] == 17
+    assert build.build(white, black, **options)['reused'] == 19
     assert requests == []
 
 
