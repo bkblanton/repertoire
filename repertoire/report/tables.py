@@ -54,12 +54,12 @@ def chapter_table(
                 reach,
                 percentage(base.get('raw_score')),
                 percentage(s.get('raw_empirical_score')),
+                *([engine_cell(engine.get(c['id'], {}).get('exits', {}))] if engine is not None else []),
                 score_points(base.get('difference_pp'), signed=True),
                 number(s.get('prepared_depth', {}).get('expected_moves'), 1),
                 spread_display(s.get('branch_score_spread'), False),
                 gaps,
                 opponent_rating(c.get('opponent_ratings', {}).get('score_evidence')),
-                *([engine_cell(engine.get(c['id'], {}).get('exits', {}))] if engine is not None else []),
             ]
         )
     return table(
@@ -68,12 +68,12 @@ def chapter_table(
             'Chapter reach' + ('<br>Overall-policy reach' if alternatives else ''),
             'Entry baseline',
             'Repertoire score',
+            *(['Engine where prep ends'] if engine is not None else []),
             'Delta',
             'Prepared depth',
             'Score spread',
             'Equivalent gap reach' + ('<br>Weighted contribution' if detailed else ''),
             'Opponent rating',
-            *(['Engine where prep ends'] if engine is not None else []),
         ],
         rows,
     )

@@ -206,12 +206,12 @@ def chapter_page(
         links.append('Next: ' + refs.label(neighbors[position + 1]))
     contents = [
         ('starts', 'Where this chapter starts'),
+        ('edge', 'Where your edge comes from'),
         ('exits', 'Where preparation ends'),
         ('free-transpositions', 'Free transpositions'),
         ('common-positions', 'Most common positions'),
         ('vulnerabilities', 'Vulnerabilities'),
         ('strengths', 'Strengths'),
-        ('edge', 'Where your edge comes from'),
         ('engine', 'Engine view'),
         ('gaps', 'Equivalent gap reach'),
         ('prepared-depth', 'Prepared-depth distribution'),
@@ -301,6 +301,9 @@ def chapter_page(
     text += ['On this page: ' + ' · '.join(f'[{title}](#{anchor}-{key})' for key, title in contents), '']
     text += section('## Where this chapter starts', f'{anchor}-starts')
     text += leading_entries(chapter, preparation.get(cid), refs) or ['Entry routes are unavailable.', '']
+    text += edge_section(
+        vulnerabilities.get(cid), refs, chapter_top, level='##', anchor=f'{anchor}-edge', detailed=False
+    ) or section('## Where your edge comes from', f'{anchor}-edge') + ['Edge ledger pending.', '']
     text += exits_section(char, refs, max(chapter_top, 10), level='##', anchor=f'{anchor}-exits')
     free = free_transpositions_section(
         bundle.get('vulnerabilities', {}).get('overall'),
@@ -329,9 +332,6 @@ def chapter_page(
         sparse_threshold=r['manifest']['sparse_threshold'],
         anchor=f'{anchor}-strengths',
     ) or section('## Strengths', f'{anchor}-strengths') + ['Strength analysis pending.', '']
-    text += edge_section(
-        vulnerabilities.get(cid), refs, chapter_top, level='##', anchor=f'{anchor}-edge', detailed=False
-    ) or section('## Where your edge comes from', f'{anchor}-edge') + ['Edge ledger pending.', '']
     text += engine_section(bundle, refs, chapter_top, level='##', anchor=f'{anchor}-engine', scope_id=cid) or section(
         '## Engine view', f'{anchor}-engine'
     ) + ['Engine analysis pending.', '']
@@ -419,6 +419,7 @@ def full_report(
             *chapter_table(r, refs, engine=scope_by_id(b.get('engine')) if engine_resolved(b) else None),
         ]
         text += alternatives_section(r, refs)
+        text += edge_section(b.get('vulnerabilities', {}).get('overall'), refs, top, anchor=f'{color}-edge')
         text += exits_section(characters.get('overall'), refs, top, anchor=f'{color}-exits')
         text += free_transpositions_section(
             b.get('vulnerabilities', {}).get('overall'), refs, top, anchor=f'{color}-free-transpositions'
@@ -433,9 +434,8 @@ def full_report(
             top,
             sparse_threshold=r['manifest']['sparse_threshold'],
         )
-        text += edge_section(b.get('vulnerabilities', {}).get('overall'), refs, top, anchor=f'{color}-edge')
-        text += effort_section(b, refs, top, anchor=f'{color}-effort')
         text += engine_section(b, refs, top, anchor=f'{color}-engine')
+        text += effort_section(b, refs, top, anchor=f'{color}-effort')
         text += gap_section(characters.get('overall'), refs=refs, top=top)
         text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
         text += branch_spread_section(characters.get('overall'))
@@ -595,6 +595,7 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                 f'[All vulnerabilities and prepared replies](#{color}-vulnerabilities).',
                 '',
             ]
+        text += summary_edge_section(b.get('vulnerabilities', {}).get('overall'), refs, color)
         positions = [p for p in visible_positions(char) if not unanswered_position(p, color)]
         if positions:
             text += [
@@ -677,7 +678,6 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                 '</details>',
                 '',
             ]
-        text += summary_edge_section(b.get('vulnerabilities', {}).get('overall'), refs, color)
         metrics = [['Expected prepared depth', number(depth, 1) + ' own moves']]
         if median is not None:
             metrics.append(['Median prepared depth', f'{median} own moves'])
