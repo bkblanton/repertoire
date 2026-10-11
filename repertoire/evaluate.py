@@ -1,13 +1,17 @@
-"""DAG evaluation, first-entry weighting and probability conservation checks."""
+"""DAG evaluation, first-entry weighting and probability conservation checks.
+
+Traversals run over scoring nodes: positions, plus the repetition history nodes inside loops (graph.unroll).
+Positions given as entries or stopping points match every node of that position.
+"""
 
 from collections.abc import Callable, Collection, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from .board_cache import children
-from .graph import Graph, Policy, chapter_alternatives, resolve, topology
-from .model import Branch, Evidence, Model, Sampled, node_empirical, prepare_node
+from .board_cache import children, position_of
+from .graph import Graph, Policy, chapter_alternatives, policy_transitions, topology, unroll
+from .model import REPETITION, Branch, Evidence, Model, Sampled, node_empirical, prepare_node
 from .schema import ChapterScore, Position, ScoreSummary
 from .schema import Posterior as PosteriorSummary
 from .status import Status
@@ -103,23 +107,29 @@ def select_alternatives(
     in advance, as a comparison does at its decision points.
 
     Returns {position: {'selected': move, 'scores': {move: component vector}}} for every reachable contested board.
+    Your moves stay one per position: inside a repetition loop, a board is decided at its first occurrence
+    when games reach that, and otherwise at the occurrence nearest the roots.
     """
     fixed = fixed or {}
     options = {k: moves for k, moves in chapter_alternatives(graph, color, policy).items() if k not in fixed}
     if not options:
         return {}
-    transitions = resolve(graph, color, dict(policy, **fixed))
+    transitions = policy_transitions(graph, color, dict(policy, **fixed))
     for k, moves in options.items():
         transitions[k] = {m: (graph.nodes[k].edges[m], None) for m in moves}
+    transitions = unroll(transitions)
+    repetition = stopping_vector(Branch(kind='repetition', fixed_score=REPETITION), REPETITION, sparse_threshold)
     values: dict[Position, np.ndarray] = {}
     result: dict[Position, dict[str, Any]] = {}
     for k in topology(transitions, list(roots)):
         selected = transitions[k]
-        if k in options:
-            scores = {m: values[target] for m, (target, _) in selected.items()}
+        position = position_of(k)
+        if position in options:
+            scores = {m: values[target] if target is not None else repetition for m, (target, _) in selected.items()}
             # max() keeps the first of equal scores, which is the earlier chapter's move.
-            best = max(options[k], key=lambda m: scores[m][COMPLETED])
-            result[k] = dict(selected=best, scores=scores)
+            best = max(options[position], key=lambda m: scores[m][COMPLETED])
+            if k == position or result.get(position, {}).get('node') != position:
+                result[position] = dict(selected=best, scores=scores, node=k)
             selected = {best: (selected[best][0], 1.0)}
         node = prepare_node(k, selected, color, evidence)
         value = np.zeros(8)
@@ -127,6 +137,8 @@ def select_alternatives(
             if p:
                 value += p * (values[b.target] if b.target is not None else stopping_vector(b, s, sparse_threshold))
         values[k] = value
+    for choice in result.values():
+        del choice['node']
     return result
 
 
@@ -135,7 +147,7 @@ def can_enter(model: Model, order: list[Position], entries: Collection[Position]
     result: dict[Position, bool] = {}
     for k in order:
         targets = [b.target for b in model[k].branches if b.target is not None] + model[k].potential_targets
-        result[k] = k in entries or any(result[t] for t in targets)
+        result[k] = position_of(k) in entries or any(result[t] for t in targets)
     return result
 
 
@@ -159,7 +171,7 @@ def forward(
     stops, entries = {}, {}
     absorbed = 0.0
     for k in reversed(order):
-        if k in stop_at:
+        if position_of(k) in stop_at:
             entries[k] = mass[k]
             continue
         if entering is not None and not entering[k]:
@@ -191,7 +203,7 @@ def reaches(
             mass[k] += weight
     left = 0.0
     for k in reversed(order):
-        if k in stop_at:
+        if position_of(k) in stop_at:
             left += mass[k]
             continue
         for b, (p, _) in zip(model[k].branches, sampled[k]):
@@ -202,6 +214,42 @@ def reaches(
     if not np.allclose(left, sum(roots.values()), atol=1e-9):
         raise AssertionError("Forward reach does not conserve probability")
     return mass
+
+
+def by_position(values: Mapping[Position, float]) -> dict[Position, float]:
+    """Per-node amounts added up per position, such as the reach of every occurrence inside a repetition loop."""
+    result: dict[Position, float] = {}
+    for k, value in values.items():
+        position = position_of(k)
+        result[position] = result[position] + value if position in result else value
+    return result
+
+
+def entry_states(model: Model, order: list[Position], sampled: Sampled, roots: Weights, starts: Weights) -> Weights:
+    """`starts`, positions games first enter with these weights, spread over the nodes they arrive at from `roots`.
+
+    Inside a repetition loop a position's value depends on which loop positions the game has already
+    passed, so it is evaluated in the history nodes games actually reach it in, in proportion to their
+    first-arrival probability. Elsewhere, or where no root reaches it, a start is the position itself.
+    `order` must include everything the roots reach.
+    """
+    if all(position_of(k) == k for k in order):
+        return starts
+    mass = reaches(model, order, sampled, roots, stop_at=starts)
+    arrivals: dict[Position, list[Position]] = {}
+    for k in order:
+        if mass[k] > 0 and position_of(k) in starts:
+            arrivals.setdefault(position_of(k), []).append(k)
+    result: dict[Position, float] = {}
+    for k, weight in starts.items():
+        nodes = arrivals.get(k, [])
+        if nodes in ([], [k]):
+            result[k] = weight
+            continue
+        total = sum(mass[n] for n in nodes)
+        for n in nodes:
+            result[n] = weight * mass[n] / total
+    return result
 
 
 def dominators(
@@ -261,7 +309,7 @@ def best_routes(
     stop_at = set(stop_at)
     best: dict[Position, Route] = {k: (w, k, ()) for k, w in roots.items() if w > 0}
     for k in reversed(order):
-        if k not in best or k in stop_at:
+        if k not in best or position_of(k) in stop_at:
             continue
         probability, root, moves = best[k]
         for b, (p, _) in zip(model[k].branches, sampled[k]):
@@ -270,7 +318,7 @@ def best_routes(
             if b.target is not None:
                 target = b.target
             elif replies and b.kind == "deviation":
-                target = children(k)[cast(str, b.move)]
+                target = children(position_of(k))[cast(str, b.move)]
             else:
                 continue
             candidate = probability * p, root, (*moves, cast(str, b.move))
@@ -314,7 +362,7 @@ def chapter_score(
     raw_stops, raw_entries = forward(model, order, raw_sample, root_weights, stop_at=entries, entering=entering)
     raw_reach = sum(raw_entries.values(), 0.0)
     r = sum((raw_entries[k] * values[k] for k in raw_entries), np.zeros(8))
-    weights = {k: float(v / raw_reach) if raw_reach else None for k, v in raw_entries.items()}
+    weights = {k: float(v / raw_reach) if raw_reach else None for k, v in by_position(raw_entries).items()}
     unresolved_entry_mass = sum(
         float(flow)
         for (k, j), flow in raw_stops.items()

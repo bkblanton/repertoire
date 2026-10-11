@@ -16,7 +16,7 @@ import numpy as np
 from . import SCHEMA_VERSION
 from .attribution import enrich
 from .baseline import chapter_entry_baseline
-from .board_cache import STARTING_POSITION, owner_outcome, san, turn
+from .board_cache import STARTING_POSITION, owner_outcome, position_of, san, turn
 from .context import DEFAULT_CACHE
 from .depth import chapter_prepared_depth, prepared_depth_values, summarize_depth
 from .evaluate import (
@@ -24,7 +24,9 @@ from .evaluate import (
     KNOWN,
     UNKNOWN,
     backward,
+    by_position,
     chapter_score,
+    entry_states,
     forward,
     reaches,
     select_alternatives,
@@ -43,7 +45,9 @@ from .graph import (
     conflicts,
     infer_entries,
     key,
+    loops,
     parse,
+    policy_transitions,
     reachable,
     resolve,
     topology,
@@ -279,10 +283,11 @@ def plan_repertoire(
 def required_positions(plan: Plan, color: bool) -> list[Position]:
     """Every table the scores need: opponent turns, unanswered own turns, chapter entries and the start."""
     required = [
-        k
+        position_of(k)
         for profile in plan.profiles
         for k in profile['order']
-        if owner_outcome(k, color) is None and (not profile['transitions'][k] or turn(k) != color)
+        if owner_outcome(position_of(k), color) is None
+        and (not profile['transitions'][k] or turn(position_of(k)) != color)
     ]
     # Boards only a competing chapter alternative reaches are needed to score that alternative.
     required += [
@@ -300,7 +305,7 @@ def evaluate_profiles(graph: Graph, color: bool, plan: Plan, evidence: Evidence,
         profile['raw'] = empirical(profile['model'], color)
         profile['values'] = backward(profile['model'], profile['order'], profile['raw'], sparse_threshold)
         profile['depth'] = prepared_depth_values(profile['model'], profile['order'], profile['raw'])
-        profile['reachable'] = set(topology(profile['transitions'], list(plan.root_weights)))
+        profile['reachable'] = {position_of(k) for k in topology(profile['transitions'], list(plan.root_weights))}
 
 
 def conditional(plan: Plan, profile: Profile, c: GraphChapter, posterior: Posterior) -> ChapterScore:
@@ -347,7 +352,12 @@ def chapter_result(
     overall = plan.overall
     positions = plan.entries[c['id']]
     summary = conditional(plan, profile, c, posterior)
-    summary['prepared_depth'] = chapter_prepared_depth(profile['depth'], positions, summary)
+    summary['prepared_depth'] = chapter_prepared_depth(
+        profile['depth'],
+        positions,
+        summary,
+        lambda weights: entry_states(profile['model'], profile['order'], profile['raw'], plan.root_weights, weights),
+    )
     actual_hits = hitting_bounds(overall['model'], overall['order'], overall['raw'], set(positions))
     low, high = (sum(w * actual_hits[k][i] for k, w in plan.root_weights.items()) for i in (0, 1))
     summary['overall_policy_entry_probability'] = low if low == high and plan.absolute_reach else None
@@ -428,7 +438,9 @@ def score_repertoire(
     chapters = [chapter_results[c['id']] for c in graph.chapters]
     transition_rows: list[JsonObject] = []
     for profile in plan.profiles:
-        rows = chapter_transitions(profile['model'], profile['order'], profile['raw'], chapters, plan.entries)
+        rows = chapter_transitions(
+            profile['model'], profile['order'], profile['raw'], chapters, plan.entries, plan.root_weights
+        )
         transition_rows.extend(
             dict(row, policy_basis='source chapter comparison policy')
             for row in rows
@@ -448,7 +460,7 @@ def score_repertoire(
 def alternative_rows(graph: Graph, color: bool, plan: Plan, selection: Mapping[Position, dict]) -> list[Alternative]:
     """Each board where chapters compete: every alternative's score there, its reach and the winner."""
     overall = plan.overall
-    reach = reaches(overall['model'], overall['order'], overall['raw'], plan.root_weights)
+    reach = by_position(reaches(overall['model'], overall['order'], overall['raw'], plan.root_weights))
     rows: list[Alternative] = []
     for k, choice in selection.items():
         node = graph.nodes[k]
@@ -542,8 +554,8 @@ def analyze(args: argparse.Namespace) -> JsonObject | None:
             "uncertainty_method": UNCERTAINTY_METHOD,
             "sparse_threshold": args.sparse_threshold,
             "positions": len(graph.nodes),
-            "evaluated_positions": len({k for p in plan.profiles for k in p['order']}),
-            "overall_policy_evaluated_positions": len(plan.overall['order']),
+            "evaluated_positions": len({position_of(k) for p in plan.profiles for k in p['order']}),
+            "overall_policy_evaluated_positions": len({position_of(k) for k in plan.overall['order']}),
             "root_weights": plan.root_weights,
             "conflict_resolution": "explicit policy overrides; where chapters record different first moves, the "
             "alternative with the highest repertoire score; otherwise first PGN move in first chapter order",
@@ -568,7 +580,8 @@ def analyze(args: argparse.Namespace) -> JsonObject | None:
         "diagnostics": {
             "policy_conflicts": inspection["conflicts"],
             "entry_inspection": inspection["entries"],
-            "cycles": [],
+            # Repetition loops under the overall policy, followed up to a position's third occurrence.
+            "cycles": loops(policy_transitions(graph, color, dict(config.get('policy', {}), **selected))),
             "sanity_checks_passed": True,
         },
     }

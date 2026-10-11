@@ -63,7 +63,7 @@ def test_unidentified_and_missing_distributions_remain_bounded(tmp_path, recorde
 
 
 @pytest.mark.parametrize('loop_probability', [0.5, 1.0])
-def test_endpoint_cycles_conserve_first_gap_mass(tmp_path, loop_probability):
+def test_repeated_positions_end_in_a_draw_on_the_third_occurrence(tmp_path, loop_probability):
     g = graph(tmp_path, '1. Nf3 Nf6 2. Ng1 *')
     evidence = {
         position('Nf3'): data(100, 0, 0, [('g8f6', 100, 0, 0)]),
@@ -72,13 +72,12 @@ def test_endpoint_cycles_conserve_first_gap_mass(tmp_path, loop_probability):
         ),
     }
     result = distribution(evaluator(g, evidence), {g.roots[0]: 1.0})
-    assert result['validation']['cyclic_components'] == 1
-    if loop_probability < 1:
-        assert result['gap_mass'] == pytest.approx(1.0)
-        assert result['equivalent_gap_reach'] == pytest.approx(1.0)
-    else:
-        assert result['unresolved_mass'] == pytest.approx(1.0)
-        assert result['equivalent_gap_reach_bounds'] == [0.0, 1.0]
+    # After 2...Ng8 the game is back at the start; going round twice more is a draw by repetition.
+    assert result['validation']['cyclic_components'] == 0
+    assert result['terminal_mass'] == pytest.approx(loop_probability**2)
+    assert result['gap_mass'] == pytest.approx(1 - loop_probability**2)
+    assert result['unresolved_mass'] == 0
+    assert [r['position'] for r in result['gaps']] == ([position('Nf3 Nf6 Ng1 c5')] if loop_probability < 1 else [])
 
 
 def test_game_over_is_not_an_unprepared_gap(tmp_path):

@@ -203,7 +203,7 @@ In a full repertoire this places each chapter where it starts to differ from the
 - `exclude` leaves lines out of the repertoire. An entry is a chapter ID, to drop the whole chapter, or a `chapter-id:canonical-FEN:uci` string, to drop one move and everything after it from that chapter.
 - `root_weights` maps the starting positions of custom-FEN chapters to weights that sum to one, so chapters with no connecting route get absolute reach probabilities.
 
-A repertoire whose moves can return to an earlier position fails with the positions in the cycle.
+A line that returns to an earlier position, such as 2...Qf6 3.Nd5 Qd8 4.Nc3 in the Vienna, needs no exclusion: the game is followed until a position occurs for the third time, which is scored as a draw (see [Repetitions](design.md#repetitions)).
 
 ## Comparing alternative preparation
 

@@ -79,7 +79,7 @@ Your selected moves are played every time (or with the weights in your configura
 - **A prepared reply** continues the repertoire. This includes replies after the last move of a line that transpose straight into another prepared position.
 - **An unprepared reply** ends preparation. It is scored with that move's results in the parent position's table, so its own table is never fetched.
 - **A position where you have no move** ends preparation and is scored with that position's results.
-- **Checkmate, stalemate and insufficient material** are scored exactly.
+- **Checkmate, stalemate, insufficient material and the third occurrence of a position** are scored exactly. A line that returns to an earlier position is followed round again, with the opponent choosing anew from the position's table, until that third occurrence draws the game.
 
 The repertoire score is the probability-weighted average of these end scores. The same rules drive position reach, prepared depth, chapter entries and opening sources. Games in a table that match no listed move form a separate *no recorded continuation* outcome. The [model description](design.md) gives the formulas.
 
@@ -241,7 +241,7 @@ Gains overlap: the gain of `1.e4` includes everything after it. The edge ledger 
 The moves alone add up to slightly more or less than the delta, for two reasons, each shown as its own row:
 
 - **Move orders at transpositions.** A prepared position's database score pools the opponent moves leading to it by game count, but your repertoire arrives through each move order in its own proportion. Rare move orders often score differently: after 1.e4 d6 2.d4 Nf6 3.Nc3 g6 4.g3 Bg7, games arriving by the Modern order (1...g6) may score better than the Pirc order, and your repertoire may send more games through it than the database does. Each arrival adds `its reach * (pooled score - score of its own move row)`. In a chapter, the row also covers move orders the chapter never uses and an entry where you are to move, whose baseline is its own table.
-- **Theory leaves**, which are scored with their own table, while the move into them is compared with its row in the parent table. Finished games (checkmate, stalemate, insufficient material) are scored exactly and form a third row when they occur.
+- **Theory leaves**, which are scored with their own table, while the move into them is compared with its row in the parent table. Finished games (checkmate, stalemate, insufficient material, threefold repetition) are scored exactly and form a third row when they occur.
 
 Together these reproduce the delta exactly; the build checks this for every color and chapter. Values are in score points per 1,000 games, so the total equals the delta times ten. Thinly sampled moves count in the totals but are left out of the ranked tables, as elsewhere.
 

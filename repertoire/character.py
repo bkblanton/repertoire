@@ -12,9 +12,9 @@ import chess
 import numpy as np
 
 from .attribution import enrich
-from .board_cache import STARTING_POSITION, children, fen_number, route_line, san, turn
+from .board_cache import STARTING_POSITION, children, fen_number, position_of, route_line, san, turn
 from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
-from .evaluate import Weights
+from .evaluate import Route, Weights, better_route, by_position
 from .explorer import counts
 from .gaps import distribution as gap_distribution
 from .model import score
@@ -84,7 +84,7 @@ def predictability_metrics(
 ) -> JsonObject:
     rows: list[JsonObject] = []
     opportunities = recorded_opportunities = bits = sparse_opportunities = 0.0
-    for k, mass in reach.items():
+    for k, mass in by_position(reach).items():
         if mass <= 0 or evaluator.facts[k]['turn'] == evaluator.color or evaluator.facts[k]['outcome'] is not None:
             continue
         opportunities += mass
@@ -275,34 +275,53 @@ def position_reach_rows(
     lines: Mapping[Position, str],
     wdl_values: dict[Position, np.ndarray] | None = None,
 ) -> list[JsonObject]:
-    """Canonical reached boards, including the first unprepared opponent reply."""
+    """Canonical reached boards, including the first unprepared opponent reply.
+
+    Inside a repetition loop a board's reach adds up its occurrences, and its score and outcomes are the
+    reach-weighted mean over them.
+    """
     if wdl_values is None:
         wdl_values = recursive_wdl(evaluator)
-    routes = evaluator.routes(starts, replies=True)
+    routes: dict[Position, Route] = {}
+    for k, route in evaluator.routes(starts, replies=True).items():
+        position = position_of(k)
+        if position not in routes or better_route(route, routes[position]):
+            routes[position] = route
 
     def line(k: Position) -> str:
         # Each route keeps its own full-move number: transposed routes can differ in length.
         _, root, moves = routes[k]
+        root = position_of(root)
         text, position, _ = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
         if position != k:
             raise AssertionError('Repertoire route does not reach its board')
         prefix = '' if lines[root] == '(PGN root)' else lines[root]
         return (prefix + ' ' + text).strip() or '(PGN root)'
 
-    rows: dict[Position, JsonObject] = {}
+    nodes: dict[Position, list[Position]] = {}
     for k, mass in reach.items():
-        if mass <= 0:
-            continue
+        if mass > 0:
+            nodes.setdefault(position_of(k), []).append(k)
+
+    def mixture(values: Mapping[Position, np.ndarray], group: list[Position]) -> np.ndarray:
+        if len(group) == 1:
+            return values[group[0]]
+        total = sum(reach[n] for n in group)
+        return sum((reach[n] * values[n] for n in group), np.zeros(len(values[group[0]]))) / total
+
+    rows: dict[Position, JsonObject] = {}
+    for k, group in nodes.items():
+        mass = reach[group[0]] if len(group) == 1 else sum(reach[n] for n in group)
         if evaluator.facts[k]['outcome'] is not None:
             kind = 'terminal'
-        elif any(s.kind == 'unresolved_distribution' for s in evaluator.stops[k]):
+        elif any(s.kind == 'unresolved_distribution' for s in evaluator.stops[group[0]]):
             kind = 'unresolved_distribution'
         elif evaluator.facts[k]['turn'] == evaluator.color and not evaluator.graph.nodes[k].edges:
             kind = 'theory_leaf'
         else:
             kind = 'own_move' if evaluator.facts[k]['turn'] == evaluator.color else 'opponent_reply'
         sample, source = evaluator.database_counts(k)
-        value = evaluator.values[k]
+        value = mixture(evaluator.values, group)
         rows[k] = dict(
             position=k,
             line=line(k),
@@ -311,7 +330,7 @@ def position_reach_rows(
             kind=kind,
             is_starting_position=k == STARTING_POSITION,
             repertoire_score=float(value[0]) if value[1] == 0 else None,
-            outcomes=summarize_outcomes(wdl_values[k]),
+            outcomes=summarize_outcomes(mixture(wdl_values, group)),
             database_score=score(sample, evaluator.color) if sample is not None else None,
             games=sum(sample) if sample is not None else None,
             games_source=source,
@@ -320,10 +339,12 @@ def position_reach_rows(
     # The cached parent table supplies both the reply and its probability. No
     # evidence for the reached child board, or for its next moves, is requested.
     deviation_wdl: dict[Position, np.ndarray] = {}
-    for k, mass in reach.items():
+    origins: dict[tuple[Position, str], JsonObject] = {}
+    for node, mass in reach.items():
         if mass <= 0:
             continue
-        for move, probability, kind, sample, fixed in evaluator.stops[k]:
+        k = position_of(node)
+        for move, probability, kind, sample, fixed in evaluator.stops[node]:
             if kind != 'deviation' or probability <= 0:
                 continue
             target = children(k)[cast(str, move)]
@@ -350,27 +371,30 @@ def position_reach_rows(
             assert database_score is not None  # a positive reply probability has observations
             row['reach'] += branch_reach
             row['database_score'] += branch_reach * database_score
-            row['games'] += sum(sample)
-            row['counts_white_draw_black'] = [a + b for a, b in zip(row['counts_white_draw_black'], sample)]
             local_wdl = stopping_wdl(sample, evaluator.color, fixed)
             deviation_wdl.setdefault(target, np.zeros(4))
             deviation_wdl[target] += branch_reach * local_wdl
-            row['unprepared_origins'].append(
-                dict(
-                    parent_position=k,
-                    move=move,
-                    reach=branch_reach,
-                    database_score=database_score,
-                    games=sum(sample),
-                    counts_white_draw_black=sample,
-                    outcomes=summarize_outcomes(local_wdl),
-                )
+            if (k, cast(str, move)) in origins:
+                # The same reply at another occurrence inside a repetition loop: its games are counted once.
+                origins[k, cast(str, move)]['reach'] += branch_reach
+                continue
+            row['games'] += sum(sample)
+            row['counts_white_draw_black'] = [a + b for a, b in zip(row['counts_white_draw_black'], sample)]
+            origins[k, cast(str, move)] = dict(
+                parent_position=k,
+                move=move,
+                reach=branch_reach,
+                database_score=database_score,
+                games=sum(sample),
+                counts_white_draw_black=sample,
+                outcomes=summarize_outcomes(local_wdl),
             )
+            row['unprepared_origins'].append(origins[k, cast(str, move)])
     for row in rows.values():
         if row.get('unprepared_origins'):
             row['database_score'] /= row['reach']
             row['outcomes'] = summarize_outcomes(deviation_wdl[row['position']] / row['reach'])
-        if row['reach'] > 1 + 1e-10:
+        if row['reach'] > 1 + 1e-10 and row['position'] not in evaluator.loops:
             raise AssertionError('Canonical position revisited in an acyclic graph')
         row['reach'] = min(1.0, row['reach'])
     return sorted(rows.values(), key=lambda r: (-r['reach'], len(r['line'].split()), r['line'], r['position']))
@@ -387,15 +411,23 @@ def scope_metrics(
     """Character metrics for one scope. `wdl_values` is a WDL table for this evaluator to extend and reuse."""
     reach = evaluator.reaches(starts)
     value = evaluator.evaluate(starts)
-    decisions: list[JsonObject] = []
-    for k, mass in reach.items():
+    # Occurrences of a decision inside a repetition loop are added up.
+    encounters: dict[tuple[Position, str], float] = {}
+    for node, mass in reach.items():
+        k = position_of(node)
         if mass <= 0 or evaluator.facts[k]['turn'] != evaluator.color:
             continue
-        for move, p, _ in evaluator.edges[k]:
+        # A move into a third occurrence ends the game, but it is still a move you play.
+        moves = [(e.move, e.probability) for e in evaluator.edges[node]]
+        moves += [(s.move, s.probability) for s in evaluator.stops[node] if s.move]
+        for move, p in moves:
             probability = mass * p
-            if probability > 1 + 1e-10:
-                raise AssertionError('Decision revisited in an acyclic graph')
-            decisions.append(dict(position=k, move=move, san=san(k, move), line=lines[k], reach=min(1.0, probability)))
+            encounters[k, move] = encounters[k, move] + probability if (k, move) in encounters else probability
+    decisions: list[JsonObject] = []
+    for (k, move), probability in encounters.items():
+        if probability > 1 + 1e-10 and k not in evaluator.loops:
+            raise AssertionError('Decision revisited in an acyclic graph')
+        decisions.append(dict(position=k, move=move, san=san(k, move), line=lines[k], reach=min(1.0, probability)))
     reuse = reuse_metrics(decisions, games)
     if not math.isclose(reuse['expected_encounters_per_game'], value[2], abs_tol=1e-10):
         raise AssertionError('Own-decision reach does not reproduce prepared depth')
@@ -444,7 +476,9 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, games: Sequence
     facts = chess_facts(graph, color, evidence)
     lines = position_lines(graph)
     scopes = analysis.scopes()
-    evaluators = Evaluators(graph, color, evidence, facts, selected_policy(manifest), manifest['sparse_threshold'])
+    evaluators = Evaluators(
+        graph, color, evidence, facts, selected_policy(manifest), manifest['sparse_threshold'], manifest['root_weights']
+    )
     wdl_tables: dict[Evaluator, dict[Position, np.ndarray]] = {}  # one WDL table per shared evaluator
     for scope in scopes:
         expected = scope.pop('score')

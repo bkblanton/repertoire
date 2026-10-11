@@ -23,7 +23,7 @@ from typing import cast
 
 import numpy as np
 
-from .board_cache import move_text, owner_outcome
+from .board_cache import move_text, owner_outcome, position_of
 from .evaluate import KNOWN, UNKNOWN
 from .explorer import counts
 from .model import Evidence, Model, Sampled, position_counts, score
@@ -37,6 +37,7 @@ TOLERANCE = 1e-9
 
 def start_score(k: Position, evidence: Evidence, color: bool) -> float | None:
     """The baseline at a starting position: its own table, as in the start and entry baselines."""
+    k = position_of(k)
     fixed = owner_outcome(k, color)
     if fixed is not None:
         return fixed
@@ -72,13 +73,17 @@ def ledger(
     for k in reached:
         node, r = model[k], reach[k]
         if node.mode == 'own':
-            reference = score(position_counts(arrivals, evidence, k) or [0, 0, 0], color)
+            reference = score(position_counts(arrivals, evidence, position_of(k)) or [0, 0, 0], color)
             for b, (p, _) in zip(node.branches, sampled[k]):
-                if p <= 0 or b.target is None or reference is None:
+                if p <= 0 or reference is None:
+                    continue
+                if b.target is None:
+                    # A move into a third occurrence of a position: a draw by repetition.
+                    finished += r * p * (cast(float, b.fixed_score) - reference)
                     continue
                 target = model.get(b.target)
-                if target is not None and target.mode == 'opponent' and b.target in evidence:
-                    move = score(counts(evidence[b.target]), color)
+                if target is not None and target.mode == 'opponent' and position_of(b.target) in evidence:
+                    move = score(counts(evidence[position_of(b.target)]), color)
                     decisions[f'{k}|{b.move}'] = 100 * r * p * (float(move) - reference) if move is not None else 0.0
                 else:
                     finished += r * p * (float(values[b.target][KNOWN]) - reference)
@@ -96,7 +101,7 @@ def ledger(
     for u, arriving in inflow.items():
         node = model[u]
         if node.mode == 'own':
-            pooled = score(position_counts(arrivals, evidence, u) or [0, 0, 0], color)
+            pooled = score(position_counts(arrivals, evidence, position_of(u)) or [0, 0, 0], color)
             if pooled is None:
                 continue
             effect = sum(w * (pooled - s) for w, s, _, _ in arriving)
@@ -104,7 +109,7 @@ def ledger(
             if abs(effect) > 1e-15:
                 transpositions.append(
                     dict(
-                        position=u,
+                        position=position_of(u),
                         line=lines.get(u, ('', 0))[0],
                         effect_pp=100 * effect,
                         database_score=pooled,
@@ -145,9 +150,9 @@ def arrival(
         return dict(parent_position=None, move=None, line='', reach=weight, score=row_score)
     text, number = lines.get(parent, ('', 1))
     return dict(
-        parent_position=parent,
+        parent_position=position_of(parent),
         move=move,
-        line=(text + ' ' + move_text(parent, number, move)).strip(),
+        line=(text + ' ' + move_text(position_of(parent), number, move)).strip(),
         reach=weight,
         score=row_score,
     )

@@ -10,8 +10,10 @@ from typing import cast
 import numpy as np
 
 from . import SCHEMA_VERSION
+from .board_cache import position_of
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256
 from .depth import prepared_depth_values
+from .effort import row_node, target_node
 from .evaluate import KNOWN, UNKNOWN, backward, reaches
 from .explorer import counts
 from .graph import resolve, topology
@@ -93,9 +95,9 @@ def analyze_color(path: str | Path, cache: str | Path) -> JsonObject:
         if row['move_score'] is None or row.get('move_database_score') is None:
             exclusions['unavailable'] += 1
             continue
-        position, target = row['position'], row['target']
+        position, target = row_node(row), target_node(row)
         branch = next((b for b in model[position].branches if b.move == row['move']), None)
-        if model[position].mode != 'own' or branch is None or branch.target != target:
+        if model[position].mode != 'own' or branch is None or target is None or branch.target != target:
             raise ValueError('Saved own decision differs from the selected overall policy')
         probability = cast(float, branch.weight)
         weight = float(reach[position] * probability)
@@ -104,13 +106,14 @@ def analyze_color(path: str | Path, cache: str | Path) -> JsonObject:
             raise ValueError('Saved continuation score differs from the cached model')
         if not np.isclose(weight, row['branch_reach'], atol=1e-10):
             raise ValueError('Saved decision reach differs from the cached model')
-        if not np.isclose(cast(float, score(counts(evidence[target]), color)), row['move_database_score'], atol=1e-10):
+        database = score(counts(evidence[position_of(target)]), color)
+        if not np.isclose(cast(float, database), row['move_database_score'], atol=1e-10):
             raise ValueError('Saved move baseline differs from the cached table after the move')
         eligible.append(
             dict(
                 id=row['id'],
-                position=position,
-                target=target,
+                position=row['position'],
+                target=position_of(target),
                 move=row['move'],
                 line=row['line'],
                 chapters=row['chapters'],
@@ -143,7 +146,8 @@ def analyze_color(path: str | Path, cache: str | Path) -> JsonObject:
         **point,
         decisions=eligible,
         exclusions=exclusions,
-        position_depths={k: float(v[0]) for k, v in depth.items()},
+        # Inside a repetition loop, the depth from a position's first occurrence.
+        position_depths={k: float(v[0]) for k, v in depth.items() if position_of(k) == k},
         sensitivity_without_zero_depth=sensitivity,
         validation=dict(
             root_score_reproduced=True, root_depth_reproduced=float(root_depth), canonical_decisions_unique=True

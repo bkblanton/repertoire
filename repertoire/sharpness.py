@@ -92,4 +92,5 @@ def scope_outcomes(
     evaluator.evaluate(starts)
     if values is None:
         values = recursive_wdl(evaluator)
-    return summarize(sum((weight * values[position] for position, weight in starts.items() if weight), np.zeros(4)))
+    starts = evaluator.entry_nodes(starts)
+    return summarize(sum((weight * values[node] for node, weight in starts.items() if weight), np.zeros(4)))

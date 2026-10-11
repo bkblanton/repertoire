@@ -8,15 +8,15 @@ from typing import Any, cast
 
 import numpy as np
 
-from .board_cache import STARTING_POSITION, fen_number, route_line
+from .board_cache import STARTING_POSITION, fen_number, position_of, route_line
 from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
-from .evaluate import Route, Weights
+from .evaluate import Route, Weights, by_position
 from .gaps import distribution as gap_distribution
 from .graph import Graph
 from .model import score
 from .opening_names import SOURCE as OPENING_NAME_SOURCE
 from .opening_names import names as opening_names
-from .preparation import Evaluator, Evaluators, chess_facts
+from .preparation import Evaluator, Evaluators, Nodes, chess_facts
 from .ratings import (
     comparison_fields,
     comparison_mixture,
@@ -130,35 +130,45 @@ def name_flow(
     initial: Mapping[Position, Mapping[str | None, float]] | None = None,
     stop_at: Iterable[Position] = (),
 ) -> dict[Position, dict[str | None, float]]:
-    """Preserve the last exact name separately on each incoming probability flow."""
+    """Preserve the last exact name separately on each incoming probability flow, per position.
+
+    Flows run over the scorer's nodes; the occurrences of a position inside a repetition loop are added up.
+    """
     evaluator.evaluate(roots)
     flows: defaultdict[Position, defaultdict[str | None, float]] = defaultdict(lambda: defaultdict(float))
     stop_at = set(stop_at)
     incoming: Any
-    for k, weight in roots.items():
+    for k, weight in evaluator.entry_nodes(roots).items():
         if weight:
-            incoming = {exact[k]: 1.0} if k in exact else (initial or {}).get(k, {None: 1.0})
+            position = position_of(k)
+            incoming = {exact[position]: 1.0} if position in exact else (initial or {}).get(position, {None: 1.0})
             if not math.isclose(sum(incoming.values()), 1.0, abs_tol=1e-10):
                 raise AssertionError('Initial opening name weights are not normalized')
             for identity, share in incoming.items():
                 flows[k][identity] += weight * share
     for k in reversed(evaluator.values):
-        if k in stop_at:
+        if position_of(k) in stop_at:
             continue
         incoming = list(flows[k].items())
         for identity, mass in incoming:
             for _, p, target in evaluator.edges[k]:
-                flows[target][exact.get(target, identity)] += mass * p
+                flows[target][exact.get(position_of(target), identity)] += mass * p
             for move, p, kind, _, _ in evaluator.stops[k]:
                 if kind == 'deviation':
-                    target = evaluator.facts[k]['after'][move][0]
+                    target = evaluator.facts[position_of(k)]['after'][move][0]
                     flows[target][exact.get(target, identity)] += mass * p
     if not stop_at:
         reach = evaluator.reaches(roots)
         for k, mass in reach.items():
             if not math.isclose(sum(flows[k].values()), mass, abs_tol=1e-10):
                 raise AssertionError('Opening name flow did not reproduce canonical position reach')
-    return {k: dict(values) for k, values in flows.items() if sum(values.values()) > 0}
+    result: dict[Position, dict[str | None, float]] = {}
+    for k, values in flows.items():
+        if sum(values.values()) > 0:
+            merged = result.setdefault(position_of(k), {})
+            for identity, mass in values.items():
+                merged[identity] = merged[identity] + mass if identity in merged else mass
+    return result
 
 
 def most_common_source(weights: Mapping[str | None, float]) -> JsonObject | None:
@@ -217,21 +227,20 @@ def entered_reach(evaluator: Evaluator, entries: Iterable[JsonObject]) -> dict[P
     Keep this historical origin even after a later named board changes the
     current classification. Incoming first-entry cohorts are disjoint.
     """
-    starts: defaultdict[Position, float]
-    reached: defaultdict[Position, float]
-    starts, reached = defaultdict(float), defaultdict(float)
+    reached: defaultdict[Position, float] = defaultdict(float)
+    starts = Nodes()
     for entry in entries:
         if entry['parent'] is None:
-            starts[entry['position']] += entry['mass']
+            starts[entry['node']] = starts.get(entry['node'], 0.0) + entry['mass']
         else:
             reached[entry['position']] += entry['mass']
     if starts:
         regular = evaluator.reaches(starts)
         for k, mass in regular.items():
-            reached[k] += mass
+            reached[position_of(k)] += mass
             for move, p, kind, _, _ in evaluator.stops[k]:
                 if kind == 'deviation':
-                    target = evaluator.facts[k]['after'][move][0]
+                    target = evaluator.facts[position_of(k)]['after'][move][0]
                     reached[target] += mass * p
     return {k: mass for k, mass in reached.items() if mass > 0}
 
@@ -244,21 +253,32 @@ def first_entries(
     best = evaluator.routes(roots, stop_at=region, replies=True)
     entries: list[JsonObject]
     entries, missed = [], 0.0
-    for k in reversed(evaluator.values):
-        mass = incoming[k]
+    for node in reversed(evaluator.values):
+        mass = incoming[node]
         if not mass:
             continue
+        k = position_of(node)
         if k in region:
             entries.append(
-                dict(position=k, mass=mass, parent=None, move=None, sample=None, fixed=None, witness=best[k])
+                dict(
+                    position=k,
+                    node=node,
+                    mass=mass,
+                    parent=None,
+                    move=None,
+                    sample=None,
+                    fixed=None,
+                    witness=best[node],
+                )
             )
             continue
-        for move, p, kind, sample, fixed in evaluator.stops[k]:
+        for move, p, kind, sample, fixed in evaluator.stops[node]:
             target = evaluator.facts[k]['after'][move][0] if kind == 'deviation' else None
             if target in region:
                 entries.append(
                     dict(
                         position=target,
+                        node=target,
                         mass=mass * p,
                         parent=k,
                         move=move,
@@ -295,6 +315,7 @@ def first_entries(
 
 def example(evaluator: Evaluator, witness: Route) -> JsonObject:
     probability, root, moves = witness
+    root = position_of(root)
     text, position, _ = route_line(root, fen_number(evaluator.graph.nodes[root].fen), moves)
     return dict(
         root_fen=evaluator.graph.nodes[root].fen,
@@ -311,9 +332,8 @@ def cohort(
     """Mix continuations and entry baselines with the same first-arrival weights."""
     outcomes = np.zeros(4)
     baseline_known = baseline_unknown = depth = regular_mass = 0.0
-    regular_starts: defaultdict[Position, float]
-    direct_gaps: defaultdict[Position, float]
-    regular_starts, direct_gaps = defaultdict(float), defaultdict(float)
+    direct_gaps: defaultdict[Position, float] = defaultdict(float)
+    regular_starts = Nodes()
     direct_terminal = 0.0
     rows: dict[Position, JsonObject] = {}
     for entry in entries:
@@ -332,9 +352,9 @@ def cohort(
             sample = known or [0, 0, 0]
             fixed = evaluator.facts[k]['outcome']
             base = fixed if fixed is not None else score(sample, evaluator.color)
-            continuation = wdl[k]
-            depth += weight * evaluator.values[k][2]
-            regular_starts[k] += weight
+            continuation = wdl[entry['node']]
+            depth += weight * evaluator.values[entry['node']][2]
+            regular_starts[entry['node']] = regular_starts.get(entry['node'], 0.0) + weight
             regular_mass += weight
         outcomes += weight * continuation
         if base is None:
@@ -379,6 +399,8 @@ def cohort(
                 conditional_weight=weight,
                 counts_white_draw_black=sample,
                 fixed_outcome=fixed,
+                # The occurrence inside a repetition loop that games first enter at.
+                **({'node': entry['node']} if entry['node'] != k else {}),
             )
         )
         row['rating_parts'].append((weight, entry['opponent_rating']))
@@ -389,7 +411,7 @@ def cohort(
     gaps = dict(direct_gaps)
     terminal, unknown = direct_terminal, 0.0
     if regular_mass:
-        normalized = {k: w / regular_mass for k, w in regular_starts.items()}
+        normalized = Nodes({k: w / regular_mass for k, w in regular_starts.items()})
         result = gap_distribution(evaluator, normalized)
         for gap in result['gaps']:
             k = gap['position']
@@ -470,7 +492,9 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     graph, color, saved, manifest = analysis.graph, analysis.color, analysis.saved, analysis.manifest
     evidence = analysis.read_evidence(cache)
     facts = chess_facts(graph, color, evidence)
-    evaluators = Evaluators(graph, color, evidence, facts, selected_policy(manifest), manifest['sparse_threshold'])
+    evaluators = Evaluators(
+        graph, color, evidence, facts, selected_policy(manifest), manifest['sparse_threshold'], manifest['root_weights']
+    )
     evaluator = evaluators()
     roots = manifest['root_weights']
     value = evaluator.evaluate(roots)
@@ -480,7 +504,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     ]:
         if not math.isclose(actual, expected, abs_tol=1e-10):
             raise AssertionError('Opening analysis did not reproduce the saved score')
-    wdl, reach = recursive_wdl(evaluator), evaluator.reaches(roots)
+    wdl, reach = recursive_wdl(evaluator), by_position(evaluator.reaches(roots))
     names = opening_names()
     catalog, exact, potential, _ = classify(graph, names, facts, color)
     regions = named_regions(exact, catalog)
@@ -518,7 +542,8 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
             continue
         for k, mass in entered_reach(evaluator, entries).items():
             board = positions[k]
-            if mass > board['reach'] + 1e-10 or mass > total + 1e-10:
+            # Inside a repetition loop a board's reach counts each occurrence, so it can exceed the opening's.
+            if mass > board['reach'] + 1e-10 or (mass > total + 1e-10 and k not in evaluator.loops):
                 raise AssertionError('Opening origin exceeds actual board or opening reach')
             board['opening_reach_contributions'][identity] = mass
             board['opening_reach_fractions'][identity] = min(1.0, mass / board['reach'])

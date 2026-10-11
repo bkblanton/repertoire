@@ -1,4 +1,8 @@
-"""Rank repertoire vulnerabilities from the saved model evidence."""
+"""Rank repertoire vulnerabilities from the saved model evidence.
+
+Rows are per scoring node: inside a repetition loop each occurrence of a position has its own row, with `node`
+and `target_node` naming the occurrences (see graph.unroll) and its line going round the loop.
+"""
 
 import json
 from collections.abc import Iterable, Mapping, Sequence
@@ -9,9 +13,9 @@ import numpy as np
 
 from . import edge, effort
 from .attribution import enrich
-from .board_cache import fen_number, move_text, route_line, san
+from .board_cache import fen_number, move_text, position_of, route_line, san
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
-from .evaluate import KNOWN, UNKNOWN, Weights, backward, best_routes, can_enter, forward, reaches
+from .evaluate import KNOWN, UNKNOWN, Weights, backward, best_routes, by_position, can_enter, forward, reaches
 from .explorer import counts
 from .free_transpositions import free_transpositions
 from .graph import Graph, resolve, topology
@@ -34,9 +38,9 @@ def representative_lines(
     `prefixes` continues earlier lines to the roots."""
     paths: dict[Position, tuple[str, int]] = {}
     for k, (_, root, moves) in best_routes(model, order, sampled, roots).items():
-        prefix, number = (prefixes or {}).get(root, ('', fen_number(graph.nodes[root].fen)))
-        text, position, number = route_line(root, number, moves)
-        if position != k:
+        prefix, number = (prefixes or {}).get(root, ('', fen_number(graph.nodes[position_of(root)].fen)))
+        text, position, number = route_line(position_of(root), number, moves)
+        if position != position_of(k):
             raise AssertionError('Representative route does not reach its position')
         paths[k] = (prefix + ' ' + text).strip(), number
     return paths
@@ -58,32 +62,38 @@ def candidates(
     for k, node in model.items():
         if node.mode == 'stop':
             continue
-        number = fen_number(graph.nodes[k].fen)
-        rows = {r['uci']: counts(r) for r in evidence[k]['moves']} if node.mode == 'opponent' else {}
-        parent_sample = counts(evidence[k]) if node.mode == 'opponent' else position_counts(arrivals, evidence, k)
+        position = position_of(k)
+        number = fen_number(graph.nodes[position].fen)
+        rows = {r['uci']: counts(r) for r in evidence[position]['moves']} if node.mode == 'opponent' else {}
+        parent_sample = (
+            counts(evidence[position]) if node.mode == 'opponent' else position_counts(arrivals, evidence, position)
+        )
         parent_n = sum(parent_sample) if parent_sample else 0
         parent_score = score(parent_sample, color) if parent_sample else None
         for b, (p, empirical_score) in zip(node.branches, sampled[k]):
             if not b.move or p <= 0:
                 continue
+            after_move = position_of(b.target) if b.target is not None else None
             if node.mode == 'opponent':
                 sample = rows.get(b.move)
             else:
-                sample = counts(evidence[b.target]) if b.target in evidence else None
+                sample = counts(evidence[after_move]) if after_move in evidence else None
             n = sum(sample) if sample else 0
             common: JsonObject = dict(
                 id=f'{k}|{b.move}',
-                position=k,
+                position=position,
+                **({'node': k} if k != position else {}),
                 move=b.move,
-                move_san=san(k, b.move),
-                move_label=move_text(k, number, b.move),
+                move_san=san(position, b.move),
+                move_label=move_text(position, number, b.move),
                 branch_probability=float(p),
                 sample_count=n,
                 parent_sample_count=parent_n,
                 counts_white_draw_black=sample or [0, 0, 0],
                 sparse=n < sparse_threshold,
-                chapters=sorted(graph.nodes[k].chapters),
-                target=b.target,
+                chapters=sorted(graph.nodes[position].chapters),
+                target=after_move,
+                **({'target_node': b.target} if b.target != after_move else {}),
             )
             if node.mode == 'opponent':
                 before = float(values[k][KNOWN]) if values[k][UNKNOWN] == 0 else None
@@ -104,14 +114,18 @@ def candidates(
             else:
                 move_database_score = score(sample, color) if sample else None
                 after = (
-                    float(values[b.target][KNOWN]) if b.target is not None and values[b.target][UNKNOWN] == 0 else None
+                    b.fixed_score
+                    if b.target is None
+                    else float(values[b.target][KNOWN])
+                    if values[b.target][UNKNOWN] == 0
+                    else None
                 )
                 common.update(
                     kind='own',
                     reference_score=parent_score,
                     move_score=after,
                     move_database_score=move_database_score,
-                    score_basis='prepared repertoire continuation',
+                    score_basis='prepared repertoire continuation' if b.target is not None else 'terminal result',
                     prepared=True,
                     parent_sparse=parent_n < sparse_threshold,
                     continuation_endpoint_sparse=(
@@ -154,11 +168,11 @@ def rank_scope(
 ) -> JsonObject:
     rows: list[JsonObject] = []
     for candidate in local:
-        k = candidate['position']
+        k = effort.row_node(candidate)
         if reach[k] <= 0:
             continue
         text, number = lines.get(k, ('', None))
-        label = candidate['move_label'] if number is None else move_text(k, number, candidate['move'])
+        label = candidate['move_label'] if number is None else move_text(position_of(k), number, candidate['move'])
         row = dict(candidate, parent_reach=reach[k], move_label=label, line=(text + ' ' + label).strip())
         row['branch_reach'] = reach[k] * row['branch_probability']
         row['weighted_drag_pp'] = None if row['local_drop_pp'] is None else row['branch_reach'] * row['local_drop_pp']
@@ -209,7 +223,9 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
         rtol=0,
     ):
         raise AssertionError('Reconstructed model differs from saved scores')
-    own_positions = {k for context in contexts.values() for k, n in context['model'].items() if n.mode == 'own'}
+    own_positions = {
+        position_of(k) for context in contexts.values() for k, n in context['model'].items() if n.mode == 'own'
+    }
     arrivals = arrival_counts(graph, color, evidence)
     for context in contexts.values():
         context['local'] = candidates(
@@ -299,7 +315,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
                     'overall_policy_entry_probability', reported_probability
                 ),
                 entry_probability=reported_probability,
-                first_entry_weights=weights,
+                first_entry_weights=by_position(weights),
                 repertoire_score=chapter['score'].get('raw_empirical_score'),
                 entry_baseline_score=chapter.get('entry_baseline', {}).get('raw_score'),
                 delta_vs_entry_baseline_pp=chapter.get('entry_baseline', {}).get('difference_pp'),

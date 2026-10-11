@@ -18,6 +18,12 @@ def canonical(board: chess.Board) -> Position:
     return ' '.join(board.fen(en_passant='legal').split()[:4])
 
 
+def position_of(node: str) -> Position:
+    """The position of a scoring node. Inside a repetition loop, a node also records how often each loop
+    position has occurred (see graph.unroll); everywhere else the node is the position itself."""
+    return node.partition('#')[0]
+
+
 @lru_cache(maxsize=65536)
 def terminal_white(position: Position) -> float | None:
     board = chess.Board(position + ' 0 1')

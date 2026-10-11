@@ -6,12 +6,13 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, TypedDict
 
 import numpy as np
 
-from .board_cache import children
+from .board_cache import children, position_of
 from .context import DEFAULT_CACHE, AnalysisContext, selected_policy, stage_main
+from .effort import row_node, target_node
 from .evaluate import COMPLETED
 from .explorer import counts, validate
 from .graph import Graph, resolve, topology
@@ -202,10 +203,13 @@ class LocalComparisons:
         if branch.target is not None:
             after = posterior.values[branch.target][COMPLETED]
             downstream = self.influence[branch.target]
-            variance = sum(
-                (reach.get(m, 0.0) - downstream.get(m, 0.0)) ** 2 * posterior.table_variance(m)
-                for m in sorted(set(reach) | set(downstream))
-            )
+            tables = sorted(set(reach) | set(downstream))
+            if all(position_of(m) == m for m in tables):
+                variance = sum(
+                    (reach.get(m, 0.0) - downstream.get(m, 0.0)) ** 2 * posterior.table_variance(m) for m in tables
+                )
+            else:
+                variance = posterior.grouped_variance({m: reach.get(m, 0.0) - downstream.get(m, 0.0) for m in tables})
             component = self.leaf(branch.target)
         elif branch.fixed_score is not None:
             after, variance = branch.fixed_score, self.value_variance(k)
@@ -225,9 +229,9 @@ class LocalComparisons:
         is the whole table after it, which the continuation also uses, so those two covary. Tables upstream of
         the position are independent of everything after it.
         """
-        if k not in self.database:
+        if position_of(k) not in self.database:
             return None
-        parent, parent_variance = self.database[k]
+        parent, parent_variance = self.database[position_of(k)]
         after = self.posterior.values[target][COMPLETED]
         after_variance = self.value_variance(target)
         drop = parent - after
@@ -286,14 +290,22 @@ def add_recursive_spreads(
     for chapter in saved['chapters']:
         profiles[json.dumps(chapter.get('policy_overrides', {}), sort_keys=True)].append(chapter['id'])
     for identity, scopes in profiles.items():
-        evaluator = Evaluator(graph, color, evidence, facts, dict(selected_policy(manifest), **json.loads(identity)))
+        evaluator = Evaluator(
+            graph,
+            color,
+            evidence,
+            facts,
+            dict(selected_policy(manifest), **json.loads(identity)),
+            roots=manifest['root_weights'],
+        )
         starts = {k: 1.0 for sid in scopes for k, p in preparations[sid]['starts'].items() if p > 0}
         evaluator.evaluate(starts)
         position_values = recursive_spread(evaluator)
         for sid in scopes:
             scope = insights[sid]
+            scope_starts = {k: p for k, p in preparations[sid]['starts'].items() if p > 0}
             result = spread_mixture(
-                [(p, position_values[k]) for k, p in preparations[sid]['starts'].items() if p > 0],
+                [(p, position_values[k]) for k, p in evaluator.entry_nodes(scope_starts).items()],
                 characters[sid].get('outcomes', {}).get('resolved_score'),
             )
             previous = scope['branch_score_spread']
@@ -305,8 +317,20 @@ def add_recursive_spreads(
                 assert_outcomes(result, characters[sid]['outcomes'])
             previous.update(result, recursive=True)
             positions: dict[Position, JsonObject] = {}
+            # A position's occurrences inside a repetition loop, mixed by reach as the character rows are.
+            reach = evaluator.reaches(scope_starts) if evaluator.loops else {}
+            occurrences: defaultdict[Position, list[Position]] = defaultdict(list)
+            for k, mass in reach.items():
+                if mass > 0 and position_of(k) != k:
+                    occurrences[position_of(k)].append(k)
             for row in characters[sid].get('positions', []):
-                metric = position_values.get(row['position'])
+                nodes = [k for k in [row['position'], *occurrences[row['position']]] if reach.get(k, 0) > 0]
+                metric: JsonObject | None
+                if len(nodes) > 1:
+                    mass = sum(reach[k] for k in nodes)
+                    metric = spread_mixture([(reach[k] / mass, position_values[k]) for k in nodes])
+                else:
+                    metric = position_values.get(nodes[0] if nodes else row['position'])
                 if metric is None:
                     metric = stopping_spread(row['outcomes'])
                 assert_outcomes(metric, row['outcomes'])
@@ -314,7 +338,9 @@ def add_recursive_spreads(
             scope['position_spreads'] = positions
             for row in moves[sid].get('all_signed_rows', []):
                 after = (
-                    position_values[row['target']]
+                    position_values[target]
+                    if (target := target_node(row)) is not None
+                    else stopping_counts([0, 0, 0], color, row['move_score'])
                     if row['prepared']
                     else stopping_counts(
                         row['counts_white_draw_black'],
@@ -324,7 +350,7 @@ def add_recursive_spreads(
                 )
                 scope['moves'][row['id']].update(
                     move_spread=after,
-                    reference_spread=position_values[row['position']] if row['kind'] == 'opponent' else None,
+                    reference_spread=position_values[row_node(row)] if row['kind'] == 'opponent' else None,
                 )
         if identity == '{}':
             opening_spreads: dict[str, JsonObject] = {}
@@ -336,7 +362,7 @@ def add_recursive_spreads(
                     parts = [
                         (
                             origin['conditional_weight'],
-                            position_values[entry['position']]
+                            position_values[origin.get('node', entry['position'])]
                             if origin['parent'] is None
                             else stopping_counts(origin['counts_white_draw_black'], color, origin['fixed_outcome']),
                         )
@@ -437,7 +463,14 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
             Posterior(model, order, color, manifest['prior'], manifest['sparse_threshold']), database, owner
         )
         branches = {k: {b.move: j for j, b in enumerate(n.branches) if b.move} for k, n in model.items()}
-        evaluator = Evaluator(graph, color, evidence, facts, dict(selected_policy(manifest), **json.loads(identity)))
+        evaluator = Evaluator(
+            graph,
+            color,
+            evidence,
+            facts,
+            dict(selected_policy(manifest), **json.loads(identity)),
+            roots=manifest['root_weights'],
+        )
         for scope in group:
             if scope['id'] != 'overall':
                 chapter = chapters[scope['id']]
@@ -455,10 +488,11 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
                         ]
                 results[scope['id']]['entry_opening_sources'] = entry_sources
             for row in scope['moves'].get('all_signed_rows', []):
-                k, move = row['position'], row['move']
+                k, move = row_node(row), row['move']
                 j = branches[k][move]
                 if row['kind'] == 'own':
-                    parts = comparisons.own(k, cast(Position, model[k].branches[j].target))
+                    target = model[k].branches[j].target
+                    parts = None if target is None else comparisons.own(k, target)
                     drop = None if parts is None else parts['drop'][1]
                 else:
                     _, drop = comparisons.opponent(k, j)

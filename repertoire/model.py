@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import cast
 
-from .board_cache import children, owner_outcome, turn
+from .board_cache import children, owner_outcome, position_of, turn
 from .explorer import counts, validate
 from .graph import Graph
 from .schema import Position
@@ -33,7 +33,9 @@ Sample = tuple[float, float | None]
 Model = dict[Position, ModelNode]
 Sampled = dict[Position, list[Sample]]
 Evidence = dict[Position, dict]
-Selected = dict[str, tuple[Position, float | None]]  # move -> (target, policy weight; None at opponent turns)
+# move -> (target, policy weight; None at opponent turns); a target of None is a draw by repetition (graph.unroll).
+Selected = dict[str, tuple[Position | None, float | None]]
+REPETITION = 0.5  # the score of a draw by threefold repetition, for either side
 
 
 class MissingEvidence(ValueError):
@@ -41,35 +43,48 @@ class MissingEvidence(ValueError):
 
 
 def prepare_node(k: Position, selected: Selected, color: bool, evidence: Evidence) -> ModelNode:
-    """The model node for one position, from its selected transitions and cached table."""
-    result = owner_outcome(k, color)
+    """The model node for one position (or repetition history node), from its selected transitions and table."""
+    position = position_of(k)
+    result = owner_outcome(position, color)
     if result is not None:
         return ModelNode("stop", [Branch(kind="theory_leaf" if not selected else "other_stop", fixed_score=result)])
-    if selected and turn(k) == color:
-        return ModelNode("own", [Branch(move=m, target=t, weight=w) for m, (t, w) in selected.items()])
-    if k not in evidence:
-        raise MissingEvidence(k)
-    data = evidence[k]
-    residual = validate(data, k)
+    if selected and turn(position) == color:
+        return ModelNode(
+            "own",
+            [
+                Branch(move=m, target=t, weight=w)
+                if t is not None
+                else Branch(move=m, weight=w, kind="repetition", fixed_score=REPETITION)
+                for m, (t, w) in selected.items()
+            ],
+        )
+    if position not in evidence:
+        raise MissingEvidence(position)
+    data = evidence[position]
+    residual = validate(data, position)
     total = sum(counts(data))
-    if turn(k) == color:
+    if turn(position) == color:
         return ModelNode("stop", [Branch(counts=counts(data), kind="theory_leaf")], total)
     if not total:
         return ModelNode(
-            "stop", [Branch(kind="unresolved_distribution")], 0, [target for target, _ in selected.values()]
+            "stop",
+            [Branch(kind="unresolved_distribution")],
+            0,
+            [target for target, _ in selected.values() if target is not None],
         )
     rows = {r["uci"]: counts(r) for r in data["moves"]}
     branches = []
-    moves = children(k)
+    moves = children(position)
     for uci in sorted(moves):
         target = selected.get(uci, (None, None))[0]
+        repetition = uci in selected and target is None
         branches.append(
             Branch(
                 move=uci,
                 target=target,
                 counts=rows.get(uci, [0, 0, 0]),
-                kind=None if target else "deviation",
-                fixed_score=None if target else owner_outcome(moves[uci], color),
+                kind="repetition" if repetition else None if target else "deviation",
+                fixed_score=REPETITION if repetition else None if target else owner_outcome(moves[uci], color),
             )
         )
     if sum(residual):

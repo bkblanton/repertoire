@@ -4,6 +4,7 @@ import math
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
+from .board_cache import position_of
 from .evaluate import fold
 from .model import Branch
 from .schema import JsonObject, Position
@@ -79,7 +80,8 @@ def recursive_spread(evaluator: 'Evaluator') -> dict[Position, JsonObject]:
     def combine(k: Position, parts: list[tuple[Branch, float, JsonObject]]) -> JsonObject:
         expected = evaluator.values[k]
         value = mixture([(p, child) for _, p, child in parts], float(expected[0]) if expected[1] == 0 else None)
-        opponent = evaluator.facts[k]['turn'] != evaluator.color and evaluator.facts[k]['outcome'] is None
+        fact = evaluator.facts[position_of(k)]
+        opponent = fact['turn'] != evaluator.color and fact['outcome'] is None
         reply_mass = sum(p for b, p, _ in parts if b.move is not None)
         value['reply_distribution_coverage'] = reply_mass if opponent else None
         if opponent and math.isclose(reply_mass, 1.0, abs_tol=1e-10) and value['variance'] is not None:

@@ -12,6 +12,7 @@ Values are in percentage points per game with that color; reports show them per 
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from typing import cast
 
 from .evaluate import Weights, dominators
 from .model import Model, Sampled
@@ -23,6 +24,16 @@ RECENT_GAMES = 100
 RARE_REACH = 0.001
 # A pruning candidate takes at least this many decisions; single moves are the vulnerability tables' job.
 PRUNE_MIN_DECISIONS = 3
+
+
+def row_node(row: JsonObject) -> Position:
+    """A vulnerability row's scoring node: its position, or inside a repetition loop the occurrence it names."""
+    return cast(Position, row.get('node', row['position']))
+
+
+def target_node(row: JsonObject) -> Position | None:
+    """The scoring node after a vulnerability row's move, or None where the move ends the game."""
+    return cast(Position | None, row.get('target_node', row['target']))
 
 
 def supported(row: JsonObject) -> bool:
@@ -54,10 +65,10 @@ def effort(
     """Attach each own move's drop value and cost to its row, and rank pruning and review candidates by row id."""
     idom = dominators(model, order, sampled, roots)
     own_rows = [r for r in rows if r['kind'] == 'own']
-    dominated = subtrees(idom, (r['position'] for r in own_rows))
+    dominated = subtrees(idom, (row_node(r) for r in own_rows))
     for row in own_rows:
         gain = row.get('local_gain_pp')
-        row['decisions_dropped'] = len(dominated.get(row['position'], ()))
+        row['decisions_dropped'] = len(dominated.get(row_node(row), ()))
         row['drop_value_pp'] = None if gain is None else row['branch_reach'] * gain
         row['review_priority_pp'] = (
             None if gain is None else row['branch_reach'] * gain * (1 - row['branch_reach']) ** RECENT_GAMES
@@ -75,7 +86,7 @@ def effort(
     pruning: list[str] = []
     taken: set[Position] = set()
     for row in candidates:
-        members = dominated[row['position']]
+        members = dominated[row_node(row)]
         if not members & taken:
             pruning.append(row['id'])
             taken |= members

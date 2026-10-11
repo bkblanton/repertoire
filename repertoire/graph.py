@@ -12,8 +12,11 @@ from .board_cache import canonical as key
 from .board_cache import children, terminal_white, turn
 from .schema import JsonObject, Position
 
-# move -> (target, policy weight); the weight is None at opponent turns.
-Transitions = dict[Position, dict[str, tuple[Position, float | None]]]
+# node -> move -> (target, policy weight); the weight is None at opponent turns. After `unroll`, nodes inside
+# repetition loops also carry the loop history, and a target of None is a draw by threefold repetition.
+Transitions = dict[Position, dict[str, tuple[Position | None, float | None]]]
+# A loop unrolls into at most this many nodes; real repertoires need a handful.
+MAX_LOOP_NODES = 100_000
 # An explicit move, or move weights summing to one, at own-turn positions.
 Policy = Mapping[Position, str | Mapping[str, float]]
 
@@ -133,10 +136,15 @@ def conflicts(graph: Graph, color: bool) -> list[JsonObject]:
 
 
 def resolve(graph: Graph, color: bool, policy: Policy) -> Transitions:
-    """Explicit overrides, otherwise first PGN move in first chapter order.
+    """Explicit overrides, otherwise first PGN move in first chapter order, with repetition loops unrolled.
 
     The scorer passes the winners of competing chapter alternatives as part of `policy`.
     """
+    return unroll(policy_transitions(graph, color, policy))
+
+
+def policy_transitions(graph: Graph, color: bool, policy: Policy) -> Transitions:
+    """The moves `resolve` plays, between positions; a line can still return to an earlier position."""
     transitions: Transitions = {}
     for k, n in graph.nodes.items():
         if terminal_white(k) is not None:
@@ -188,7 +196,7 @@ def alternative_transitions(graph: Graph, color: bool, policy: Policy) -> Transi
     Every board any chapter alternative or chapter comparison policy can reach is reachable here, so evidence
     can be planned before scoring decides between alternatives. Own-turn boards may have several moves.
     """
-    transitions = resolve(graph, color, policy)
+    transitions = policy_transitions(graph, color, policy)
     for k, n in graph.nodes.items():
         if turn(k) == color and terminal_white(k) is None:
             for recorded in n.chapter_moves.values():
@@ -206,7 +214,7 @@ def reachable(transitions: Transitions, roots: Iterable[Position]) -> list[Posit
         if k in seen:
             continue
         seen[k] = None
-        pending.extend(target for target, _ in transitions[k].values())
+        pending.extend(target for target, _ in transitions[k].values() if target is not None)
     return list(seen)
 
 
@@ -223,7 +231,8 @@ def chapter_policy_overrides(
         moves = node.chapter_moves.get(chapter_id, [])
         if moves and turn(k) == color:
             chosen = moves[0]
-            if global_transitions[k] != {chosen: (node.edges[chosen], 1.0)}:
+            # Compare moves and weights only: inside a repetition loop the target is a history node.
+            if {m: w for m, (_, w) in global_transitions[k].items()} != {chosen: 1.0}:
                 overrides[k] = chosen
     return overrides
 
@@ -242,7 +251,8 @@ def topology(transitions: Transitions, roots: Iterable[Position]) -> list[Positi
             return
         active.append(k)
         for target, _ in transitions[k].values():
-            visit(target)
+            if target is not None:
+                visit(target)
         active.pop()
         visited.add(k)
         order.append(k)
@@ -250,6 +260,99 @@ def topology(transitions: Transitions, roots: Iterable[Position]) -> list[Positi
     for root in roots:
         visit(root)
     return order
+
+
+def loops(transitions: Transitions) -> list[list[Position]]:
+    """Every set of positions a game can move between and return to (strongly connected), each one sorted."""
+    index: dict[Position, int] = {}
+    low: dict[Position, int] = {}
+    stack: list[Position] = []
+    on_stack: set[Position] = set()
+    found = []
+    for start in transitions:
+        if start in index:
+            continue
+        index[start] = low[start] = len(index)
+        stack.append(start)
+        on_stack.add(start)
+        pending = [(start, iter(transitions[start].values()))]
+        while pending:
+            k, targets = pending[-1]
+            for target, _ in targets:
+                if target is None:
+                    continue
+                if target not in index:
+                    index[target] = low[target] = len(index)
+                    stack.append(target)
+                    on_stack.add(target)
+                    pending.append((target, iter(transitions[target].values())))
+                    break
+                if target in on_stack:
+                    low[k] = min(low[k], index[target])
+            else:
+                pending.pop()
+                if pending:
+                    parent = pending[-1][0]
+                    low[parent] = min(low[parent], low[k])
+                if low[k] == index[k]:
+                    component = []
+                    while True:
+                        member = stack.pop()
+                        on_stack.discard(member)
+                        component.append(member)
+                        if member == k:
+                            break
+                    # A move always changes the position, so a single position never forms a loop.
+                    if len(component) > 1:
+                        found.append(sorted(component))
+    return found
+
+
+def unroll(transitions: Transitions) -> Transitions:
+    """Transitions whose nodes inside repetition loops also record how often each loop position has occurred.
+
+    A game is drawn when a position occurs for the third time, so inside a loop a node's future depends on
+    the game's history. Only the loop's own positions matter: positions before the loop cannot recur, and
+    a game that leaves a loop can never return to it. Such a node is written `position#counts`, one digit
+    per loop position in sorted order (see board_cache.position_of). The plain position stands for its
+    first occurrence with no other loop position played yet, which is how a game arrives from outside the
+    loop. A move into a third occurrence has the target None. Without loops, `transitions` is returned
+    unchanged.
+    """
+    found = loops(transitions)
+    if not found:
+        return transitions
+    result = dict(transitions)
+    for loop in found:
+        place = {k: i for i, k in enumerate(loop)}
+
+        def node(k: Position, counts: tuple[int, ...]) -> Position:
+            return k if sum(counts) == 1 else f"{k}#{''.join(map(str, counts))}"
+
+        done: set[Position] = set()
+        for start in loop:
+            pending = [(start, tuple(int(k == start) for k in loop))]
+            while pending:
+                k, counts = pending.pop()
+                name = node(k, counts)
+                if name in done:
+                    continue
+                done.add(name)
+                if len(done) > MAX_LOOP_NODES:
+                    raise ValueError(f"Repetition loop too large to unroll: {loop}")
+                moves: dict[str, tuple[Position | None, float | None]] = {}
+                for move, (target, weight) in transitions[k].items():
+                    if target is None or target not in place:
+                        moves[move] = (target, weight)
+                    elif counts[place[target]] == 2:
+                        moves[move] = (None, weight)
+                    else:
+                        after = list(counts)
+                        after[place[target]] += 1
+                        moves[move] = (node(target, tuple(after)), weight)
+                        pending.append((target, tuple(after)))
+                result[name] = moves
+    return result
 
 
 def automatic_entries(graph: Graph, color: bool, cid: str, root: Position) -> list[Position]:

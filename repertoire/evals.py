@@ -27,8 +27,9 @@ import chess
 import zstandard
 
 from .board_cache import canonical, children
+from .board_cache import position_of as node_position
 from .context import DEFAULT_CACHE, AnalysisContext
-from .evaluate import reaches
+from .evaluate import by_position, reaches
 from .explorer import Progress, duration
 from .graph import resolve, topology
 from .model import empirical, prepare
@@ -282,18 +283,18 @@ def frequencies(analysis: AnalysisContext, cache: str | Path) -> tuple[dict[Posi
     sampled = empirical(model, color)
     reach = reaches(model, order, sampled, roots)
     exits: dict[Position, float] = {}
-    for k in order:
-        node, r = model[k], reach[k]
+    for node_key in order:
+        node, r, k = model[node_key], reach[node_key], node_position(node_key)
         if r <= 0:
             continue
         if node.mode == 'opponent':
             moves = children(k)
-            for b, (p, _) in zip(node.branches, sampled[k]):
+            for b, (p, _) in zip(node.branches, sampled[node_key]):
                 if b.kind == 'deviation' and b.move is not None and b.fixed_score is None and p > 0:
                     exits[moves[b.move]] = exits.get(moves[b.move], 0.0) + r * p
         elif node.mode == 'stop' and node.branches[0].kind == 'theory_leaf' and node.branches[0].fixed_score is None:
             exits[k] = exits.get(k, 0.0) + r
-    return {k: r for k, r in reach.items() if r > 0}, exits
+    return {k: r for k, r in by_position(reach).items() if r > 0}, exits
 
 
 def successors(position: Position) -> list[Position]:

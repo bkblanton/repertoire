@@ -107,6 +107,11 @@ def move_rows(vulnerabilities: JsonObject) -> list[JsonObject]:
     return list(seen.values())
 
 
+def after_move(row: JsonObject) -> Position:
+    """The position after a vulnerability row's move."""
+    return row['target'] or children(row['position'])[row['move']]
+
+
 def wanted(vulnerabilities: JsonObject, preparation: JsonObject) -> set[Position]:
     """Every position the engine view looks up."""
     result: set[Position] = set()
@@ -115,7 +120,7 @@ def wanted(vulnerabilities: JsonObject, preparation: JsonObject) -> set[Position
             result.update(k for k in (stop.get('position'), stop.get('parent_position')) if k)
     for row in move_rows(vulnerabilities):
         result.add(row['position'])
-        result.add(row['target'] or children(row['position'])[row['move']])
+        result.add(after_move(row))
     for row in vulnerabilities['overall'].get('free_transpositions', []):
         result.update((row['exit_position'], row['transposition_target']))
     return result
@@ -144,7 +149,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Pa
     positions = {k: display(evaluations[k], color) for k in sorted(engine)}
     moves: dict[str, JsonObject] = {}
     for row in move_rows(vulnerabilities):
-        after_position = row['target'] or children(row['position'])[row['move']]
+        after_position = after_move(row)
         before, after = engine.get(row['position']), engine.get(after_position)
         change = None if before is None or after is None else 100 * (after - before)
         entry: dict[str, Any] = dict(

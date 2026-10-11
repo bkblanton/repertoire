@@ -3,6 +3,8 @@
 from collections.abc import Collection, Iterable, Mapping
 from typing import cast
 
+from .board_cache import position_of
+from .evaluate import Weights, entry_states
 from .model import Model, Sampled
 from .schema import Chapter, JsonObject, Position
 from .status import Status
@@ -17,8 +19,8 @@ def hitting_bounds(
     for k in order:
         node = model[k]
         targets = [b.target for b in node.branches if b.target is not None] + node.potential_targets
-        can_enter[k] = k in destination or any(can_enter[t] for t in targets)
-        if k in destination:
+        can_enter[k] = position_of(k) in destination or any(can_enter[t] for t in targets)
+        if position_of(k) in destination:
             values[k] = (1.0, 1.0)
             continue
         low = high = 0.0
@@ -36,12 +38,16 @@ def hitting_bounds(
 
 def chapter_transitions(
     model: Model,
-    order: Iterable[Position],
+    order: list[Position],
     sampled: Sampled,
     chapters: Iterable[Chapter],
     destinations: Mapping[str, Collection[Position]],
+    roots: Weights | None = None,
 ) -> list[JsonObject]:
-    """Condition on source first arrival; include simultaneous destination entry."""
+    """Condition on source first arrival; include simultaneous destination entry.
+
+    With `roots`, a source entry inside a repetition loop counts from the nodes games arrive at.
+    """
     rows: list[JsonObject] = []
     for target in chapters:
         cid = target['id']
@@ -63,8 +69,11 @@ def chapter_transitions(
                 'joint_probability': None,
             }
             if reach is not None and reach > 0 and weights and all(w is not None for w in weights.values()):
-                low = sum(cast(float, w) * hits[k][0] for k, w in weights.items())
-                high = sum(cast(float, w) * hits[k][1] for k, w in weights.items())
+                arrivals = cast(dict[Position, float], weights)
+                if roots is not None:
+                    arrivals = dict(entry_states(model, order, sampled, roots, arrivals))
+                low = sum(w * hits[k][0] for k, w in arrivals.items())
+                high = sum(w * hits[k][1] for k, w in arrivals.items())
                 row['conditional_bounds'] = [low, high]
                 if high == low:
                     row.update(conditional_probability=low, joint_probability=reach * low, status=Status.RESOLVED)

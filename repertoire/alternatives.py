@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import chess.pgn
 
-from .board_cache import canonical, terminal_white, turn
+from .board_cache import canonical, position_of, terminal_white, turn
 from .graph import Graph, Policy, Transitions, alternative_transitions, parse_games, reachable
 from .schema import Position
 
@@ -296,7 +296,7 @@ def descendants(transitions: Transitions, starts: Iterable[Position]) -> set[Pos
 def changed(scenario: 'Scenario', baseline: 'Scenario') -> set[Position]:
     """Boards whose moves or replies differ between two evaluated scenarios."""
     keys = set(scenario.transitions) | set(baseline.transitions)
-    return {k for k in keys if scenario.transitions.get(k) != baseline.transitions.get(k)}
+    return {position_of(k) for k in keys if scenario.transitions.get(k) != baseline.transitions.get(k)}
 
 
 def groups(

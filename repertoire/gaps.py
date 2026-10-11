@@ -1,8 +1,9 @@
 """First unanswered positions, including replies beyond prepared endpoints.
 
 This walk uses cached parent move rows only. Exact transpositions can rejoin
-prepared positions in any chapter. Small cyclic components are solved as an
-absorbing Markov chain; a closed component remains unresolved.
+prepared positions in any chapter. It follows the scorer's nodes, so a
+repetition loop is unrolled up to its draw (graph.unroll); the absorbing Markov
+chain for cyclic components only applies to walks that are not unrolled.
 """
 
 import math
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from .board_cache import position_of
 from .evaluate import Weights
 from .explorer import counts
 from .schema import JsonObject, Position
@@ -79,13 +81,17 @@ def distribution(evaluator: 'Evaluator', starts: Weights, entry_probability: flo
     ):
         raise ValueError('Invalid chapter entry probability')
     graph, facts = evaluator.graph, evaluator.facts
+    # Nodes are the scorer's: inside a repetition loop they carry the loop history, and a move into a third
+    # occurrence ends the game in a draw.
+    starts = evaluator.entry_nodes(starts)
     edges, stops = {}, {}
     pending = [k for k, w in starts.items() if w]
     while pending:
         k = pending.pop()
         if k in edges:
             continue
-        node, fact = graph.nodes[k], facts[k]
+        position = position_of(k)
+        node, fact, selected = graph.nodes[position], facts[position], evaluator.transitions[k]
         transitions: defaultdict[Position, float]
         absorptions: list[tuple[str, Position | None, float]]
         transitions, absorptions = defaultdict(float), []
@@ -94,11 +100,15 @@ def distribution(evaluator: 'Evaluator', starts: Weights, entry_probability: flo
         elif fact['turn'] == evaluator.color:
             if node.edges:
                 for move, probability in evaluator.own_choices(k).items():
-                    transitions[node.edges[move]] += probability
+                    target = selected[move][0]
+                    if target is None:
+                        absorptions.append(('terminal', None, probability))
+                    else:
+                        transitions[target] += probability
             else:
-                absorptions.append(('gap', k, 1.0))
+                absorptions.append(('gap', position, 1.0))
         else:
-            data = evaluator.evidence.get(k)
+            data = evaluator.evidence.get(position)
             total = sum(counts(data)) if data is not None else 0
             if not total:
                 absorptions.append(('unresolved', None, 1.0))
@@ -111,10 +121,10 @@ def distribution(evaluator: 'Evaluator', starts: Weights, entry_probability: flo
                         continue
                     probability = observations / total
                     target, terminal = fact['after'][row['uci']]
-                    if terminal is not None:
+                    if terminal is not None or (row['uci'] in selected and selected[row['uci']][0] is None):
                         absorptions.append(('terminal', None, probability))
                     elif target in graph.nodes:
-                        transitions[target] += probability
+                        transitions[cast(Position, selected[row['uci']][0])] += probability
                     else:
                         absorptions.append(('gap', target, probability))
                 if recorded > total:
@@ -159,10 +169,10 @@ def distribution(evaluator: 'Evaluator', starts: Weights, entry_probability: flo
             for target, probability in edges[k].items():
                 if target not in membership:
                     incoming[target] += mass * probability
-            for kind, position, probability in stops[k]:
+            for kind, gap, probability in stops[k]:
                 weight = mass * probability
                 if kind == 'gap':
-                    gaps[cast(Position, position)] += weight
+                    gaps[cast(Position, gap)] += weight
                 elif kind == 'terminal':
                     terminal_mass += weight
                 else:

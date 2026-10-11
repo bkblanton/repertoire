@@ -145,9 +145,11 @@ def test_conflict_cycle_color_and_reproducibility(tmp_path):
     assert list(resolve(g, True, {})[g.roots[0]]) == ['e2e4']
     with pytest.raises(ValueError, match='Invalid policy'):
         resolve(g, True, {g.roots[0]: {'e2e4': 1, 'd2d4': 1}})
+    # A line back to an earlier position is unrolled up to its third occurrence, a draw (see test_repetitions).
     g = graph(tmp_path, '1. Nf3 Nf6 2. Ng1 Ng8 *')
-    with pytest.raises(ValueError, match='cycle'):
-        topology(resolve(g, True, {}), g.roots)
+    unrolled = resolve(g, True, {})
+    assert len(topology(unrolled, g.roots)) == 8
+    assert any(target is None for moves in unrolled.values() for target, _ in moves.values())
     g = graph(tmp_path, '*')
     e = {g.roots[0]: data(7, 2, 1)}
     white, black = setup(g, True, e), setup(g, False, e)

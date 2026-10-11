@@ -1,7 +1,7 @@
 """Expected remaining repertoire-owner moves, with no discount or depth cutoff."""
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import cast
 
 from .model import Model, Sampled
@@ -54,14 +54,19 @@ def summarize_depth(values: Mapping[Position, tuple[float, float]], weights: Map
 
 
 def chapter_prepared_depth(
-    values: Mapping[Position, tuple[float, float]], entries: Sequence[Position], chapter_score: ChapterScore
+    values: Mapping[Position, tuple[float, float]],
+    entries: Sequence[Position],
+    chapter_score: ChapterScore,
+    arrivals: Callable[[Mapping[Position, float]], Mapping[Position, float]] = lambda weights: weights,
 ) -> PreparedDepth:
+    """Depth from a chapter's entries; `arrivals` spreads entry weights over the nodes games arrive at (see
+    evaluate.entry_states)."""
     if not entries:
         return {'expected_moves': None, 'unit': 'own_moves', 'status': Status.ENTRY_CONFIGURATION_REQUIRED}
     # Matches the existing single-position conditional-score semantics even
     # when its root reach is zero or unknown.
     if len(entries) == 1:
-        return summarize_depth(values, {entries[0]: 1.0})
+        return summarize_depth(values, arrivals({entries[0]: 1.0}))
     weights = chapter_score.get('first_entry_weights', {})
     if any(weights.get(k) is None for k in entries):
         return {
@@ -70,4 +75,4 @@ def chapter_prepared_depth(
             'status': Status.UNRESOLVED_ENTRY_WEIGHTS,
             'conditional_bounds': [min(values[k][0] for k in entries), max(values[k][1] for k in entries)],
         }
-    return summarize_depth(values, {k: cast(float, weights[k]) for k in entries})
+    return summarize_depth(values, arrivals({k: cast(float, weights[k]) for k in entries}))

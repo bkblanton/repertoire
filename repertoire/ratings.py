@@ -10,9 +10,9 @@ from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from .board_cache import STARTING_POSITION, children, turn
+from .board_cache import STARTING_POSITION, children, position_of, turn
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256, selected_policy, stage_main
-from .evaluate import Weights
+from .evaluate import Weights, by_position
 from .explorer import counts
 from .model import Evidence
 from .preparation import Evaluator, Evaluators, chess_facts
@@ -115,7 +115,10 @@ class ReplyRatings:
 
 
 class Context:
-    """Flow-aware local ratings and once-per-game stopping-evidence moments."""
+    """Flow-aware local ratings and once-per-game stopping-evidence moments.
+
+    Flows run over the scorer's nodes; the inventory merges a position's occurrences inside a repetition loop.
+    """
 
     def __init__(
         self,
@@ -126,25 +129,26 @@ class Context:
     ) -> None:
         self.evaluator = evaluator
         self.reply = replies or ReplyRatings(evaluator.evidence)
-        self.starts = starts
+        self.starts = evaluator.entry_nodes(starts)
         self.initial = initial or {}
         self.reach = evaluator.reaches(starts)
         arrivals: defaultdict[Position, list[Arrival]] = defaultdict(list)
-        for k, p in starts.items():
+        for k, p in self.starts.items():
             if p > 0:
-                arrivals[k].append((p, (initial or {}).get(k, unavailable('no preceding opponent move')), None, None))
+                first = self.initial.get(position_of(k), unavailable('no preceding opponent move'))
+                arrivals[k].append((p, first, None, None))
         for k, mass in self.reach.items():
             if mass <= 0:
                 continue
             for move, p, target in evaluator.edges[k]:
-                if evaluator.facts[k]['turn'] != evaluator.color:
-                    arrivals[target].append((mass * p, self.reply(k, move), k, move))
+                if evaluator.facts[position_of(k)]['turn'] != evaluator.color:
+                    arrivals[target].append((mass * p, self.reply(position_of(k), move), position_of(k), move))
         self.local: dict[Position, Rating] = {}
         for k, mass in self.reach.items():
             if mass <= 0:
                 continue
-            if evaluator.facts[k]['turn'] != evaluator.color:
-                self.local[k] = response_rating(evaluator.evidence.get(k))
+            if evaluator.facts[position_of(k)]['turn'] != evaluator.color:
+                self.local[k] = response_rating(evaluator.evidence.get(position_of(k)))
             else:
                 parts = arrivals[k]
                 if not math.isclose(sum(p for p, *_ in parts), mass, abs_tol=1e-9):
@@ -173,18 +177,19 @@ class Context:
         if kind in ('no_recorded_continuation', 'unresolved_distribution'):
             return unavailable('unidentified continuation or missing distribution')
         if move:
-            return self.reply(k, move)
+            return self.reply(position_of(k), move)
         return self.local.get(k, unavailable())
 
     def continuation(self, k: Position, incoming: Rating | None = None) -> Rating:
         """Own-turn stopping ratings depend on the exact incoming opponent edge."""
-        if self.evaluator.facts[k]['turn'] == self.evaluator.color and not self.evaluator.edges[k]:
+        own = self.evaluator.facts[position_of(k)]['turn'] == self.evaluator.color
+        if own and not self.evaluator.edges[k] and not any(s.move for s in self.evaluator.stops[k]):
             return incoming or self.local.get(k, unavailable())
         if k in self.moments:
             return self.moments[k]
         parts = [(p, self.stop(k, move, kind)) for move, p, kind, _, _ in self.evaluator.stops[k]]
         for move, p, target in self.evaluator.edges[k]:
-            incoming = self.reply(k, move) if self.evaluator.facts[k]['turn'] != self.evaluator.color else None
+            incoming = self.reply(position_of(k), move) if not own else None
             parts.append((p, self.continuation(target, incoming)))
         if not math.isclose(sum(p for p, _ in parts), 1.0, abs_tol=1e-9):
             raise AssertionError('Stopping rating probability not conserved')
@@ -194,30 +199,47 @@ class Context:
     def score_evidence(self) -> Rating:
         return mixture(
             [
-                (p, self.continuation(k, self.initial.get(k, unavailable('no preceding opponent move'))))
+                (p, self.continuation(k, self.initial.get(position_of(k), unavailable('no preceding opponent move'))))
                 for k, p in self.starts.items()
             ],
             'scope stopping evidence',
         )
 
+    def merged(self, ratings: Mapping[Position, Rating], basis: str) -> dict[Position, Rating]:
+        """Ratings per node, mixed by reach over a position's occurrences inside a repetition loop."""
+        groups: dict[Position, list[Position]] = {}
+        for k in ratings:
+            groups.setdefault(position_of(k), []).append(k)
+        return {
+            position: ratings[nodes[0]]
+            if len(nodes) == 1
+            else mixture([(self.reach[k], ratings[k]) for k in nodes], basis)
+            for position, nodes in groups.items()
+        }
+
     def inventory(self) -> JsonObject:
         # A starting-board row is still an individual position. Keep its local
         # response average, without creating a whole-repertoire rating mean.
+        local = self.merged(self.local, 'occurrences in a repetition loop')
+        continuations = self.merged(
+            {k: self.continuation(k) for k in self.local if k != STARTING_POSITION}, 'occurrences in a repetition loop'
+        )
         positions = {
-            k: dict(local=r, **({'continuation': self.continuation(k)} if k != STARTING_POSITION else {}))
-            for k, r in self.local.items()
+            k: dict(local=r, **({'continuation': continuations[k]} if k != STARTING_POSITION else {}))
+            for k, r in local.items()
         }
         stops: dict[str, Rating] = {}
         deviations: defaultdict[Position, list[Arrival]] = defaultdict(list)
         for k, mass in self.reach.items():
             if mass <= 0:
                 continue
+            parent = position_of(k)
             for move, p, kind, _, _ in self.evaluator.stops[k]:
                 r = self.stop(k, move, kind)
-                stops[stop_key(dict(parent_position=k, move=move, type=kind))] = r
-                if move:
-                    target = self.evaluator.facts[k]['after'][move][0]
-                    deviations[target].append((mass * p, r, k, move))
+                stops[stop_key(dict(parent_position=parent, move=move, type=kind))] = r
+                if move and kind == 'deviation':
+                    target = self.evaluator.facts[parent]['after'][move][0]
+                    deviations[target].append((mass * p, r, parent, move))
         for target, parts in deviations.items():
             mass = sum(p for p, *_ in parts)
             r = mixture(
@@ -236,22 +258,25 @@ def first_entries(
     evaluator: Evaluator, roots: Weights, entries: Collection[Position]
 ) -> tuple[dict[Position, float], dict[Position, Rating]]:
     """Stop flow at its first entry and retain the last opponent move mixture."""
-    flow = evaluator.reaches(roots, stop_at=entries)
+    nodes = evaluator.reaches(roots, stop_at=entries)
     incoming: defaultdict[Position, list[Arrival]] = defaultdict(list)
     for k, p in roots.items():
         if k in entries:
             incoming[k].append((p, unavailable('entry is a PGN root'), None, None))
-    for k in reversed(evaluator.values):
-        if k in entries or flow[k] <= 0:
+    for node in reversed(evaluator.values):
+        k = position_of(node)
+        if k in entries or nodes[node] <= 0:
             continue
-        for move, p, target in evaluator.edges[k]:
+        for move, p, target in evaluator.edges[node]:
+            target = position_of(target)
             if target in entries:
                 r = (
                     reply_rating(evaluator.evidence.get(k), move)
                     if evaluator.facts[k]['turn'] != evaluator.color
                     else response_rating(evaluator.evidence.get(target))
                 )
-                incoming[target].append((flow[k] * p, r, k, move))
+                incoming[target].append((nodes[node] * p, r, k, move))
+    flow = by_position(nodes)
     entry_mass = sum(flow.get(k, 0) for k in entries)
     weights = {k: flow.get(k, 0) / entry_mass for k in entries if flow.get(k, 0) > 0} if entry_mass else {}
     initial: dict[Position, Rating] = {}
@@ -378,7 +403,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     chapters = {chapter['id']: chapter for chapter in saved['chapters']}
     output = []
 
-    evaluators = Evaluators(graph, color, evidence, facts, policy, manifest['sparse_threshold'])
+    evaluators = Evaluators(graph, color, evidence, facts, policy, manifest['sparse_threshold'], roots)
     replies = ReplyRatings(evidence)
 
     for sid, prep in prep_scopes.items():
@@ -417,12 +442,13 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
                 [(p, initial[k]) for k, p in prep['starts'].items()], 'weighted local first-entry ratings'
             )
             scope['entries'] = initial
-        for k, mass in context.reach.items():
+        for node, mass in context.reach.items():
             if mass <= 0:
                 continue
+            k = position_of(node)
             for row in evidence.get(k, {}).get('moves', []):
                 scope['moves'][k + '|' + row['uci']] = move_context(evidence, color, k, row['uci'])
-            for move, _, _ in evaluator.edges[k]:
+            for move, _, _ in evaluator.edges[node]:
                 scope['moves'].setdefault(k + '|' + move, move_context(evidence, color, k, move))
         # Independent forward enumeration verifies that deeper paths get no extra weight.
         enumerated = mixture(

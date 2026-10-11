@@ -1,7 +1,7 @@
 """Cache-only stopping outcomes and their repertoire score contributions."""
 
 import json
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from functools import cached_property
 from pathlib import Path
 from typing import NamedTuple, cast
@@ -10,15 +10,20 @@ import chess
 import numpy as np
 
 from .attribution import enrich
-from .board_cache import children, fen_number, geometry, move_text, owner_outcome
+from .board_cache import children, fen_number, geometry, move_text, owner_outcome, position_of
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
-from .evaluate import Route, Weights, best_routes, reaches
+from .evaluate import Route, Weights, best_routes, entry_states, reaches
 from .explorer import counts
 from .graph import Graph, chapter_policy_overrides, resolve
 from .model import Evidence, Model, Sampled, arrival_counts, node_empirical, position_counts, prepare_node, score
 from .routes import depth_distribution, first_entry_examples
 from .schema import JsonObject, Position
 from .status import Status
+
+
+class Nodes(dict[Position, float]):
+    """Starting weights already given as scoring nodes, such as first arrivals found by a traversal, rather than
+    as positions to be placed in the nodes games reach them in (see Evaluator.entry_nodes)."""
 
 
 class Edge(NamedTuple):
@@ -44,6 +49,10 @@ class Evaluator:
 
     Positions are compiled on first use, children before parents, so `values` is always in postorder.
     Vector: resolved score, unresolved mass, prepared depth, sparse score, sparse mass.
+
+    Keys are scoring nodes: positions, plus repetition history nodes inside loops (graph.unroll); use
+    board_cache.position_of for the position. With `roots`, starts inside a loop are evaluated in the nodes
+    games arrive at from them (evaluate.entry_states), as the saved chapter scores are.
     """
 
     model: Model
@@ -61,9 +70,10 @@ class Evaluator:
         policy: dict | None = None,
         chapter: str | None = None,
         sparse: int = 30,
+        roots: Weights | None = None,
     ) -> None:
         self.graph, self.color, self.evidence, self.facts = graph, color, evidence, facts
-        self.policy, self.chapter, self.sparse = policy or {}, chapter, sparse
+        self.policy, self.chapter, self.sparse, self.roots = policy or {}, chapter, sparse, roots
         transitions = resolve(graph, color, self.policy)
         if chapter is not None:
             # The chapter's own first recorded moves take precedence; the overall policy applies elsewhere.
@@ -71,6 +81,7 @@ class Evaluator:
                 graph, color, dict(self.policy, **chapter_policy_overrides(graph, color, transitions, chapter))
             )
         self.transitions = transitions
+        self.loops = {position_of(k) for k in transitions if position_of(k) != k}
         self.model, self.sampled, self.values, self.edges, self.stops = {}, {}, {}, {}, {}
 
     @cached_property
@@ -80,6 +91,7 @@ class Evaluator:
     def database_counts(self, k: Position) -> tuple[list[int] | None, str]:
         """A position's database games and their source. Own-turn positions with a prepared move have no table
         of their own; they use the opponent move rows leading to them (see model.position_counts)."""
+        k = position_of(k)
         if self.facts[k]['turn'] == self.color and self.graph.nodes[k].edges:
             sample = position_counts(self.arrivals, self.evidence, k)
             source = 'parent_move_rows' if k in self.arrivals else 'position'
@@ -100,12 +112,12 @@ class Evaluator:
         return np.array([s, 0.0, 0.0, s if sparse else 0.0, float(sparse)])
 
     def compile(self, start: Position) -> None:
-        """Add every position reachable from `start` that is not yet compiled, children first."""
-        if start not in self.graph.nodes:
+        """Add every node reachable from `start` that is not yet compiled, children first."""
+        if position_of(start) not in self.graph.nodes:
             raise ValueError('Chapter entry position is absent from the repertoire')
         if start in self.values:
             return
-        active, pending = {start}, [(start, iter(target for target, _ in self.transitions[start].values()))]
+        active, pending = {start}, [(start, self.targets(start))]
         while pending:
             k, targets = pending[-1]
             target = next(targets, None)
@@ -117,7 +129,10 @@ class Evaluator:
                 raise ValueError('Repertoire contains a reachable cycle')
             elif target not in self.values:
                 active.add(target)
-                pending.append((target, iter(t for t, _ in self.transitions[target].values())))
+                pending.append((target, self.targets(target)))
+
+    def targets(self, k: Position) -> Iterator[Position]:
+        return iter(t for t, _ in self.transitions[k].values() if t is not None)
 
     def _evaluate(self, k: Position) -> None:
         node = self.model[k] = prepare_node(k, self.transitions[k], self.color, self.evidence)
@@ -140,16 +155,29 @@ class Evaluator:
         self.compile(k)
         return self.values[k]
 
+    def entry_nodes(self, starts: Weights) -> Weights:
+        """`starts` spread over the nodes games arrive at from the roots, where a start lies in a repetition loop.
+
+        Starts given as `Nodes` are already scoring nodes and are kept as they are.
+        """
+        if isinstance(starts, Nodes) or self.roots is None or not self.loops.intersection(starts):
+            return starts
+        for k, w in self.roots.items():
+            if w:
+                self.compile(k)
+        return Nodes(entry_states(self.model, list(self.values), self.sampled, self.roots, starts))
+
     def evaluate(self, starts: Weights) -> np.ndarray:
+        starts = self.entry_nodes(starts)
         for k, w in starts.items():
             if w:
                 self.compile(k)
         return sum((w * self.values[k] for k, w in starts.items() if w), np.zeros(5))
 
     def reaches(self, starts: Weights, stop_at: Collection[Position] = ()) -> dict[Position, float]:
-        """Incoming probability at each compiled position; see evaluate.reaches."""
+        """Incoming probability at each compiled node; see evaluate.reaches."""
         self.evaluate(starts)
-        return reaches(self.model, list(self.values), self.sampled, starts, stop_at)
+        return reaches(self.model, list(self.values), self.sampled, self.entry_nodes(starts), stop_at)
 
     def routes(
         self,
@@ -157,9 +185,9 @@ class Evaluator:
         stop_at: Collection[Position] = (),
         replies: bool = False,
     ) -> dict[Position, Route]:
-        """The most likely route to each position; see evaluate.best_routes."""
+        """The most likely route to each node; see evaluate.best_routes."""
         self.evaluate(starts)
-        return best_routes(self.model, list(self.values), self.sampled, starts, stop_at, replies)
+        return best_routes(self.model, list(self.values), self.sampled, self.entry_nodes(starts), stop_at, replies)
 
 
 class Evaluators:
@@ -167,10 +195,17 @@ class Evaluators:
     policy share its evaluator, so each position is compiled once per policy rather than once per chapter."""
 
     def __init__(
-        self, graph: Graph, color: bool, evidence: Evidence, facts: dict, policy: dict | None = None, sparse: int = 30
+        self,
+        graph: Graph,
+        color: bool,
+        evidence: Evidence,
+        facts: dict,
+        policy: dict | None = None,
+        sparse: int = 30,
+        roots: Weights | None = None,
     ) -> None:
         self.graph, self.color, self.evidence, self.facts = graph, color, evidence, facts
-        self.policy, self.sparse = policy or {}, sparse
+        self.policy, self.sparse, self.roots = policy or {}, sparse, roots
         self.transitions = resolve(graph, color, self.policy)
         self.shared: dict[str, Evaluator] = {}
 
@@ -182,7 +217,13 @@ class Evaluators:
         key = json.dumps(overrides, sort_keys=True)
         if key not in self.shared:
             self.shared[key] = Evaluator(
-                self.graph, self.color, self.evidence, self.facts, dict(self.policy, **overrides), sparse=self.sparse
+                self.graph,
+                self.color,
+                self.evidence,
+                self.facts,
+                dict(self.policy, **overrides),
+                sparse=self.sparse,
+                roots=self.roots,
             )
         return self.shared[key]
 
@@ -224,38 +265,43 @@ def stopping_rows(
     evaluator: Evaluator, starts: Weights, baseline: float | None, lines: dict[Position, str]
 ) -> list[JsonObject]:
     mass = evaluator.reaches(starts)
-    rows: list[JsonObject] = []
+    # Occurrences of a position in a repetition loop share one row per stop, with their reach added.
+    stopping: dict[tuple[Position, str | None, str], tuple[Stop, float]] = {}
     for k, reach in mass.items():
         if reach <= 0:
             continue
+        for stop in evaluator.stops[k]:
+            identity = position_of(k), stop.move, stop.kind
+            probability = reach * stop.probability
+            if identity in stopping:
+                probability += stopping[identity][1]
+            stopping[identity] = stop, probability
+    rows: list[JsonObject] = []
+    for (k, move, kind), ((_, _, _, sample, fixed), probability) in stopping.items():
         number = fen_number(evaluator.graph.nodes[k].fen)
-        for move, p, kind, sample, fixed in evaluator.stops[k]:
-            line = lines.get(k, k)
-            position = k
-            if move:
-                line += ' ' + move_text(k, number, move)
-                position = children(k)[move]
-            s = fixed if fixed is not None else score(sample, evaluator.color)
-            probability = reach * p
-            rows.append(
-                dict(
-                    position=position,
-                    parent_position=k,
-                    move=move,
-                    type=kind,
-                    line=line,
-                    reach=probability,
-                    score=s,
-                    sample_count=sum(sample),
-                    counts_white_draw_black=sample,
-                    contribution_pp=None if s is None else 100 * probability * s,
-                    baseline_contribution_pp=None
-                    if s is None or baseline is None
-                    else 100 * probability * (s - baseline),
-                    sparse=fixed is None and sum(sample) < evaluator.sparse,
-                    unresolved=s is None,
-                )
+        line = lines.get(k, k)
+        position = k
+        if move:
+            line += ' ' + move_text(k, number, move)
+            position = children(k)[move]
+        s = fixed if fixed is not None else score(sample, evaluator.color)
+        rows.append(
+            dict(
+                position=position,
+                parent_position=k,
+                move=move,
+                type=kind,
+                line=line,
+                reach=probability,
+                score=s,
+                sample_count=sum(sample),
+                counts_white_draw_black=sample,
+                contribution_pp=None if s is None else 100 * probability * s,
+                baseline_contribution_pp=None if s is None or baseline is None else 100 * probability * (s - baseline),
+                sparse=fixed is None and sum(sample) < evaluator.sparse,
+                unresolved=s is None,
             )
+        )
     root = evaluator.evaluate(starts)
     if not np.isclose(sum(r['reach'] for r in rows), 1.0, atol=1e-10) or not np.isclose(
         sum((r['contribution_pp'] or 0) / 100 for r in rows), root[0], atol=1e-10
@@ -292,7 +338,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
         for s in analysis.scopes()
     ]
     lines = position_lines(graph)
-    evaluators = Evaluators(graph, color, evidence, facts, policy, sparse)
+    evaluators = Evaluators(graph, color, evidence, facts, policy, sparse, analysis.roots)
     for scope in scopes:
         expected = scope.pop('expected')
         if not scope['starts']:

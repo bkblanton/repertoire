@@ -24,7 +24,13 @@ All chapters are merged into one graph of positions. A position is identified by
 
 Every recorded variation is part of the repertoire. Comments are never read as instructions; lines can be removed explicitly with `exclude` in the configuration.
 
-A repertoire whose moves can return to an earlier position is rejected with the positions in the cycle, rather than scoring the repetition as a draw: handling repetition properly needs the game history, which the position key leaves out.
+## Repetitions
+
+A line can return to an earlier position, as in 1.e4 e5 2.Nc3 Qf6 3.Nd5 Qd8 4.Nc3. The game is drawn when a position occurs for the third time, so a loop is followed until then: the opponent picks again from the position's table every time it comes up, and the move into a third occurrence ends the game as a draw, scored 0.5 without database evidence.
+
+Inside a loop the future depends on the game's history, which the position key leaves out. Positions in a loop are therefore expanded into one node per history: the position plus how often each position of the loop has occurred so far. Only the loop's own positions count, because positions before the loop cannot come up again and a game that leaves a loop can never return to it. Everywhere else a node is the position itself, and transpositions merge as usual. A loop can be entered at any of its positions; each entry gets its own nodes, so the draw always comes at exactly the third occurrence.
+
+A chapter entry inside a loop is evaluated in the nodes games first arrive at from the starting position, in proportion to their probabilities. A position evaluated on its own counts as its first occurrence. Reports show one row per position: its reach adds up its occurrences, and its score and outcomes are averaged over them by reach. Move tables keep one row per occurrence, labeled by the line that goes round the loop.
 
 ## Choosing your moves
 
@@ -43,7 +49,7 @@ At every opponent position the model uses the position's full reply table, inclu
 - A reply that reaches a prepared position, directly or by transposition, continues the repertoire.
 - Any other reply is a **deviation**, and preparation ends there. The model does not search through unknown positions for a later return to preparation, and never fetches the deviation's own table.
 
-A position where you are to move and have no prepared move is a **theory leaf**, and preparation ends there too. Checkmate, stalemate and insufficient material are scored directly without database evidence.
+A position where you are to move and have no prepared move is a **theory leaf**, and preparation ends there too. Checkmate, stalemate, insufficient material and the third occurrence of a position are scored directly without database evidence.
 
 The score, position reach, prepared depth, chapter entries and opening sources all follow these same transitions.
 
@@ -100,8 +106,8 @@ with a default prior of $(0.5, 0.5, 0.5)$, set with `--prior`. Scores never fall
 
 Uncertainty is propagated analytically, not by simulation. A score is a sum over paths of products of probabilities from distinct positions, so:
 
-1. **Its posterior mean is exact:** evaluate it once with each table at its posterior mean.
-2. **Its variance is first-order:** each table's posterior variance, weighted by the square of that table's influence on the score. Interactions between tables are left out.
+1. **Its posterior mean is exact:** evaluate it once with each table at its posterior mean. The exception is a line that goes round a repetition loop, which uses a loop position's table twice; there the mean is off by that table's own variance, which shrinks with its number of games.
+2. **Its variance is first-order:** each table's posterior variance, weighted by the square of that table's influence on the score, adding up its influence wherever it is used. Interactions between tables are left out.
 3. **Chapter scores** divide by uncertain first-entry weights, so a table's influence includes its effect on those weights.
 4. **Intervals** fit a Beta distribution to the mean and variance.
 
@@ -171,7 +177,7 @@ Tests run on synthetic Explorer tables and cover:
 - Conflicting own moves.
 - Sparse, empty, incomplete and inconsistent tables.
 - Overlapping chapters and multiple entry routes.
-- Cycles, and scoring from Black's side as well as White's.
+- Repetition loops, entered at any of their positions, and scoring from Black's side as well as White's.
 
 These invariants are checked:
 

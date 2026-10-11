@@ -36,7 +36,7 @@ from .alternatives import (
 from .board_cache import STARTING_POSITION, canonical, children, fen_number, move_text, san, turn
 from .character import scope_metrics
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256
-from .evaluate import COMPLETED, KNOWN, UNKNOWN, Route, Weights, backward, reaches, select_alternatives
+from .evaluate import COMPLETED, KNOWN, UNKNOWN, Route, Weights, backward, by_position, reaches, select_alternatives
 from .explorer import CacheMiss, Explorer, add_token_option, apply_token_file, counts, survey
 from .graph import Graph, Transitions, parse_games, read_games, resolve, topology
 from .layout import data_json, report_directory
@@ -584,7 +584,7 @@ def analyze(
         raise ValueError('Your repertoire does not reproduce its saved score; rebuild it first')
     if comparison.entry not in current.values:
         raise ValueError('The entry position is not part of your repertoire; pass --entry')
-    reach = reaches(current.model, current.order, current.raw, comparison.roots)
+    reach = by_position(reaches(current.model, current.order, current.raw, comparison.roots))
 
     # Each option alone, with everything else as it is now.
     singles: dict[tuple[int, int], Scenario] = {}

@@ -5,8 +5,8 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, cast
 
-from .board_cache import children, fen_number, move_text, next_number, san
-from .evaluate import Weights
+from .board_cache import children, fen_number, move_text, next_number, position_of, san
+from .evaluate import Route, Weights, better_route, by_position
 from .schema import JsonObject, Position
 from .status import Status
 
@@ -39,6 +39,7 @@ def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonOb
         raise ValueError('Depth distribution requires normalized nonnegative starting weights')
     evaluator = cast('Evaluator', evaluator)
     value = evaluator.evaluate(starts)
+    starts = evaluator.entry_nodes(starts)
     mass: dict[Position, defaultdict[int, float]] = {k: defaultdict(float) for k in evaluator.values}
     for k, weight in starts.items():
         if weight:
@@ -54,20 +55,21 @@ def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonOb
         if k in active:
             raise ValueError('Repertoire contains a reachable cycle')
         active.add(k)
-        node, fact = evaluator.graph.nodes[k], evaluator.facts[k]
+        node, fact = evaluator.graph.nodes[position_of(k)], evaluator.facts[position_of(k)]
+        # Every prepared move, and every reply into a known board; a repetition ends the game.
+        targets = {target for target, _ in evaluator.transitions[k].values() if target is not None}
         if fact['outcome'] is not None or (fact['turn'] == evaluator.color and not node.edges):
             result = 0
         elif fact['turn'] == evaluator.color:
-            result = 1 + max(remaining(node.edges[m]) for m in evaluator.own_choices(k))
+            result = 1 + max((remaining(target) for target in targets), default=0)
         else:
-            targets = set(node.edges.values()) | (fact['possible_targets'] & evaluator.graph.nodes.keys())
             result = max((remaining(target) for target in targets), default=0)
         active.remove(k)
         lengths[k] = result
         return result
 
     for k in reversed(evaluator.values):
-        node, fact = evaluator.graph.nodes[k], evaluator.facts[k]
+        node, fact = evaluator.graph.nodes[position_of(k)], evaluator.facts[position_of(k)]
         reward = int(bool(node.edges) and fact['turn'] == evaluator.color and fact['outcome'] is None)
         for depth, arrival in mass[k].items():
             for _, probability, target in evaluator.edges[k]:
@@ -87,7 +89,8 @@ def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonOb
                     if kind == 'unresolved_distribution'
                     else 'other_stop'
                 )
-                endings[depth][ending] += probability
+                # A repetition can end the game on your own move, which counts as played.
+                endings[depth + reward][ending] += probability
                 if ending == 'unresolved_distribution':
                     unknown.append((depth, depth + remaining(k), probability))
 
@@ -146,8 +149,15 @@ def first_entry_examples(
     """
     entries = set(entries)
     mass = evaluator.reaches(roots, stop_at=entries)
-    witnesses = evaluator.routes(roots, stop_at=entries)
-    arrivals = {k: mass[k] for k in reversed(evaluator.values) if k in entries and mass[k]}
+    routes = evaluator.routes(roots, stop_at=entries)
+    nodes = {k: mass[k] for k in reversed(evaluator.values) if position_of(k) in entries and mass[k]}
+    # Inside a repetition loop an entry can be first reached in several history nodes.
+    arrivals = by_position(nodes)
+    witnesses: dict[Position, Route] = {}
+    for k in nodes:
+        position = position_of(k)
+        if position not in witnesses or better_route(routes[k], witnesses[position]):
+            witnesses[position] = routes[k]
     total = sum(arrivals.values())
     if expected_probability is not None and not math.isclose(total, expected_probability, abs_tol=1e-10):
         raise AssertionError('First-entry examples differ from saved chapter reach')
@@ -160,7 +170,7 @@ def first_entry_examples(
     rows: list[JsonObject] = []
     for k, arrival in sorted(arrivals.items(), key=lambda item: (-item[1], item[0])):
         probability, root, path = witnesses[k]
-        position, number = root, fen_number(evaluator.graph.nodes[root].fen)
+        position, number = position_of(root), fen_number(evaluator.graph.nodes[position_of(root)].fen)
         sans: list[str] = []
         text: list[str] = []
         for uci in path:
@@ -176,8 +186,8 @@ def first_entry_examples(
                 position=k,
                 conditional_first_entry_weight=arrival / total,
                 example=dict(
-                    root_position=root,
-                    root_fen=evaluator.graph.nodes[root].fen,
+                    root_position=position_of(root),
+                    root_fen=evaluator.graph.nodes[position_of(root)].fen,
                     path_uci=list(path),
                     path_san=sans,
                     line=' '.join(text) or '(PGN root)',

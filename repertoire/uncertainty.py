@@ -2,21 +2,25 @@
 
 Each cached position's results are given a Dirichlet posterior: its observed move/result counts plus the
 configured prior. Every score is a sum over paths of products of probabilities taken from different
-positions (a path visits a position at most once), so:
+positions (a path visits a position at most once, except around a repetition loop), so:
 
-- Posterior means are exact: one backward pass with each table replaced by its posterior mean.
+- Posterior means are exact: one backward pass with each table replaced by its posterior mean. A path that
+  goes around a repetition loop uses a loop position's table more than once; there the plug-in mean is off
+  by the table's own variance, which shrinks with its sample size.
 - Variances are first-order: each table's own contribution, weighted by its squared influence on the
-  score. Interactions between two tables are omitted; they shrink with the product of both sample sizes.
+  score, adding up its influence wherever it is used. Interactions between two tables are omitted; they
+  shrink with the product of both sample sizes.
 - 95% intervals match a Beta distribution to a score's mean and variance (or a normal one for differences).
 """
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from functools import lru_cache
 from typing import TypedDict, cast, overload
 
 import numpy as np
 
+from .board_cache import position_of
 from .evaluate import COMPLETED, DEVIATION, KNOWN, LEAF, OTHER, UNKNOWN, Weights, backward, can_enter
 from .model import Model, Sampled
 from .schema import Position
@@ -38,6 +42,16 @@ class Gradient(TypedDict):
 class ChapterPosterior(TypedDict):
     entry_probability: float
     summary: PosteriorSummary | None
+
+
+def by_table(cells: Mapping[Position, np.ndarray]) -> dict[Position, np.ndarray]:
+    """Gradients per node added up per position: every occurrence of a position in a repetition loop uses
+    the same table."""
+    result: dict[Position, np.ndarray] = {}
+    for k, gradient in cells.items():
+        position = position_of(k)
+        result[position] = result[position] + gradient if position in result else gradient
+    return result
 
 
 def dirichlet_variance(alpha: np.ndarray, gradient: np.ndarray) -> float:
@@ -181,6 +195,7 @@ class Posterior:
     """Posterior means and first-order variances for one policy's model (see model.prepare)."""
 
     alpha: dict[Position, np.ndarray]
+    tables: dict[Position, np.ndarray]
     sample: Sampled
     _cells: dict[Position, np.ndarray]
     _variance: dict[Position, float]
@@ -218,6 +233,8 @@ class Posterior:
                     alpha = np.asarray(b.counts, dtype=float)[None, :] + table_prior
                     self.alpha[k] = alpha
                     self.sample[k] = [(1.0, float(alpha[0] @ self.owner / alpha.sum()))]
+        # Every occurrence of a position in a repetition loop shares its table.
+        self.tables = {position_of(k): alpha for k, alpha in self.alpha.items()}
         # Exact posterior means of every component, because each path uses each table at most once.
         self.values = backward(model, order, self.sample, sparse_threshold)
         self._cells, self._variance, self._influence = {}, {}, None
@@ -271,7 +288,16 @@ class Posterior:
 
     def value_variance(self, starts: Weights) -> float:
         """Variance of a fixed mixture of position values, such as the repertoire root."""
-        return sum(c * c * self.table_variance(m) for m, c in self.combined_influence(starts).items())
+        influence = self.combined_influence(starts)
+        if all(position_of(m) == m for m in influence):
+            return sum(c * c * self.table_variance(m) for m, c in influence.items())
+        return self.grouped_variance(influence)
+
+    def grouped_variance(self, coefficients: Mapping[Position, float]) -> float:
+        """Variance of a sum of tables' contributions at the given nodes, scaled by `coefficients`, adding up the
+        occurrences of a position inside a repetition loop, which share its table."""
+        cells = by_table({m: c * self.cells(m) for m, c in coefficients.items()})
+        return sum(dirichlet_variance(self.tables[m], g) for m, g in cells.items())
 
     def mixture(self, starts: Weights) -> PosteriorSummary:
         mean = sum((w * self.values[k] for k, w in starts.items()), np.zeros(8))
@@ -296,16 +322,17 @@ class Posterior:
             return dict(mean=mean, entry_probability=1.0, cells=cells)
         entries = set(entries)
         entering = can_enter(self.model, self.order, entries)
+        entry = {k: position_of(k) in entries for k in self.order}
         upstream = dict.fromkeys(self.order, 0.0)
         for k, weight in roots.items():
             upstream[k] += weight
         for k in reversed(self.order):
-            if k in entries or not entering[k] or not upstream[k]:
+            if entry[k] or not entering[k] or not upstream[k]:
                 continue
             for b, (p, _) in zip(self.model[k].branches, self.sample[k]):
                 if b.target is not None:
                     upstream[b.target] += upstream[k] * p
-        starts = {k: upstream[k] for k in self.order if k in entries and upstream[k] > 0}
+        starts = {k: upstream[k] for k in self.order if entry[k] and upstream[k] > 0}
         probability = sum(starts.values())
         if probability <= 0:
             return None
@@ -318,7 +345,7 @@ class Posterior:
         for k in self.order:
             if not entering[k]:
                 continue
-            if k in entries:
+            if entry[k]:
                 carried[k], enters[k] = self.values[k][COMPLETED], 1.0
             else:
                 pairs = [
@@ -329,11 +356,9 @@ class Posterior:
         downstream = self.combined_influence(starts)
         cells = {}
         # Sorted, so sums are reproducible bit for bit regardless of set ordering.
-        for m in sorted(
-            set(downstream) | {k for k, w in upstream.items() if w and k in self.alpha and k not in entries}
-        ):
+        for m in sorted(set(downstream) | {k for k, w in upstream.items() if w and k in self.alpha and not entry[k]}):
             gradient = downstream.get(m, 0.0) * self.cells(m)
-            if m not in entries and upstream[m] and self.model[m].mode == 'opponent':
+            if not entry[m] and upstream[m] and self.model[m].mode == 'opponent':
                 # Changing this table moves probability between entries and away from the chapter.
                 rows = [
                     carried.get(b.target, 0.0) - score * enters.get(b.target, 0.0) if b.target is not None else 0.0
@@ -344,7 +369,7 @@ class Posterior:
         return dict(mean=mean, entry_probability=probability, cells=cells)
 
     def variance(self, gradient: Gradient) -> float:
-        return sum(dirichlet_variance(self.alpha[m], g) for m, g in gradient['cells'].items())
+        return sum(dirichlet_variance(self.tables[m], g) for m, g in by_table(gradient['cells']).items())
 
     def chapter(self, roots: Weights, entries: Iterable[Position]) -> ChapterPosterior:
         """Score conditional on first entering one of `entries`, whose weights are themselves uncertain."""
@@ -377,14 +402,16 @@ def paired_variance(
     The scales allow a transformed difference, such as a logit (centipawn) change, by the delta method.
     """
     total = 0.0
-    for m in sorted(set(a_gradient['cells']) | set(b_gradient['cells'])):
-        alpha = b.alpha[m] if m in b.alpha else a.alpha[m]
-        if m in a.alpha and m in b.alpha and not np.array_equal(a.alpha[m], b.alpha[m]):
+    a_cells, b_cells = by_table(a_gradient['cells']), by_table(b_gradient['cells'])
+    a_alpha, b_alpha = a.tables, b.tables
+    for m in sorted(set(a_cells) | set(b_cells)):
+        alpha = b_alpha[m] if m in b_alpha else a_alpha[m]
+        if m in a_alpha and m in b_alpha and not np.array_equal(a_alpha[m], b_alpha[m]):
             raise ValueError('Paired scores use different evidence for the same position')
         gradient: float | np.ndarray = 0.0
-        if m in b_gradient['cells']:
-            gradient = gradient + b_scale * b_gradient['cells'][m]
-        if m in a_gradient['cells']:
-            gradient = gradient - a_scale * a_gradient['cells'][m]
+        if m in b_cells:
+            gradient = gradient + b_scale * b_cells[m]
+        if m in a_cells:
+            gradient = gradient - a_scale * a_cells[m]
         total += dirichlet_variance(alpha, np.broadcast_to(gradient, alpha.shape))
     return total

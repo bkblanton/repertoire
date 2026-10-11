@@ -39,12 +39,14 @@ def test_missing_cache_and_zero_observations_are_not_zero_score(tmp_path):
     assert result[KNOWN] == pytest.approx(0.06)
 
 
-def test_cycle_is_rejected_even_when_observed_probability_is_zero(tmp_path):
+def test_repeated_line_ends_in_a_draw_on_the_third_occurrence(tmp_path):
     g = graph(tmp_path, '1. Nf3 Nf6 2. Ng1 Ng8 *')
-    evidence = {k: data(10, 0, 0, []) for k in g.nodes}
+    evidence = {k: data(10, 0, 0, [(m, 10, 0, 0) for m in n.edges]) for k, n in g.nodes.items()}
     facts = chess_facts(g, True, evidence)
-    with pytest.raises(ValueError, match='cycle'):
-        Evaluator(g, True, evidence, facts).evaluate({g.roots[0]: 1})
+    evaluator = Evaluator(g, True, evidence, facts)
+    # Black always repeats here, so the game always reaches the third start position: a draw after 8 own moves.
+    assert evaluator.evaluate({g.roots[0]: 1}) == pytest.approx([0.5, 0, 4, 0, 0])
+    assert [s.kind for stops in evaluator.stops.values() for s in stops] == ['repetition']
 
 
 def test_report_uses_cache_keeps_alternative_chapter_and_source(tmp_path, monkeypatch):

@@ -19,7 +19,7 @@ from collections.abc import Iterable, Mapping
 
 import numpy as np
 
-from .board_cache import children, move_text, san
+from .board_cache import children, move_text, position_of, san
 from .evaluate import KNOWN, UNKNOWN
 from .explorer import counts
 from .graph import Graph
@@ -74,14 +74,14 @@ def free_transpositions(
         node = model[t]
         if r <= 0 or node.mode != 'opponent':
             continue
-        moves = children(t)
+        moves = children(position_of(t))
         for j, (b, (p, s)) in enumerate(zip(node.branches, sampled[t])):
             if b.kind != 'deviation' or b.move is None or b.fixed_score is not None or p <= 0 or s is None:
                 continue
             variance = row_moments(posterior.alpha[t][j], posterior.owner)[1]
             exits[moves[b.move]].append((r * p, float(s), sum(b.counts), variance, t, b.move))
     order = {c['id']: i for i, c in enumerate(graph.chapters)}
-    index = candidates((k for k, n in model.items() if n.mode == 'opponent' and k in evidence), color)
+    index = candidates((k for k, n in model.items() if n.mode == 'opponent' and position_of(k) in evidence), color)
     rows: list[JsonObject] = []
     for d, arrivals in exits.items():
         # Generating every legal move after each reply is the slow part; most replies cannot match.
@@ -111,10 +111,10 @@ def free_transpositions(
                 dict(
                     id=f'{d}|{move}',
                     kind='opponent',
-                    position=parent,
+                    position=position_of(parent),
                     move=reply,
-                    move_san=san(parent, reply),
-                    line=(text + ' ' + move_text(parent, number, reply)).strip(),
+                    move_san=san(position_of(parent), reply),
+                    line=(text + ' ' + move_text(position_of(parent), number, reply)).strip(),
                     exit_position=d,
                     transposing_move=move,
                     transposing_san=san(d, move),
