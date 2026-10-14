@@ -197,7 +197,7 @@ When you have [imported engine evaluations](usage.md#engine-evaluations), the re
 
 - **Where preparation ends.** The summary, the full report and each chapter page give the engine's average expected score at the positions where preparation ends, beside the database score over the same games. The full report's chapter table adds it as a column beside the repertoire score, which is the database result where preparation ends averaged over every exit, with its coverage when some positions have no evaluation. A database score above the engine's means opponents there go wrong in practice; one below means positions better than they play.
 - **Your moves the engine questions.** A move's engine loss is the expected score before it minus after it. 5, 10 and 15 points match Lichess's inaccuracy, mistake and blunder thresholds (0.1, 0.2 and 0.3 in winning chances). Moves of at least an inaccuracy are listed with their database move gain, so you can see which still score well in practice.
-- **Opponent mistakes.** Replies that raise your expected score by at least 5 points, with your score after them.
+- **Opponent mistakes.** Replies that raise your expected score by at least 5 points, with your score after them, in two tables: **unpunished** ones your preparation has no answer to (score after from the database), then **prepared** ones it answers (score after from your repertoire).
 - **Where the database and the engine disagree.** The places preparation ends whose database and engine scores differ most, weighted by how often games end there.
 - **Free transpositions** also show the engine loss of the transposing move: how much worse it is than the engine's best move after the reply.
 

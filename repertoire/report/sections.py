@@ -935,21 +935,35 @@ def engine_section(
                 ],
             ),
         ]
-    replies = sorted(
+    mistakes = sorted(
         (
             r
             for r in non_sparse_rows(moves)
             if r['kind'] == 'opponent' and (r.get('engine') or {}).get('judgement') and r.get('move_score') is not None
         ),
         key=lambda r: (-r['branch_reach'] * r['engine']['swing_pp'], r['id']),
-    )[:top]
-    if replies:
+    )
+    for prepared, name, blurb in (
+        (
+            False,
+            'Unpunished opponent mistakes',
+            'Opponent replies that raise your expected score by at least 5 points by the engine but have no prepared '
+            'answer, ranked by move reach × that gain. Your score after is the database score.',
+        ),
+        (
+            True,
+            'Prepared opponent mistakes',
+            'Opponent replies that raise your expected score by at least 5 points by the engine and that your '
+            'preparation answers, ranked by move reach × that gain. Your score after is your repertoire score.',
+        ),
+    ):
+        replies = [r for r in mistakes if r['prepared'] == prepared][:top]
+        if not replies:
+            continue
         text += [
-            '**Opponent mistakes**',
+            f'**{name}**',
             '',
-            'Opponent replies that raise your expected score by at least 5 points by the engine, ranked by move '
-            'reach × that gain. Your score after is your repertoire score for prepared replies and the database '
-            'score for unprepared ones.',
+            blurb,
             '',
             *table(
                 ['Line', 'Chapter source', move_reach_label(scope), 'Engine gain', 'Your score after'],

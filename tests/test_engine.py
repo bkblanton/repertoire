@@ -104,6 +104,10 @@ def test_report_shows_the_engine_view_and_the_summary_line(scored, evaluation_st
     text = '\n'.join(engine_section(bundle, bundle_refs(bundle), 5))
     assert '### Engine view' in text and '**Your moves the engine questions**' in text
     assert 'inaccuracy' in text
+    assert '**Opponent mistakes**' not in text
+    assert '**Prepared opponent mistakes**' not in text  # Qd8 has no prepared answer
+    unpunished = text.split('**Unpunished opponent mistakes**', 1)[1]
+    assert 'Nd5 Qd8' in unpunished
     assert engine_sentence(bundle).startswith('Where preparation ends, the engine gives you')
     path.with_suffix('.engine.json').unlink()
     assert engine_sentence(load([path], strict=False)[0]) is None
