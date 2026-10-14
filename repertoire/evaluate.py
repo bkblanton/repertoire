@@ -142,6 +142,58 @@ def select_alternatives(
     return result
 
 
+Split = dict[tuple[str, Position, str | None], tuple[float, float]]  # (kind, node, reply) -> (probability, score)
+
+
+def reached(model: Model, order: list[Position], sampled: Sampled, start: Position) -> set[Position]:
+    """Nodes games reach from `start` with positive probability; `order` must include everything it reaches."""
+    result = {start}
+    for k in reversed(order):
+        if k in result:
+            result.update(b.target for b, (p, _) in zip(model[k].branches, sampled[k]) if p and b.target is not None)
+    return result
+
+
+def move_order_split(
+    model: Model,
+    order: list[Position],
+    sampled: Sampled,
+    values: Mapping[Position, np.ndarray],
+    start: Position,
+    shared: Collection[Position],
+) -> Split:
+    """Where games from `start` go until their line meets one of the `shared` nodes.
+
+    Keys are ('meet', node, None) for the first shared node on a route, ('only', node, None) for a node from
+    which no route meets a shared one (scored as a whole), and ('stop', node, reply) where play stops before
+    either; reply is None for stops without a move. Probabilities sum to one, and probability times score sums
+    to the prior-completed value at `start`.
+    """
+    meets: dict[Position, bool] = {}
+    for k in order:
+        meets[k] = k in shared or any(
+            meets[b.target] for b, (p, _) in zip(model[k].branches, sampled[k]) if p and b.target is not None
+        )
+    mass = {start: 1.0}
+    result: Split = {}
+    for k in reversed(order):
+        m = mass.get(k, 0.0)
+        if not m:
+            continue
+        if k != start and k in shared or not meets[k]:
+            result[('meet' if k in shared else 'only', k, None)] = (m, float(values[k][COMPLETED]))
+            continue
+        for b, (p, s) in zip(model[k].branches, sampled[k]):
+            if not p:
+                continue
+            if b.target is not None:
+                mass[b.target] = mass.get(b.target, 0.0) + m * p
+            else:
+                previous = result.get(('stop', k, b.move), (0.0, 0.0))[0]
+                result[('stop', k, b.move)] = (previous + m * p, 0.5 if s is None else float(s))
+    return result
+
+
 def can_enter(model: Model, order: list[Position], entries: Collection[Position]) -> dict[Position, bool]:
     """Whether each position can still reach one of `entries`, including through unresolved replies."""
     result: dict[Position, bool] = {}

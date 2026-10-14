@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import NotRequired, TypedDict, cast
 
-from ..board_cache import san
+from ..board_cache import children, san
 from ..preparation import line_text
 from ..schema import JsonObject
 from ..stats import cell
@@ -1009,12 +1009,144 @@ def stop_cell(stop: JsonObject, refs: Chapters) -> str:
     return refs.move_cell(dict(position=parent, move_san=san(parent, move), line=stop['line'], kind='opponent'))
 
 
-def alternatives_section(
-    report: JsonObject, refs: Chapters, level: str = '###', anchor: str | None = None
+# Each table of an unplayed move's lines shows the lines with the largest effects, and every line at least this
+# common after either move; the rest are combined by kind.
+ALTERNATIVE_LINE_ROWS = 8
+ALTERNATIVE_LINE_SHARE = 0.05
+STOP_LABELS = {
+    'theory_leaf': 'preparation ends',
+    'repetition': 'draw by repetition',
+    'other_stop': 'game over',
+    'no_recorded_continuation': 'other replies',
+    'unresolved_distribution': 'no table',
+}
+
+
+def numbered(path: Sequence[str], move_san: str) -> str:
+    """A move with its number after `path`, such as 3... Nf6."""
+    return line(line_text([*path, move_san]).split()[-1])
+
+
+def alternative_line_cell(row: JsonObject, board: Sequence[str], refs: Chapters, after: str) -> str:
+    """The moves from the contested board, linked to the full line, over what happens there and its chapters."""
+    full = line_text(row['path'])
+    moves = ' '.join(full.split()[len(board) :])
+    target = children(row['position'])[row['move']] if row['kind'] == 'stop' and row['move'] else row['position']
+    link = f'[{line(moves)}]({analysis_url(target, full, refs.color)})'
+    if row['kind'] == 'stop' and row['stop'] == 'deviation':
+        return f"{link}<br>{refs.chapter_sources({'chapter_attribution': {'context_ids': row['chapters']}})}"
+    kind = (
+        f"transposition, also {line(' '.join(line_text(row['played_path']).split()[len(board) :]))}"
+        if row['kind'] == 'meet' and row.get('played_path')
+        else 'transposition'
+        if row['kind'] == 'meet'
+        else f'only after {after}'
+        if row['kind'] == 'only'
+        else STOP_LABELS.get(row['stop'], 'stops')
+    )
+    chapters = refs.chapter_sources({'chapter_attribution': {'source_ids': row['chapters']}})
+    return f'{link}<br>{kind}' + ('' if chapters == 'None' else f' · {chapters}')
+
+
+def alternative_lines(
+    alternative: JsonObject, option: JsonObject, refs: Chapters, level: str, anchor: str
 ) -> list[str]:
-    """Boards where chapters compete: every alternative's score there, and which one the repertoire plays."""
-    rows: list[list[str]] = []
-    for alternative in report.get('alternatives', []):
+    """One unplayed move followed line by line until its games meet the played move's again."""
+    color = refs.color.title()
+    board = alternative['path']
+    played = next(o for o in alternative['options'] if o['move'] == alternative['selected'])
+    mine, theirs = numbered(board, option['san']), numbered(board, played['san'])
+    rows = option['lines']
+
+    def share(key: str, kind: str) -> str:
+        return percentage(sum(r[key] for r in rows if r['kind'] == kind))
+
+    difference = None if option['score'] is None or played['score'] is None else option['score'] - played['score']
+    weighted = None if difference is None or alternative['reach'] is None else alternative['reach'] * difference
+    chapters = {o['move']: ', '.join(refs.label(cid) for cid in o['chapters']) for o in (option, played)}
+    sentence = (
+        f"{mine} ({chapters[option['move']]}) scores {percentage(option['score'])} here against "
+        f"{percentage(played['score'])} for {theirs} ({chapters[played['move']]}): "
+        f"{score_points(None if difference is None else 100 * difference, signed=True)} at the position"
+    )
+    if weighted is not None:
+        sentence += f', {per_thousand(100 * weighted, signed=True)} points per 1,000 {color} games'
+    text = [
+        *section(f'{level} {mine} instead of {theirs} after {line(line_text(board))}', anchor),
+        sentence + '.',
+        '',
+        f"After {mine}, {share('share', 'meet')} of games transpose into positions {theirs} also reaches "
+        f"({share('played_share', 'meet')} after {theirs}), {share('share', 'only')} stay in lines only "
+        f"{mine} reaches ({share('played_share', 'only')} only after {theirs}), and {share('share', 'stop')} "
+        f"leave preparation first ({share('played_share', 'stop')}). Effect weighs each line's score against "
+        f"{theirs}'s by how much more often {mine} reaches it; the effects add up to the difference. "
+        f"{about('alternative-lines')}.",
+        '',
+    ]
+
+    def cells(label: str, mine_share: float, their_share: float, score: str, effect: float) -> list[Cell]:
+        return [
+            label,
+            percentage(mine_share) if mine_share else '',
+            percentage(their_share) if their_share else '',
+            score,
+            score_points(100 * effect, 2, signed=True),
+        ]
+
+    shown = [
+        r
+        for i, r in enumerate(rows)
+        if i < ALTERNATIVE_LINE_ROWS or max(r['share'], r['played_share']) >= ALTERNATIVE_LINE_SHARE
+    ]
+    body = [
+        cells(
+            alternative_line_cell(r, board, refs, mine if r['share'] else theirs),
+            r['share'],
+            r['played_share'],
+            percentage(r['score']),
+            r['effect'],
+        )
+        for r in shown
+    ]
+    for kinds, label in (
+        (('meet',), 'Other transpositions'),
+        (('only',), 'Other lines only one move reaches'),
+        (('stop',), 'Other places preparation ends'),
+    ):
+        rest = [r for r in rows if r['kind'] in kinds and r not in shown]
+        if rest:
+            body.append(
+                cells(
+                    f'{label} ({len(rest):,})',
+                    sum(r['share'] for r in rest),
+                    sum(r['played_share'] for r in rest),
+                    '',
+                    sum(r['effect'] for r in rest),
+                )
+            )
+    body.append([f'**{c}**' if c else c for c in cells('Total', 1.0, 1.0, '', sum(r['effect'] for r in rows))])
+    return text + table(['Line', f'After {mine}', f'After {theirs}', 'Score from there', 'Effect here'], body)
+
+
+def alternatives_section(
+    report: JsonObject,
+    refs: Chapters,
+    level: str = '###',
+    anchor: str | None = None,
+    chapter: str | None = None,
+    detailed: bool = True,
+) -> list[str]:
+    """Boards where chapters compete: every alternative's score there and which one the repertoire plays, then
+    each unplayed move line by line. `chapter` keeps the boards where that chapter's move competes; without
+    `detailed`, the moves link to the full report's line tables instead."""
+    color = report['color']
+    anchor = anchor or f'{color}-alternatives'
+    details = anchor if detailed else f'{color}-alternatives'
+    rows: list[list[Cell]] = []
+    sections: list[str] = []
+    for index, alternative in enumerate(report.get('alternatives', []), 1):
+        if chapter is not None and not any(chapter in o['chapters'] for o in alternative['options']):
+            continue
         played = next(o for o in alternative['options'] if o['move'] == alternative['selected'])
         route = line_text(alternative['path'])
         for i, option in enumerate(sorted(alternative['options'], key=lambda o: o['move'] != alternative['selected'])):
@@ -1022,11 +1154,17 @@ def alternatives_section(
                 None if option['score'] is None or played['score'] is None else option['score'] - played['score']
             )
             weighted = None if difference is None or alternative['reach'] is None else alternative['reach'] * difference
+            target = f"{details}-{index}-{option['move']}"
+            move = escape(option['san'])
+            if option is played:
+                move += ' **(played)**'
+            elif option.get('lines'):
+                move += f' · [lines](#{target})'
             rows.append(
                 [
                     refs.position_cell({'position': alternative['position'], 'line': route}) if i == 0 else '',
                     percentage(alternative['reach']) if i == 0 else '',
-                    escape(option['san']) + (' **(played)**' if option is played else ''),
+                    move,
                     ', '.join(refs.label(cid) for cid in option['chapters']),
                     percentage(option['score']),
                     ''
@@ -1035,14 +1173,32 @@ def alternatives_section(
                     '' if option is played else per_thousand(None if weighted is None else 100 * weighted, signed=True),
                 ]
             )
+            if detailed and option is not played and option.get('lines'):
+                sections += alternative_lines(alternative, option, refs, level + '#', target)
     if not rows:
         return []
-    color = report['color']
+    if chapter is None:
+        title = f'{level} {color.title()} alternatives'
+        intro = (
+            'Where chapters record different first moves, each move is scored with the best choices after it and '
+            'the highest-scoring one is played. The table shows what each move that was not played would change, '
+            f'at the position and in points per 1,000 {color.title()} games'
+        )
+    else:
+        title = f'{level} Alternatives'
+        intro = (
+            "Positions where this chapter's first move competes with another chapter's. Each move is scored with "
+            'the best choices after it and the highest-scoring one is played; the table shows what each move that '
+            f'was not played would change, at the position and in points per 1,000 {color.title()} games'
+        )
+    intro += (
+        ". Below it, each of those moves is followed line by line until its games meet the played move's again."
+        if detailed
+        else "; its lines link to the full report, which follows them until they meet the played move's again."
+    )
     return [
-        *section(f'{level} {color.title()} competing alternatives', anchor or f'{color}-alternatives'),
-        'Where chapters record different first moves, each alternative is scored with the best choices after it '
-        'and the highest-scoring one is played. The other rows show what each alternative would change: at the '
-        f'position, and in points per 1,000 {color.title()} games. {about("competing")}.',
+        *section(title, anchor),
+        f'{intro} {about("competing")}.',
         '',
         *table(
             [
@@ -1056,6 +1212,7 @@ def alternatives_section(
             ],
             rows,
         ),
+        *sections,
     ]
 
 

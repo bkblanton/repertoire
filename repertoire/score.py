@@ -16,7 +16,7 @@ import numpy as np
 from . import SCHEMA_VERSION
 from .attribution import enrich
 from .baseline import chapter_entry_baseline
-from .board_cache import STARTING_POSITION, owner_outcome, position_of, san, turn
+from .board_cache import STARTING_POSITION, children, owner_outcome, position_of, san, turn
 from .context import DEFAULT_CACHE
 from .depth import chapter_prepared_depth, prepared_depth_values, summarize_depth
 from .evaluate import (
@@ -24,10 +24,13 @@ from .evaluate import (
     KNOWN,
     UNKNOWN,
     backward,
+    best_routes,
     by_position,
     chapter_score,
     entry_states,
     forward,
+    move_order_split,
+    reached,
     reaches,
     select_alternatives,
     summarize,
@@ -61,6 +64,7 @@ from .schema import (
     Chapter,
     ChapterScore,
     JsonObject,
+    MoveOrderRow,
     Position,
     ScoreSummary,
     StoppingEvent,
@@ -457,13 +461,113 @@ def score_repertoire(
     )
 
 
-def alternative_rows(graph: Graph, color: bool, plan: Plan, selection: Mapping[Position, dict]) -> list[Alternative]:
-    """Each board where chapters compete: every alternative's score there, its reach and the winner."""
+@dataclass
+class OptionTree:
+    """The games after one move at a contested board, with the overall policy's moves below it."""
+
+    model: Model
+    order: list[Position]
+    raw: Sampled
+    values: dict[Position, np.ndarray]
+    start: Position
+
+
+def option_tree(
+    graph: Graph, color: bool, policy: Policy, evidence: Evidence, sparse_threshold: int, k: Position, move: str
+) -> OptionTree | None:
+    transitions = resolve(graph, color, dict(policy, **{k: move}))
+    start = transitions[k][move][0]
+    if start is None:
+        return None
+    order = topology(transitions, [start])
+    model = prepare(graph, transitions, order, color, evidence)
+    raw = empirical(model, color)
+    return OptionTree(model, order, raw, backward(model, order, raw, sparse_threshold), start)
+
+
+def route_path(position: Position, moves: Iterable[str]) -> list[str]:
+    result = []
+    for move in moves:
+        result.append(san(position, move))
+        position = children(position)[move]
+    return result
+
+
+def move_order_rows(
+    graph: Graph, k: Position, move: str, alternative: OptionTree, played_move: str, played: OptionTree
+) -> list[MoveOrderRow]:
+    """Where games go after `move` instead of the played move, until the two move orders meet again.
+
+    Each row's effect is its probability after `move` times its score relative to the played move's score, minus
+    the same for the played move, so the effects add up to the score difference at the board.
+    """
+    trees = {move: alternative, played_move: played}
+    shared = set.intersection(*(reached(t.model, t.order, t.raw, t.start) for t in trees.values()))
+    splits = {m: move_order_split(t.model, t.order, t.raw, t.values, t.start, shared) for m, t in trees.items()}
+    base = float(played.values[played.start][COMPLETED])
+    routes = {m: best_routes(t.model, t.order, t.raw, {t.start: 1.0}) for m, t in trees.items()}
+
+    def path_via(m: str, node: Position) -> list[str]:
+        return [*graph.nodes[k].path, san(k, m), *route_path(children(k)[m], routes[m][node][2])]
+
+    rows: list[MoveOrderRow] = []
+    for kind, node, reply in dict.fromkeys([*splits[move], *splits[played_move]]):
+        share, score = splits[move].get((kind, node, reply), (0.0, 0.0))
+        played_share, played_score = splits[played_move].get((kind, node, reply), (0.0, 0.0))
+        via = move if share else played_move
+        tree = trees[via]
+        position = position_of(node)
+        path = path_via(via, node)
+        branch = None
+        if kind == 'stop':
+            branch = next(b for b in tree.model[node].branches if b.target is None and b.move == reply)
+            if reply is not None:
+                path.append(san(position, reply))
+        rows.append(
+            {
+                'kind': kind,
+                'position': position,
+                'move': reply,
+                'stop': None if branch is None else branch.kind,
+                'path': path,
+                'played_path': path_via(played_move, node) if kind == 'meet' and share and played_share else None,
+                'share': share,
+                'played_share': played_share,
+                'score': score if share else played_score,
+                'effect': share * (score - base) - played_share * (played_score - base),
+                'chapters': sorted(graph.nodes[position].chapters),
+            }
+        )
+    return sorted(rows, key=lambda r: (-abs(r['effect']), r['path']))
+
+
+def alternative_rows(
+    graph: Graph,
+    color: bool,
+    plan: Plan,
+    selection: Mapping[Position, dict],
+    policy: Policy,
+    evidence: Evidence,
+    sparse_threshold: int,
+) -> list[Alternative]:
+    """Each board where chapters compete: every alternative's score there, its reach and the winner, and for every
+    move not played, line by line, where its games go compared with the played move's.
+
+    `policy` is the overall policy, including the winners of competing alternatives.
+    """
     overall = plan.overall
     reach = by_position(reaches(overall['model'], overall['order'], overall['raw'], plan.root_weights))
     rows: list[Alternative] = []
     for k, choice in selection.items():
         node = graph.nodes[k]
+        trees = {m: option_tree(graph, color, policy, evidence, sparse_threshold, k, m) for m in choice['scores']}
+        played = trees[choice['selected']]
+        lines = {
+            m: move_order_rows(graph, k, m, tree, choice['selected'], played)
+            if m != choice['selected'] and tree is not None and played is not None
+            else []
+            for m, tree in trees.items()
+        }
         rows.append(
             {
                 'position': k,
@@ -479,6 +583,7 @@ def alternative_rows(graph: Graph, color: bool, plan: Plan, selection: Mapping[P
                         'resolved_contribution': float(value[KNOWN]),
                         'unresolved_mass': float(value[UNKNOWN]),
                         'prior_completed_score': float(value[COMPLETED]),
+                        'lines': lines[move],
                     }
                     for move, value in choice['scores'].items()
                 ],
@@ -536,7 +641,15 @@ def analyze(args: argparse.Namespace) -> JsonObject | None:
         "overall": scores['overall'],
         "chapters": scores['chapters'],
         "chapter_transitions": scores['chapter_transitions'],
-        "alternatives": alternative_rows(graph, color, plan, selection),
+        "alternatives": alternative_rows(
+            graph,
+            color,
+            plan,
+            selection,
+            dict(config.get('policy', {}), **selected),
+            evidence,
+            args.sparse_threshold,
+        ),
         "starting_position_reference": starting_position_reference(
             evidence[STARTING_POSITION], color, explorer.provenance[STARTING_POSITION]
         ),

@@ -109,6 +109,22 @@ class Chapter(TypedDict):
     entry_baseline: EntryBaseline
 
 
+class MoveOrderRow(TypedDict):
+    """Where games go after an unplayed move compared with the played one, until their lines meet again."""
+
+    kind: str  # 'meet': first position both moves reach; 'only': one move's line that never meets; 'stop'
+    position: Position  # the position reached; for a stop, the position it stops from
+    move: str | None  # a stop's unprepared reply (UCI), if any
+    stop: str | None  # a stop's kind, as in the stopping-event ledger
+    path: list[str]  # SAN from the root, through this move, along the most likely route
+    played_path: list[str] | None  # a position both moves reach: the played move's most likely route there
+    share: float  # probability after this move
+    played_share: float  # probability after the played move
+    score: float  # prior-completed score from there (for a stop, the stop's score)
+    effect: float  # share-weighted score relative to the played move; the rows add up to the difference
+    chapters: list[str]  # chapters holding the position
+
+
 class AlternativeOption(TypedDict):
     move: str
     san: str
@@ -117,6 +133,7 @@ class AlternativeOption(TypedDict):
     resolved_contribution: float
     unresolved_mass: float
     prior_completed_score: float  # the value compared when choosing
+    lines: list[MoveOrderRow]  # against the played move; empty for the played move itself
 
 
 class Alternative(TypedDict):

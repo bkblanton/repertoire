@@ -204,8 +204,10 @@ def chapter_page(
         links.append('Previous: ' + refs.label(neighbors[position - 1]))
     if position + 1 < len(neighbors):
         links.append('Next: ' + refs.label(neighbors[position + 1]))
+    alternatives = alternatives_section(r, refs, level='##', anchor=f'{anchor}-alternatives', chapter=cid)
     contents = [
         ('starts', 'Where this chapter starts'),
+        *([('alternatives', 'Alternatives')] if alternatives else []),
         ('edge', 'Where your edge comes from'),
         ('exits', 'Where preparation ends'),
         ('free-transpositions', 'Free transpositions'),
@@ -232,7 +234,9 @@ def chapter_page(
         text += [
             "**Alternative comparison.** This chapter prefers its own first moves. "
             "Region reach under the overall policy: "
-            f"{percentage(s.get('overall_policy_entry_probability'))}. {about('alternatives')}.",
+            f"{percentage(s.get('overall_policy_entry_probability'))}. "
+            + (f'[How its moves compare](#{anchor}-alternatives). ' if alternatives else '')
+            + f"{about('alternatives')}.",
             '',
         ]
     depth = s.get('prepared_depth', {}).get('expected_moves')
@@ -301,6 +305,7 @@ def chapter_page(
     text += ['On this page: ' + ' · '.join(f'[{title}](#{anchor}-{key})' for key, title in contents), '']
     text += section('## Where this chapter starts', f'{anchor}-starts')
     text += leading_entries(chapter, preparation.get(cid), refs) or ['Entry routes are unavailable.', '']
+    text += alternatives
     text += edge_section(
         vulnerabilities.get(cid), refs, chapter_top, level='##', anchor=f'{anchor}-edge', detailed=False
     ) or section('## Where your edge comes from', f'{anchor}-edge') + ['Edge ledger pending.', '']
@@ -624,11 +629,11 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
             '</details>',
             '',
         ]
-        competing = alternatives_section(r, refs, level='####', anchor=f'{color}-summary-alternatives')
+        competing = alternatives_section(r, refs, level='####', anchor=f'{color}-summary-alternatives', detailed=False)
         if competing:
             text += [
                 '<details>',
-                f'<summary>Competing alternatives ({len(r["alternatives"])})</summary>',
+                f'<summary>Alternatives ({len(r["alternatives"])})</summary>',
                 '',
                 *competing,
                 '</details>',

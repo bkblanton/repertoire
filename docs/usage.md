@@ -181,7 +181,7 @@ By default the Explorer is queried for every rating band (0, 1000, 1200, 1400, 1
 
 When your repertoire has more than one move in a position, Repertoire chooses one:
 
-- **Competing chapters are decided by score.** Where chapters record different first moves in the same position, each move is scored with the best choices after it, and the highest-scoring one is played. To test an idea, put the alternative in its own chapter and rebuild: the summary and full report list every competing position with each alternative's score and its difference from the move played. An exact tie keeps the earlier chapter.
+- **Competing chapters are decided by score.** Where chapters record different first moves in the same position, each move is scored with the best choices after it, and the highest-scoring one is played. To test an idea, put the alternative in its own chapter and rebuild: the summary and full report list every competing position with each alternative's score and its difference from the move played, and the full report and chapter pages follow each move that was not played line by line until it transposes back into the played move's lines (see [Alternatives](metrics.md#alternatives)). An exact tie keeps the earlier chapter.
 - **Otherwise the first recorded move is played:** the PGN main line before side variations. Side variations of your own moves within one chapter do not compete; move one into its own chapter to have it scored.
 
 `policy` overrides both rules. Its keys are canonical FENs: piece placement, side to move, castling rights and a legal en passant square, without the move counters. Its values are a UCI move, or a map of UCI moves to weights that sum to one. An override is never compared with the alternatives.

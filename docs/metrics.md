@@ -19,6 +19,7 @@ A few rules hold throughout:
 - [Metric reference](#metric-reference)
   - [Scores and baselines](#scores-and-baselines)
   - [Chapter reach and entries](#chapter-reach-and-entries)
+  - [Alternatives](#alternatives)
   - [Prepared depth](#prepared-depth)
   - [Where preparation ends](#where-preparation-ends)
   - [Free transpositions](#free-transpositions)
@@ -42,13 +43,13 @@ Start with `reports/summary.md`. After the headline scores, each color leads wit
 - **Where preparation ends** groups every unprepared reply by the last prepared position before it, so one row is one study task. *Games leaving prep here* is the share of all games with that color whose preparation ends at that position. *Of games at this position* separates a chapter that simply stops (100%) from rare sidelines at a busy position. Unlike other rankings, these rows do not overlap.
 - **Own moves to review** ranks your moves by how often they are played times how far they fall below the database score of their position.
 
-Collapsed sections follow: where your edge comes from, the most common positions as a tree, chapter comparisons, costly unprepared replies, and preparation and variability. Where chapters compete in the same position, each alternative is listed with its score (see [Move selection](usage.md#move-selection)). Saved [comparisons](usage.md#comparing-alternative-preparation) are listed at the end. Notices about changed studies or missing analyses appear above the scores.
+Collapsed sections follow: where your edge comes from, the most common positions as a tree, chapter comparisons, costly unprepared replies, and preparation and variability. Where chapters compete in the same position, each alternative is listed with its score, linked to its lines in the full report (see [Alternatives](#alternatives)). Saved [comparisons](usage.md#comparing-alternative-preparation) are listed at the end. Notices about changed studies or missing analyses appear above the scores.
 
 ### The full report, chapter and opening pages
 
-`reports/report.md` holds the detail for both colors: chapter tables, where the edge comes from, exit points, free transpositions, positions, openings, vulnerabilities, strengths, the engine view, effort and value, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
+`reports/report.md` holds the detail for both colors: chapter tables, alternatives, where the edge comes from, exit points, free transpositions, positions, openings, vulnerabilities, strengths, the engine view, effort and value, gap priorities, depth distributions, correlations, and the glossary (*Definitions and evidence*). Tables state their main caveat in one sentence and link to the glossary instead of repeating it.
 
-Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, where its edge comes from, its exit points, free transpositions, positions, vulnerabilities, strengths, its engine view, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
+Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, ...). It opens with a table of the chapter's headline figures and a short list of its opponents, preparation, gaps and evidence, then shows where the chapter starts, how its first moves compare where they compete with another chapter's, where its edge comes from, its exit points, free transpositions, positions, vulnerabilities, strengths, its engine view, gaps, depth, and every entry position and route. It links to the neighboring chapters and to the chapter on Lichess. `reports/openings/white.md` and `black.md` hold the evidence for each opening.
 
 ### Columns
 
@@ -127,6 +128,14 @@ Chapters still overlap where one chapter's line passes through another's entry, 
 **Chapter transitions** (full report) answer: among games that first enter one chapter, how often do they reach another at or after that point? Entering both at once counts. Transitions are directed: A to B differs from B to A. The model does not follow games through unknown positions to a later return.
 
 **Entry routes** (chapter pages) show the most likely single route to each entry. An entry's weight includes every route that reaches it first; the route shown may carry only part of that weight.
+
+### Alternatives
+
+Where chapters record different first moves in the same position, each move is scored with the best choices after it and the highest-scoring one is played (see [Move selection](usage.md#move-selection)). The full report lists every such position after the chapter table, with each move's score, its difference from the move played, and that difference times the position's reach in points per 1,000 games. Chapter pages show the positions where their own first move competes.
+
+Each move that was not played then gets a table of its lines. Its games are followed, with your usual moves after it, until they reach a position the played move's games also reach. Below such a **transposition** both moves continue identically, so all that changes is how often each move order arrives there. A line that can no longer meet the played move's games is one row, scored as a whole (**only after** that move), and an unprepared reply or the end of preparation before either is a row of its own. The played move is split the same way, so each row shows its share after both moves, and a transposition both reach shows both move orders. The table lists the lines with the largest effects and every line reached in at least 5% of games after either move; the rest are combined by kind.
+
+**Effect** is a row's share after the unplayed move times its score minus the played move's score, less the same for the played move. The effects add up exactly to the difference at the position. A transposition reached equally often after both moves has no effect; reaching it more often helps only if it scores above the played move. When an alternative chapter ends by transposing into your existing preparation, the table therefore measures exactly what the different move order changes: which lines it avoids or allows on the way, and how often it arrives at each shared position.
 
 ### Prepared depth
 
