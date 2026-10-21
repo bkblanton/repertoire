@@ -11,11 +11,15 @@ from repertoire.vulnerabilities import analyze as vulnerabilities
 
 
 def test_chapter_local_mainline_order_is_independent_of_global_edge_order(tmp_path):
-    g = graph(tmp_path, '1. e4 (1. d4) *\n\n1. d4 (1. e4) *')
+    # Global edge order is e4, c4, d4; chapter 2 does not record e4, so it plays its own first move, d4.
+    g = graph(tmp_path, '1. e4 (1. c4) (1. d4) *\n\n1. d4 (1. c4) *')
     global_policy = resolve(g, chess.WHITE, {})
     assert list(global_policy[g.roots[0]]) == ['e2e4']
     override = chapter_policy_overrides(g, chess.WHITE, global_policy, '2')
     assert override == {g.roots[0]: 'd2d4'}
+    # A chapter that records the global move as a side variation follows it.
+    both = graph(tmp_path, '1. e4 *\n\n1. d4 (1. e4) *')
+    assert chapter_policy_overrides(both, chess.WHITE, resolve(both, chess.WHITE, {}), '2') == {}
     assert list(resolve(g, chess.WHITE, override)[g.roots[0]]) == ['d2d4']
     assert list(resolve(g, chess.WHITE, {g.roots[0]: 'd2d4'})[g.roots[0]]) == ['d2d4']
 
@@ -113,6 +117,8 @@ def test_automatic_entry_falls_back_when_only_discarded_variations_are_unique(tm
         position(''): data(50, 0, 50),
         position('e4'): data(50, 0, 50, [('e7e5', 50, 0, 50)]),
         position('e4 e5'): data(70, 0, 30),
+        # The 1.d4 side variation competes now; it scores lower, so 1.e4 stays.
+        position('d4'): data(40, 0, 60),
     }.items():
         cache_row(cache, k, row)
     args = SimpleNamespace(

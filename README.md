@@ -16,7 +16,7 @@ The score describes database results when you play your repertoire's moves. It i
 - **Engine view:** with the Lichess evaluation export imported, Stockfish's verdict where your preparation ends, on your moves and on common opponent mistakes, beside the database score.
 - **Effort and value:** chapters ranked by edge per move to remember, lines worth little for their length, and valuable moves that come up too rarely to stay fresh.
 - **Chapter reach and depth:** how often each chapter is reached, by which move orders, and how many prepared moves you play on average.
-- **Alternatives:** where chapters play different moves in the same position, each choice is scored and the best one is used. The report follows each move that was not played line by line until it meets the played move again, so you can see what a different move order changes.
+- **Alternatives:** where chapters or side variations play different moves in the same position, each choice is scored and the best one is used. The report follows each move that was not played line by line until it meets the played move again, so you can see what a different move order changes.
 - **Candidate comparisons:** whether another study would improve your repertoire, decision by decision.
 
 ## Requirements

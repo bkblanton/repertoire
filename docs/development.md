@@ -60,7 +60,7 @@ Each stage saves a manifest with the hashes of its inputs: the source PGN, the s
 - A position is identified by its pieces, side to move, castling rights and legal en passant square, without move counters. Transpositions are merged, and displayed lines are representative routes.
 - Get move text, child positions, side to move and results from `board_cache.py` (`children`, `san`, `move_text`, `route_line`, `turn`, `owner_outcome`) rather than building a `chess.Board` inside a loop; board construction is the main cost in every stage.
 
-**Move selection.** Explicit policy overrides win. Otherwise `evaluate.select_alternatives` plays the highest-scoring of competing chapter moves, and the first recorded move elsewhere. The score stage saves the winners and `context.selected_policy` hands them to every later stage, so never resolve the overall policy from the configuration alone. Each chapter is evaluated with its own first moves and the overall policy elsewhere; keep alternative chapters visible and label them as such.
+**Move selection.** Explicit policy overrides win. Otherwise `evaluate.select_alternatives` plays the highest-scoring of competing recorded moves (different chapters' first moves and side variations alike). The score stage saves the winners and `context.selected_policy` hands them to every later stage, so never resolve the overall policy from the configuration alone. Each chapter is evaluated with its own first moves and the overall policy elsewhere; keep alternative chapters visible and label them as such.
 
 **Evidence.**
 

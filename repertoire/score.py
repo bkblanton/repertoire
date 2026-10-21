@@ -578,7 +578,8 @@ def alternative_rows(
                     {
                         'move': move,
                         'san': san(k, move),
-                        'chapters': [cid for cid, recorded in node.chapter_moves.items() if recorded[:1] == [move]],
+                        'chapters': [cid for cid, recorded in node.chapter_moves.items() if move in recorded],
+                        'sideline': not any(recorded[:1] == [move] for recorded in node.chapter_moves.values()),
                         'score': float(value[KNOWN]) if value[UNKNOWN] == 0 else None,
                         'resolved_contribution': float(value[KNOWN]),
                         'unresolved_mass': float(value[UNKNOWN]),

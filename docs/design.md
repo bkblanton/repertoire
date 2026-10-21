@@ -37,8 +37,8 @@ A chapter entry inside a loop is evaluated in the nodes games first arrive at fr
 At each of your positions, one move is played:
 
 1. **An explicit policy** in the configuration, a move or a set of weights summing to one, always wins.
-2. **Competing chapters are decided by score.** Where chapters record different first moves, each move is scored with the best choices after it, deciding later positions first (backward induction), and the highest-scoring move is played. Together these choices maximize the score from every starting position. The comparison uses posterior mean scores, so a position with no evidence counts at its prior mean. An exact tie keeps the earlier chapter.
-3. **Otherwise the first recorded move is played:** the main line before side variations, earlier chapters before later ones. Side variations within one chapter do not compete.
+2. **Competing moves are decided by score.** Where chapters record different first moves, or a chapter records a side variation of your own move, each move is scored with the best choices after it, deciding later positions first (backward induction), and the highest-scoring move is played. Together these choices maximize the score from every starting position. The comparison uses posterior mean scores, so a position with no evidence counts at its prior mean. An exact tie keeps the earlier chapter.
+3. **Otherwise the only recorded move is played.**
 
 The resolved choices, every competing move's score and the winners are saved with the score, and every later stage replays them. Two moves are never both given probability one. Choosing the best of several estimated scores is biased upward, so a small winning margin can be chance.
 

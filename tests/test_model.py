@@ -365,6 +365,7 @@ def test_competing_chapters_are_decided_from_the_leaves_up(tmp_path):
     assert {k: choice['selected'] for k, choice in fixed.items()} == {root: 'd2d4'}
     # An explicit policy override is never an alternative.
     assert select_alternatives(g, True, {root: 'e2e4', after_e5: 'g1f3'}, evidence, g.roots, 30) == {}
-    # Side variations within one chapter do not compete.
+    # Side variations within one chapter compete too, after the chapters' first moves.
     single = graph(tmp_path, '1. e4 (1. d4) e5 *')
-    assert chapter_alternatives(single, True, {}) == {}
+    assert chapter_alternatives(single, True, {}) == {root: ['e2e4', 'd2d4']}
+    assert chapter_alternatives(single, True, {root: 'e2e4'}) == {}

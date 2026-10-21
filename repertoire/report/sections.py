@@ -1036,6 +1036,12 @@ STOP_LABELS = {
 }
 
 
+def option_chapters(option: JsonObject, refs: Chapters) -> str:
+    """The chapters recording a move, marked when only their side variations do."""
+    text = ', '.join(refs.label(cid) for cid in option['chapters'])
+    return text + (' (side variation)' if option.get('sideline') else '')
+
+
 def numbered(path: Sequence[str], move_san: str) -> str:
     """A move with its number after `path`, such as 3... Nf6."""
     return line(line_text([*path, move_san]).split()[-1])
@@ -1077,7 +1083,7 @@ def alternative_lines(
 
     difference = None if option['score'] is None or played['score'] is None else option['score'] - played['score']
     weighted = None if difference is None or alternative['reach'] is None else alternative['reach'] * difference
-    chapters = {o['move']: ', '.join(refs.label(cid) for cid in o['chapters']) for o in (option, played)}
+    chapters = {o['move']: option_chapters(o, refs) for o in (option, played)}
     sentence = (
         f"{mine} ({chapters[option['move']]}) scores {percentage(option['score'])} here against "
         f"{percentage(played['score'])} for {theirs} ({chapters[played['move']]}): "
@@ -1089,12 +1095,18 @@ def alternative_lines(
         *section(f'{level} {mine} instead of {theirs} after {line(line_text(board))}', anchor),
         sentence + '.',
         '',
-        f"After {mine}, {share('share', 'meet')} of games transpose into positions {theirs} also reaches "
-        f"({share('played_share', 'meet')} after {theirs}), {share('share', 'only')} stay in lines only "
-        f"{mine} reaches ({share('played_share', 'only')} only after {theirs}), and {share('share', 'stop')} "
-        f"leave preparation first ({share('played_share', 'stop')}). Effect weighs each line's score against "
-        f"{theirs}'s by how much more often {mine} reaches it; the effects add up to the difference. "
-        f"{about('alternative-lines')}.",
+        (
+            f"After {mine}, {share('share', 'meet')} of games transpose into positions {theirs} also reaches "
+            f"({share('played_share', 'meet')} after {theirs}), {share('share', 'only')} stay in lines only "
+            f"{mine} reaches ({share('played_share', 'only')} only after {theirs}), and "
+            if any(r['kind'] == 'meet' for r in rows)
+            else f"The lines after {mine} and {theirs} never meet, so they are compared reply by reply. After "
+            f"{mine}, {share('share', 'only')} of games stay in its lines ({share('played_share', 'only')} after "
+            f"{theirs}) and "
+        )
+        + f"{share('share', 'stop')} leave preparation first ({share('played_share', 'stop')}). Effect weighs each "
+        f"line's score against {theirs}'s by how much more often {mine} reaches it; the effects add up to the "
+        f"difference. {about('alternative-lines')}.",
         '',
     ]
 
@@ -1176,10 +1188,10 @@ def alternatives_section(
                 move += f' · [lines](#{target})'
             rows.append(
                 [
-                    refs.position_cell({'position': alternative['position'], 'line': route}) if i == 0 else '',
+                    refs.position_cell({'position': alternative['position']}, route) if i == 0 else '',
                     percentage(alternative['reach']) if i == 0 else '',
                     move,
-                    ', '.join(refs.label(cid) for cid in option['chapters']),
+                    option_chapters(option, refs),
                     percentage(option['score']),
                     ''
                     if option is played
@@ -1194,16 +1206,18 @@ def alternatives_section(
     if chapter is None:
         title = f'{level} {color.title()} alternatives'
         intro = (
-            'Where chapters record different first moves, each move is scored with the best choices after it and '
-            'the highest-scoring one is played. The table shows what each move that was not played would change, '
-            f'at the position and in points per 1,000 {color.title()} games'
+            'Where your repertoire records more than one move, in different chapters or as a side variation, each '
+            'move is scored with the best choices after it and the highest-scoring one is played. The table shows '
+            'what each move that was not played would change, at the position and in points per 1,000 '
+            f'{color.title()} games'
         )
     else:
         title = f'{level} Alternatives'
         intro = (
-            "Positions where this chapter's first move competes with another chapter's. Each move is scored with "
-            'the best choices after it and the highest-scoring one is played; the table shows what each move that '
-            f'was not played would change, at the position and in points per 1,000 {color.title()} games'
+            "Positions where this chapter records more than one move, or its move competes with another chapter's. "
+            'Each move is scored with the best choices after it and the highest-scoring one is played; the table '
+            'shows what each move that was not played would change, at the position and in points per 1,000 '
+            f'{color.title()} games'
         )
     intro += (
         ". Below it, each of those moves is followed line by line until its games meet the played move's again."

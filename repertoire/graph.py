@@ -175,23 +175,24 @@ def policy_transitions(graph: Graph, color: bool, policy: Policy) -> Transitions
 
 
 def chapter_alternatives(graph: Graph, color: bool, policy: Policy) -> dict[Position, list[str]]:
-    """Own-turn boards where chapters record different first moves: each distinct move, in chapter order.
+    """Own-turn boards with more than one recorded move: every chapter's first move, in chapter order, then side
+    variations in PGN order.
 
-    These compete on score (see evaluate.select_alternatives). Side variations within one chapter do not
-    compete, and an explicit policy override settles its board.
+    These compete on score (see evaluate.select_alternatives), side variations within one chapter as well as
+    different chapters' moves. An explicit policy override settles its board.
     """
     result = {}
     for k, n in graph.nodes.items():
         if turn(k) != color or k in policy or terminal_white(k) is not None:
             continue
-        moves = list(dict.fromkeys(recorded[0] for recorded in n.chapter_moves.values() if recorded))
+        moves = list(dict.fromkeys([*(recorded[0] for recorded in n.chapter_moves.values() if recorded), *n.edges]))
         if len(moves) > 1:
             result[k] = moves
     return result
 
 
 def alternative_transitions(graph: Graph, color: bool, policy: Policy) -> Transitions:
-    """The selected policy, plus every chapter's first move at each own-turn board.
+    """The selected policy, plus every recorded move at each own-turn board.
 
     Every board any chapter alternative or chapter comparison policy can reach is reachable here, so evidence
     can be planned before scoring decides between alternatives. Own-turn boards may have several moves.
@@ -199,9 +200,9 @@ def alternative_transitions(graph: Graph, color: bool, policy: Policy) -> Transi
     transitions = policy_transitions(graph, color, policy)
     for k, n in graph.nodes.items():
         if turn(k) == color and terminal_white(k) is None:
-            for recorded in n.chapter_moves.values():
-                if recorded and recorded[0] not in transitions[k]:
-                    transitions[k][recorded[0]] = (n.edges[recorded[0]], None)
+            for move, target in n.edges.items():
+                if move not in transitions[k]:
+                    transitions[k][move] = (target, None)
     return transitions
 
 
@@ -221,7 +222,8 @@ def reachable(transitions: Transitions, roots: Iterable[Position]) -> list[Posit
 def chapter_policy_overrides(
     graph: Graph, color: bool, global_transitions: Transitions, chapter_id: str
 ) -> dict[Position, str]:
-    """Prefer this chapter's first recorded own move; use the global policy elsewhere.
+    """Prefer this chapter's first recorded own move where the global policy plays a move the chapter does not
+    record; use the global policy elsewhere, including where it plays one of the chapter's side variations.
 
     Keep chapter-local ordering separately: filtering global edge order would
     incorrectly inherit an earlier chapter's variation order.
@@ -229,11 +231,8 @@ def chapter_policy_overrides(
     overrides = {}
     for k, node in graph.nodes.items():
         moves = node.chapter_moves.get(chapter_id, [])
-        if moves and turn(k) == color:
-            chosen = moves[0]
-            # Compare moves and weights only: inside a repetition loop the target is a history node.
-            if {m: w for m, (_, w) in global_transitions[k].items()} != {chosen: 1.0}:
-                overrides[k] = chosen
+        if moves and turn(k) == color and not set(global_transitions[k]) <= set(moves):
+            overrides[k] = moves[0]
     return overrides
 
 

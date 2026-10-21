@@ -166,7 +166,8 @@ def move_order_split(
 
     Keys are ('meet', node, None) for the first shared node on a route, ('only', node, None) for a node from
     which no route meets a shared one (scored as a whole), and ('stop', node, reply) where play stops before
-    either; reply is None for stops without a move. Probabilities sum to one, and probability times score sums
+    either; reply is None for stops without a move. `start` itself is always expanded, so a move whose lines
+    never meet is still split by the replies to it. Probabilities sum to one, and probability times score sums
     to the prior-completed value at `start`.
     """
     meets: dict[Position, bool] = {}
@@ -180,7 +181,7 @@ def move_order_split(
         m = mass.get(k, 0.0)
         if not m:
             continue
-        if k != start and k in shared or not meets[k]:
+        if k != start and (k in shared or not meets[k]):
             result[('meet' if k in shared else 'only', k, None)] = (m, float(values[k][COMPLETED]))
             continue
         for b, (p, s) in zip(model[k].branches, sampled[k]):

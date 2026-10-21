@@ -128,7 +128,8 @@ class MoveOrderRow(TypedDict):
 class AlternativeOption(TypedDict):
     move: str
     san: str
-    chapters: list[str]  # chapters whose first recorded move here is this one
+    chapters: list[str]  # chapters recording this move here
+    sideline: bool  # only side variations record it: no chapter's first move here
     score: float | None  # repertoire score after this move, with the best choices below it
     resolved_contribution: float
     unresolved_mass: float

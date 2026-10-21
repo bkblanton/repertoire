@@ -15,7 +15,7 @@ BISHOP = (
 )
 
 
-def run(tmp_path, monkeypatch):
+def run(tmp_path, monkeypatch, text=f'{ITALIAN}\n\n{BISHOP}'):
     """2.Nf3 and 2.Bc4 compete after 1.e4 e5 and meet again after 2...Nc6 3.Bc4 / 3.Nf3 (60% for White).
 
     After 2.Nf3, 2...d6 (40%) is unprepared and scores 50%: 2.Nf3 scores 0.6 * 0.6 + 0.4 * 0.5 = 56%.
@@ -26,7 +26,7 @@ def run(tmp_path, monkeypatch):
         raise AssertionError('A fully cached run must not use the network')
 
     monkeypatch.setattr(httpx.Client, 'request', forbidden)
-    g = graph(tmp_path, f'{ITALIAN}\n\n{BISHOP}')
+    g = graph(tmp_path, text)
     cache = tmp_path / 'cache'
     cache.mkdir()
     tables = {
@@ -110,3 +110,40 @@ def test_alternatives_are_rendered_in_the_report_summary_and_chapter_pages(tmp_p
         assert '### 2. Bc4 instead of 2. Nf3 after 1. e4 e5' in text
     bishop = (tmp_path / 'chapters' / 'W2.md').read_text(encoding='utf-8')
     assert '[How its moves compare](#white-chapter-2-alternatives)' in bishop
+
+
+def test_side_variations_within_a_chapter_compete(tmp_path, monkeypatch):
+    side = (
+        '[ChapterURL "https://lichess.org/study/test/italian"]\n[ChapterName "Italian"]\n\n'
+        '1. e4 e5 2. Bc4 (2. Nf3 Nc6 3. Bc4) 2... Nc6 3. Nf3 *'
+    )
+    report = run(tmp_path, monkeypatch, side)
+    [row] = report['alternatives']
+    # The side variation 2.Nf3 scores higher than the main line 2.Bc4, so it is played.
+    assert row['selected'] == 'g1f3' and report['manifest']['selected_alternatives'] == {row['position']: 'g1f3'}
+    options = {o['san']: o for o in row['options']}
+    assert (options['Nf3']['sideline'], options['Bc4']['sideline']) == (True, False)
+    assert options['Nf3']['chapters'] == options['Bc4']['chapters'] == ['italian']
+    assert sum(r['effect'] for r in options['Bc4']['lines']) == pytest.approx(0.51 - 0.56)
+    assert report['overall']['raw_empirical_score'] == pytest.approx(0.56)
+    full = (tmp_path / 'report.md').read_text(encoding='utf-8')
+    assert '| Nf3 **(played)** | [W1](chapters/W1.md) (side variation) | 56.0% |' in full
+    assert '#### 2. Bc4 instead of 2. Nf3 after 1. e4 e5' in full
+
+
+def test_moves_whose_lines_never_meet_are_split_by_the_replies(tmp_path, monkeypatch):
+    side = (
+        '[ChapterURL "https://lichess.org/study/test/italian"]\n[ChapterName "Italian"]\n\n'
+        '1. e4 e5 2. Bc4 (2. Nf3 Nc6) *'
+    )
+    report = run(tmp_path, monkeypatch, side)
+    [row] = report['alternatives']
+    # 2.Bc4 has no prepared replies (70% at 60%, 30% at 30%: 51%); 2.Nf3 Nc6 is unanswered (50%), 2...d6 50%.
+    assert row['selected'] == 'f1c4'
+    knight = next(o for o in row['options'] if o['san'] == 'Nf3')
+    assert knight['sideline'] and knight['score'] == pytest.approx(0.5)
+    lines = {(r['kind'], r['path'][-1]): (r['share'], r['played_share']) for r in knight['lines']}
+    assert lines == pytest.approx(
+        {('only', 'Nc6'): (0.6, 0), ('stop', 'd6'): (0.4, 0), ('stop', 'Nc6'): (0, 0.7), ('stop', 'Nf6'): (0, 0.3)}
+    )
+    assert sum(r['effect'] for r in knight['lines']) == pytest.approx(0.5 - 0.51)
