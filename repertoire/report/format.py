@@ -4,7 +4,7 @@ import html
 import math
 import os
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -168,7 +168,7 @@ def cp_interval(bounds: Sequence[float | None] | None) -> str:
 def spread_display(spread: JsonObject | None, immediate: bool = True) -> str:
     if not spread:
         return 'unavailable'
-    result = percentage(spread.get('standard_deviation'))
+    result = bounded(spread.get('standard_deviation'), spread.get('standard_deviation_bounds'))
     if immediate and spread.get('immediate_standard_deviation') is not None:
         result += '<br>Reply ' + percentage(spread['immediate_standard_deviation'])
     elif immediate and spread.get('basis') == 'stopping score; no modeled future replies':
@@ -190,10 +190,46 @@ def delta_points(after: float | None, before: float | None, *, drag: bool = Fals
     return score_points(delta, signed=True)
 
 
-def headline_delta(after: float | None, before: float | None) -> str:
-    """Headline deltas alone keep a centipawn-scale translation; other tables show percentages only."""
+def headline_delta(after: float | None, before: float | None, bounds: Sequence[float] | None = None) -> str:
+    """Headline deltas alone keep a centipawn-scale translation; other tables show percentages only.
+
+    A partly unresolved score (`after` None, with its conditional `bounds`) shows the delta's bounds instead."""
+    if after is None and bounds and before is not None:
+        return bounded_delta_points(after, before, bounds)
     value = centipawn_delta(after, before)
     return delta_points(after, before) + ('' if value is None else f' ({number(value, 0, signed=True)} cp)')
+
+
+def bounded(
+    value: float | None, bounds: Sequence[float] | None, render: Callable[[float | None], str] = percentage
+) -> str:
+    """A resolved value, or the bounds of a partly unresolved one: from its resolved part alone to that part plus
+    all unresolved probability."""
+    if value is not None or not bounds:
+        return render(value)
+    return ' to '.join(render(v) for v in bounds) + ' (bounds)'
+
+
+def score_bounds(row: Mapping | None, field: str = 'raw_empirical_score') -> list[float] | None:
+    """A saved score's conditional bounds, wherever its analysis keeps them; None once the score is resolved."""
+    row = row or {}
+    if row.get(field) is not None:
+        return None
+    for name in ('repertoire_score_bounds', 'conditional_bounds', 'conditional_score_bounds'):
+        if row.get(name):
+            return list(row[name])
+    return None
+
+
+def bounded_score(row: Mapping | None, field: str = 'raw_empirical_score') -> str:
+    row = row or {}
+    return bounded(row.get(field), score_bounds(row, field))
+
+
+def bounded_delta_points(after: float | None, before: float | None, bounds: Sequence[float] | None) -> str:
+    if after is None and bounds and before is not None:
+        return bounded(None, [100 * (b - before) for b in bounds], lambda v: score_points(v, signed=True))
+    return delta_points(after, before)
 
 
 def interval_cell(bounds: Sequence[float | None] | None) -> str:
@@ -288,10 +324,8 @@ def gap_percentage(metrics: JsonObject | None, weighted: bool = False) -> str:
     metrics = metrics or {}
     prefix = 'weighted_' if weighted else ''
     value = metrics.get(prefix + 'equivalent_gap_reach')
-    if value is not None:
-        return percentage(value)
     bounds = metrics.get(prefix + 'equivalent_gap_reach_bounds')
-    return ' to '.join(map(percentage, bounds)) + ' (bounds)' if bounds is not None else 'unavailable'
+    return bounded(value, bounds) if value is not None or bounds is not None else 'unavailable'
 
 
 def position_reach_label(scope: JsonObject) -> str:

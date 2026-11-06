@@ -431,6 +431,10 @@ def cohort(
             row['baseline_contribution'] / weight if row['baseline_unresolved_weight'] == 0 else None
         )
         row['repertoire_score'] = row['repertoire_contribution'] / weight if row['unresolved_weight'] == 0 else None
+        row['repertoire_score_bounds'] = [
+            row['repertoire_contribution'] / weight,
+            (row['repertoire_contribution'] + row['unresolved_weight']) / weight,
+        ]
         row['outcomes'] = summarize(row.pop('outcomes_vector') / weight)
         row['example']['conditional_probability'] = row['example']['root_probability'] / total
         parts = row.pop('rating_parts')
@@ -462,6 +466,10 @@ def cohort(
         row['opponent_rating'] = context
     return dict(
         repertoire_score=repertoire,
+        repertoire_score_bounds=[
+            summary['resolved_score'],
+            summary['resolved_score'] + summary['unresolved_probability'],
+        ],
         outcomes=summary,
         entry_baseline=dict(
             raw_score=baseline,

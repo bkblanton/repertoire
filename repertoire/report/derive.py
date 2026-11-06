@@ -26,6 +26,13 @@ def combined_overall(bundles: Iterable[Bundle]) -> JsonObject | None:
         return None if any(v is None for v in values) else sum(cast('Sequence[float]', values)) / 2
 
     score = average([r['overall'].get('raw_empirical_score') for r in (white, black)])
+    # The mixture is linear, so its bounds average each color's bounds (a resolved color's are its score twice).
+    color_bounds = [r['overall'].get('conditional_bounds') for r in (white, black)]
+    bounds = (
+        [cast(float, average([b[i] for b in cast('list[list[float]]', color_bounds)])) for i in (0, 1)]
+        if score is None and all(color_bounds)
+        else None
+    )
     baseline = average([r.get('starting_position_reference', {}).get('owner_score') for r in (white, black)])
     outcomes = [r['overall'].get('outcomes') for r in (white, black)]
     combined_outcomes = (
@@ -42,6 +49,7 @@ def combined_overall(bundles: Iterable[Bundle]) -> JsonObject | None:
     return {
         'weights': {'white': 0.5, 'black': 0.5},
         'repertoire_score': score,
+        'repertoire_score_bounds': bounds,
         'starting_baseline': baseline,
         'difference_pp': None if score is None or baseline is None else 100 * (score - baseline),
         'elo_equivalent': elo_equivalent(score, baseline),

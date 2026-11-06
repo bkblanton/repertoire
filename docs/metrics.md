@@ -98,7 +98,7 @@ Change the prior with `score run --prior W D L`. Reports also show the score und
 
 ### Missing and sparse evidence
 
-- **Unresolved evidence.** A position with no games, or with no usable reply table, is unresolved. Reports give bounds, from the resolved contribution alone to the resolved contribution plus all unresolved probability. These are bounds given the rest of the model, not confidence intervals.
+- **Unresolved evidence.** A position with no games, or with no usable reply table, is unresolved. Reports give bounds, from the resolved contribution alone to the resolved contribution plus all unresolved probability; any score, delta or Elo equivalent with an unresolved part is shown this way, marked "(bounds)". These are bounds given the rest of the model, not confidence intervals.
 - **Sparse evidence.** A position with fewer than 30 games (set with `--sparse-threshold`) is flagged sparse. Sparse positions still count in the score, and a sensitivity range shows how far the score could move if each sparse outcome scored anywhere from 0 to 1.
 
 ## Metric reference
@@ -169,7 +169,7 @@ A **gap** is the first position a game reaches where you have no prepared move.
 
 ### Score spread and outcome volatility
 
-**Score spread** measures how much the scores of the continuations from a position differ. It is computed backward, `B(s) = sum(p * (B(child) + (score(child) - score(s)) ** 2))`, and shown as `100 * sqrt(B(s))` in percentage points. Known end scores have no spread, and your forced moves inherit the spread after them. **Reply** spread, shown beneath, covers only the opponent's next reply. **Prep ends** marks where the model stops, not a game result.
+**Score spread** measures how much the scores of the continuations from a position differ. It is computed backward, `B(s) = sum(p * (B(child) + (score(child) - score(s)) ** 2))`, and shown as `100 * sqrt(B(s))` in percentage points. Known end scores have no spread, and your forced moves inherit the spread after them. **Reply** spread, shown beneath, covers only the opponent's next reply. **Prep ends** marks where the model stops, not a game result. When some games stop at unresolved evidence, the spread is shown as bounds: from every unresolved game stopping at the resolved mean score, to each one stopping at a win or a loss, split to spread the scores as much as possible.
 
 **Outcome volatility** also includes the spread of results within each end position: `400 * (W + D/4 - (W + D/2) ** 2)` on a 0% to 100% scale, using the expected win and draw rates. It is 100% for equal wins and losses, 10% for 5% wins, 90% draws and 5% losses, and zero for a certain result. Because most database games are decisive, it sits near 90% to 95% in every chapter, so it appears only in detailed breakdowns. It is stored as `outcomes.sharpness` in the JSON.
 

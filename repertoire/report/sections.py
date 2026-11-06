@@ -22,6 +22,8 @@ from .derive import (
 )
 from .format import (
     _display,
+    bounded,
+    bounded_score,
     centipawn_equivalent,
     count,
     elo_equivalent,
@@ -43,6 +45,7 @@ from .format import (
     rating_cell,
     rating_difference,
     reach_cell,
+    score_bounds,
     score_points,
     spread_display,
 )
@@ -94,19 +97,25 @@ def overview(bundles: Sequence[Bundle], headline_only: bool = False) -> list[str
     def elo_text(value: float | None) -> str:
         return 'unavailable' if value is None else number(value, elo_digits, signed=True)
 
+    def elo_cell(score: float | None, base: float | None, bounds: list[float] | None) -> str:
+        values = [elo_equivalent(v, base) for v in bounds or []]
+        if score is None and values and all(v is not None for v in values):
+            return bounded(None, cast('list[float]', values), elo_text)
+        return elo_text(elo_equivalent(score, base))
+
     rows: list[list[Cell]] = []
     for b in bundles:
         r = b['report']
         o = r['overall']
         base = r.get('starting_position_reference', {}).get('owner_score')
-        score = o.get('raw_empirical_score')
+        score, bounds = o.get('raw_empirical_score'), score_bounds(o)
         rows.append(
             [
                 r['color'].title(),
                 percentage(base),
-                percentage(score),
-                headline_delta(score, base),
-                elo_text(elo_equivalent(score, base)),
+                bounded(score, bounds),
+                headline_delta(score, base, bounds),
+                elo_cell(score, base, bounds),
                 number(o.get('prepared_depth', {}).get('expected_moves'), 1),
                 spread_display(o.get('branch_score_spread'), False),
                 len(r['chapters']),
@@ -114,13 +123,16 @@ def overview(bundles: Sequence[Bundle], headline_only: bool = False) -> list[str
         )
     combined = combined_overall(bundles)
     if combined and 'unavailable' not in combined:
+        score, base, bounds = (
+            combined[field] for field in ('repertoire_score', 'starting_baseline', 'repertoire_score_bounds')
+        )
         rows.append(
             [
                 '**Combined**',
-                percentage(combined['starting_baseline']),
-                percentage(combined['repertoire_score']),
-                headline_delta(combined['repertoire_score'], combined['starting_baseline']),
-                elo_text(combined['elo_equivalent']),
+                percentage(base),
+                bounded(score, bounds),
+                headline_delta(score, base, bounds),
+                elo_cell(score, base, bounds),
                 number(combined['expected_prepared_depth'], 1),
                 spread_display(combined.get('branch_score_spread'), False),
                 combined['chapters'],
@@ -268,10 +280,10 @@ def branch_spread_section(scope: JsonObject | None, level: str = '###', anchor: 
         '',
         *table(
             ['Measure', 'Value'],
-            [
+            [['Total branch spread', spread_display(spread, False)]]
+            + [
                 [name, percentage(spread.get(field))]
                 for name, field in (
-                    ('Total branch spread', 'standard_deviation'),
                     ('Between stopping positions', 'between_position_deviation'),
                     ('Between arrival cohorts at the same position', 'within_position_deviation'),
                 )
@@ -1192,7 +1204,10 @@ def alternatives_section(
                     percentage(alternative['reach']) if i == 0 else '',
                     move,
                     option_chapters(option, refs),
-                    percentage(option['score']),
+                    bounded(
+                        option['score'],
+                        [option['resolved_contribution'], option['resolved_contribution'] + option['unresolved_mass']],
+                    ),
                     ''
                     if option is played
                     else score_points(None if difference is None else 100 * difference, signed=True),
@@ -1513,7 +1528,7 @@ def common_positions_for_scope(
                         position_label(r, color, refs),
                         refs.sources(r),
                         reach_cell(r['reach']),
-                        percentage(r.get('repertoire_score')),
+                        bounded_score(r, 'repertoire_score'),
                         spread_display(r.get('branch_score_spread')),
                         position_games(r),
                         opponent_rating(r.get('opponent_rating')),
@@ -1665,7 +1680,7 @@ def position_tree(scope: JsonObject | None, refs: Chapters, limit: int = 12) -> 
         opening = refs.opening_source(row)
         text.append(
             '  ' * depth + f"- **[{moves}]({analysis_url(row['position'], ' '.join(node['tokens']), refs.color)})**: "
-            f"{percentage(row['reach'])} of games, score {percentage(row.get('repertoire_score'))}"
+            f"{percentage(row['reach'])} of games, score {bounded_score(row, 'repertoire_score')}"
             + ('' if opening == 'unavailable' else f' · {opening}')
         )
         for child in sorted(node['children'], key=lambda n: order[id(n)]):

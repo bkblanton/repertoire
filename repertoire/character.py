@@ -330,6 +330,7 @@ def position_reach_rows(
             kind=kind,
             is_starting_position=k == STARTING_POSITION,
             repertoire_score=float(value[0]) if value[1] == 0 else None,
+            repertoire_score_bounds=[float(value[0]), float(value[0] + value[1])],
             outcomes=summarize_outcomes(mixture(wdl_values, group)),
             database_score=score(sample, evaluator.color) if sample is not None else None,
             games=sum(sample) if sample is not None else None,

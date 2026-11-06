@@ -391,8 +391,10 @@ def add_recursive_spreads(
         'variance; standard deviations are never averaged. '
         'Immediate reply spread uses only the current opponent response distribution and recursive child scores. '
         'It is unavailable at own turns, stopping boundaries, or incomplete named reply tables. '
-        'Sparse evidence remains included; unresolved evidence remains '
-        'unavailable. Outcome volatility is the existing WDL variance.',
+        'Sparse evidence remains included. Unresolved stopping evidence leaves the spread unavailable, with '
+        'standard_deviation_bounds from the resolved moments (probability, sum p*score, sum p*score**2): unresolved '
+        'games all at the resolved mean, or split between wins and losses to maximize it. '
+        'Outcome volatility is the existing WDL variance.',
         spreads_refreshed_at=datetime.now(UTC).isoformat(),
     )
     value['validation'].update(recursive_spread_equals_stopping_ledger=True, outcome_variance_decomposition=True)

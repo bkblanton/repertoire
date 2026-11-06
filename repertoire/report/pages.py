@@ -8,6 +8,7 @@ from .bundle import Bundle, scope_by_id
 from .definitions import methods
 from .derive import combined_overall, non_sparse_rows, own_priorities, unanswered_position, visible_positions
 from .format import (
+    bounded_score,
     count,
     delta_points,
     encounters,
@@ -21,6 +22,7 @@ from .format import (
     percentage,
     rating_difference,
     reach_cell,
+    score_bounds,
     spread_display,
 )
 from .links import Chapters, bundle_refs, linked_line
@@ -119,7 +121,7 @@ def opening_details_page(bundle: Bundle, refs: Chapters, warnings: Sequence[str]
                     percentage(entry['conditional_weight']),
                     percentage(entry['entry_probability']),
                     percentage(entry['baseline_score']),
-                    percentage(entry['repertoire_score']),
+                    bounded_score(entry, 'repertoire_score'),
                     spread_display(entry.get('branch_score_spread')),
                     games,
                     opponent_rating(entry.get('opponent_rating')),
@@ -255,8 +257,8 @@ def chapter_page(
             [
                 percentage(reach) + (f'<br>{encounters(reach, color.title())}' if reach else ''),
                 percentage(base.get('raw_score')),
-                percentage(s.get('raw_empirical_score')),
-                headline_delta(s.get('raw_empirical_score'), base.get('raw_score')),
+                bounded_score(s),
+                headline_delta(s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s)),
                 number(depth, 1),
                 spread_display(s.get('branch_score_spread'), False),
                 gap_percentage(chapter.get('gap_coverage')),
@@ -702,9 +704,7 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
         if rare:
             metrics.append(rare)
         metrics.append(['Equivalent gap reach', gap_percentage(char.get('gap_coverage'))])
-        metrics.append(
-            ['Branch score spread', percentage((char.get('branch_score_spread') or {}).get('standard_deviation'))]
-        )
+        metrics.append(['Branch score spread', spread_display(char.get('branch_score_spread'), False)])
         detail_links = [f'[Prepared-depth distribution](#{color}-prepared-depth)']
         if 'reuse' in char:
             detail_links.append(

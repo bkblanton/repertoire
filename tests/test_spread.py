@@ -1,12 +1,14 @@
+import itertools
 import math
 
 import pytest
 from helpers import data, graph, position
 
 from repertoire.preparation import Evaluator, chess_facts, stopping_rows
+from repertoire.report.format import spread_display
 from repertoire.report_insights import branch_score_spread
 from repertoire.sharpness import recursive_wdl, summarize
-from repertoire.spread import assert_outcomes, mixture, recursive_spread, stopping_counts
+from repertoire.spread import assert_outcomes, mixture, recursive_spread, stopping_counts, variance_bounds
 
 
 def test_same_outcome_volatility_can_hide_very_different_reply_spreads():
@@ -90,10 +92,49 @@ def test_zero_data_is_unresolved_and_residual_does_not_claim_complete_reply_spre
     evidence[k] = data(0, 0, 0)
     evaluator = Evaluator(g, True, evidence, chess_facts(g, True, evidence))
     evaluator.evaluate({g.roots[0]: 1.0})
-    assert recursive_spread(evaluator)[k]['variance'] is None
+    unresolved = recursive_spread(evaluator)[k]
+    assert unresolved['variance'] is None
+    # Nothing is known after the move, so its games could stop anywhere: from no spread to an even win/loss split.
+    assert unresolved['standard_deviation_bounds'] == pytest.approx([0, 0.5])
     assert (
         mixture([(0.5, stopping_counts([0, 0, 0], True)), (0.5, stopping_counts([1, 0, 0], True))])['variance'] is None
     )
+
+
+def stop_variance(stops):
+    mean = sum(p * s for p, s in stops)
+    return sum(p * (s - mean) ** 2 for p, s in stops)
+
+
+def test_unresolved_spread_is_bounded_by_where_unresolved_games_could_stop():
+    known = [(0.25, 0.6), (0.25, 0.4)]
+    low, high = variance_bounds(
+        [sum(p for p, _ in known), sum(p * s for p, s in known), sum(p * s * s for p, s in known)]
+    )
+    assert [low, high] == pytest.approx([0.005, 0.13])
+    # The extremes are reached: every unresolved game at the resolved mean, or split between losses and wins.
+    assert stop_variance([*known, (0.5, 0.5)]) == pytest.approx(low)
+    assert stop_variance([*known, (0.25, 1.0), (0.25, 0.0)]) == pytest.approx(high)
+    # Any other placement of the unresolved half stays between them.
+    for values in itertools.product([0.0, 0.3, 0.5, 0.9, 1.0], repeat=2):
+        assert low - 1e-12 <= stop_variance([*known, *((0.25, v) for v in values)]) <= high + 1e-12
+    # A resolved half that always loses is spread most by the unresolved half always winning.
+    assert variance_bounds([0.5, 0.0, 0.0]) == pytest.approx([0.0, 0.25])
+
+
+def test_mixtures_carry_spread_bounds_and_display_them():
+    resolved = mixture([(0.5, stopping_counts([100, 0, 0], True)), (0.5, stopping_counts([0, 0, 100], True))])
+    assert resolved['moments'] == pytest.approx([1.0, 0.5, 0.5]) and 'standard_deviation_bounds' not in resolved
+    partial = mixture([(0.5, stopping_counts([0, 0, 0], True)), (0.5, stopping_counts([1, 0, 0], True))])
+    assert partial['moments'] == pytest.approx([0.5, 0.5, 0.5])
+    assert partial['standard_deviation_bounds'] == pytest.approx([0.0, 0.5])
+    # Bounds mix through further levels, such as chapter entries and the two colors.
+    outer = mixture([(0.5, partial), (0.5, resolved)])
+    assert outer['moments'] == pytest.approx([0.75, 0.5, 0.5])
+    assert spread_display(outer, False) == '{:.1f}% to {:.1f}% (bounds)'.format(
+        *(100 * math.sqrt(v) for v in variance_bounds([0.75, 0.5, 0.5]))
+    )
+    assert spread_display(resolved, False) == '50.0%'
 
 
 @pytest.mark.parametrize('fixed', [0.0, 0.5, 1.0])

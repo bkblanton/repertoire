@@ -828,6 +828,51 @@ def test_combined_score_uses_equal_color_weights_before_elo_conversion():
     result = combined_overall([white, black])
     assert result['repertoire_score'] is None and result['elo_equivalent'] is None
     assert result['centipawn_equivalent'] is None and result['centipawn_delta'] is None
+    assert result['repertoire_score_bounds'] is None  # no saved bounds to combine
+    # A partly unresolved color still bounds the mixture: each bound averages the colors' bounds.
+    white['report']['overall']['conditional_bounds'] = [0.7, 0.7]
+    black['report']['overall']['conditional_bounds'] = [0.49, 0.51]
+    assert combined_overall([white, black])['repertoire_score_bounds'] == pytest.approx([0.595, 0.605])
+
+
+def test_partly_unresolved_scores_show_bounds():
+    from repertoire.report.format import bounded, bounded_delta_points, bounded_score, score_bounds
+
+    assert bounded(0.4, [0.39, 0.41]) == '40.0%'
+    assert bounded(None, [0.39, 0.41]) == '39.0% to 41.0% (bounds)'
+    assert bounded(None, None) == 'unresolved'
+    resolved = dict(raw_empirical_score=0.4, conditional_bounds=[0.4, 0.4])
+    partial = dict(raw_empirical_score=None, conditional_bounds=[0.39, 0.41])
+    assert score_bounds(resolved) is None and score_bounds(partial) == [0.39, 0.41]
+    assert bounded_score(partial) == '39.0% to 41.0% (bounds)'
+    assert bounded_score(dict(repertoire_score=None, repertoire_score_bounds=[0.5, 0.6]), 'repertoire_score') == (
+        '50.0% to 60.0% (bounds)'
+    )
+    # Chapters whose entry weights are unresolved keep their own bounds field.
+    assert score_bounds(dict(status='unresolved_entry_weights', conditional_score_bounds=[0.2, 0.3])) == [0.2, 0.3]
+    # Deltas subtract a resolved baseline from each bound; CP stays with resolved headline deltas.
+    assert headline_delta(None, 0.5, [0.39, 0.41]) == '-11.0% to -9.0% (bounds)'
+    assert headline_delta(None, None, [0.39, 0.41]) == 'unresolved'  # no baseline to subtract
+    assert bounded_delta_points(None, 0.5, [0.39, 0.41]) == '-11.0% to -9.0% (bounds)'
+    assert headline_delta(0.4, 0.5, [0.4, 0.4]) == headline_delta(0.4, 0.5)
+
+
+def test_reports_bound_a_partly_unresolved_repertoire_score(complete):
+    from repertoire.report.sections import overview
+
+    path, _ = complete
+    bundles = generate([path])
+    report = bundles[0]['report']
+    report['overall'].update(raw_empirical_score=None, unresolved_mass=0.02, conditional_bounds=[0.39, 0.41])
+    chapter = report['chapters'][0]['score']
+    low, high = chapter['raw_empirical_score'] - 0.01, chapter['raw_empirical_score'] + 0.01
+    chapter.update(raw_empirical_score=None, conditional_bounds=[low, high])
+    elo = [f'{elo_equivalent(v, 0.5):+.0f}' for v in (0.39, 0.41)]
+    row = f'| White | 50.0% | 39.0% to 41.0% (bounds) | -11.0% to -9.0% (bounds) | {elo[0]} to {elo[1]} (bounds) |'
+    assert row in '\n'.join(overview(bundles))
+    pages = summary_report(bundles)
+    assert row in pages and '| White | 50.0% | unresolved |' not in pages
+    assert f'{100 * low:.1f}% to {100 * high:.1f}% (bounds)' in pages  # the chapter table
 
 
 def test_incompatible_color_scopes_are_not_combined():

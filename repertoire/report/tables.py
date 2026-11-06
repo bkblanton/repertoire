@@ -4,6 +4,9 @@ from collections.abc import Iterable, Mapping
 
 from ..schema import JsonObject
 from .format import (
+    bounded,
+    bounded_delta_points,
+    bounded_score,
     count,
     delta_points,
     engine_mean,
@@ -20,6 +23,7 @@ from .format import (
     position_reach_label,
     rating_difference,
     reach_cell,
+    score_bounds,
     score_points,
     spread_display,
 )
@@ -53,9 +57,9 @@ def chapter_table(
                 title,
                 reach,
                 percentage(base.get('raw_score')),
-                percentage(s.get('raw_empirical_score')),
+                bounded_score(s),
                 *([engine_cell(engine.get(c['id'], {}).get('exits', {}))] if engine is not None else []),
-                score_points(base.get('difference_pp'), signed=True),
+                bounded_delta_points(s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s)),
                 number(s.get('prepared_depth', {}).get('expected_moves'), 1),
                 spread_display(s.get('branch_score_spread'), False),
                 gaps,
@@ -305,8 +309,8 @@ def opening_table(rows: Iterable[JsonObject], refs: Chapters, anchors: Mapping[s
                 escape(row['eco']),
                 percentage(row['reach']),
                 percentage(base),
-                percentage(repertoire),
-                score_points(row['difference_pp'], signed=True),
+                bounded(repertoire, score_bounds(row, 'repertoire_score')),
+                bounded_delta_points(repertoire, base, score_bounds(row, 'repertoire_score')),
                 spread_display(row.get('branch_score_spread'), False),
                 number(row['expected_prepared_moves'], 1),
                 gap_percentage(row['gap_coverage']),
