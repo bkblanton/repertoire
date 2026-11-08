@@ -443,6 +443,7 @@ class Comparison:
             )
         return dict(
             score=float(value[0]) if value[1] == 0 else None,
+            expected_answers=evaluator.answers({start: 1.0}),
             expected_moves=float(value[2]),
             distinct_decisions=result['reuse']['reachable_distinct_decisions'],
             equivalent_gap_reach=result['gap_coverage']['equivalent_gap_reach'],

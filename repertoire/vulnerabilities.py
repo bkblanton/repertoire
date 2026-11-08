@@ -319,7 +319,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
                 repertoire_score=chapter['score'].get('raw_empirical_score'),
                 entry_baseline_score=chapter.get('entry_baseline', {}).get('raw_score'),
                 delta_vs_entry_baseline_pp=chapter.get('entry_baseline', {}).get('difference_pp'),
-                expected_prepared_depth=chapter['score'].get('prepared_depth', {}).get('expected_moves'),
+                expected_prepared_depth=chapter['score'].get('prepared_depth', {}).get('expected_answers'),
                 status=Status.EVALUATED if weights else Status.UNRESOLVED_ENTRY_WEIGHTS,
                 **scope,
             )

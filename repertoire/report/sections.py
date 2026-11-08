@@ -116,7 +116,7 @@ def overview(bundles: Sequence[Bundle], headline_only: bool = False) -> list[str
                 bounded(score, bounds),
                 headline_delta(score, base, bounds),
                 elo_cell(score, base, bounds),
-                number(o.get('prepared_depth', {}).get('expected_moves'), 1),
+                number(o.get('prepared_depth', {}).get('expected_answers'), 1),
                 spread_display(o.get('branch_score_spread'), False),
                 len(r['chapters']),
             ]
@@ -144,7 +144,7 @@ def overview(bundles: Sequence[Bundle], headline_only: bool = False) -> list[str
         'Repertoire score',
         'Delta',
         'Elo equivalent',
-        'Prepared depth (own moves)',
+        'Prepared depth (opponent moves answered)',
         'Score spread',
         'Chapters',
     ]
@@ -167,7 +167,10 @@ def overview_notes(bundles: Sequence[Bundle]) -> str:
             text += 'Combined score unavailable: ' + combined['unavailable'] + '. '
         else:
             text += 'Combined gives White and Black equal weight (50% each). '
-    return text + f'Prepared depth counts your own moves before preparation ends. {about("score", "Definitions")}.'
+    return text + (
+        'Prepared depth counts the opponent moves you answer from preparation before it ends, so both colors are '
+        f'measured the same way. {about("score", "Definitions")}.'
+    )
 
 
 def snapshot_notes(bundles: Sequence[Bundle]) -> list[str]:
@@ -1699,9 +1702,11 @@ def depth_section(scope: JsonObject | None, level: str = '###', anchor: str | No
     overall = cast(JsonObject, scope).get('id', 'overall') == 'overall'
     text += [
         (
-            'How many of your own moves games stay in preparation for. '
+            'How many opponent moves games stay in preparation for: each counts once you answer it with a prepared '
+            'move. '
             if overall
-            else 'How many of your own moves games stay in preparation for, among games entering this chapter. '
+            else 'How many opponent moves games stay in preparation for, among games entering this chapter: each '
+            'counts once you answer it with a prepared move. '
         )
         + '*At least this many* is cumulative; the other columns show where games end at exactly that depth. '
         f'Columns that are zero at every depth are left out. {about("depth-distribution")}.',
@@ -1714,7 +1719,10 @@ def depth_section(scope: JsonObject | None, level: str = '###', anchor: str | No
         else ' to '.join(number(bound, 1) for bound in bounds)
     )
     median = distribution.get('median_moves')
-    text += [f'Average **{mean} own moves**; median **{median if median is not None else "unresolved"}**.', '']
+    text += [
+        f'Average **{mean} opponent moves answered**; median **{median if median is not None else "unresolved"}**.',
+        '',
+    ]
     endings = {r['own_moves']: r for r in distribution['endings']}
     rows: list[list[Cell]] = []
     for r in distribution['survival']:
@@ -1734,7 +1742,7 @@ def depth_section(scope: JsonObject | None, level: str = '###', anchor: str | No
         )
     headers, rows = drop_uniform(
         [
-            'Own moves prepared',
+            'Opponent moves answered',
             'At least this many',
             'Ends at a prepared endpoint',
             'Ends at an unprepared reply',

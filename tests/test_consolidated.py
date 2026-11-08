@@ -797,7 +797,11 @@ def score_bundle(color, score, baseline, depth, chapters, games):
     return {
         'report': {
             'color': color,
-            'overall': {'raw_empirical_score': score, 'prepared_depth': {'expected_moves': depth}},
+            'overall': {
+                'raw_empirical_score': score,
+                # White's first move from the start answers no opponent move.
+                'prepared_depth': {'expected_answers': depth - (color == 'white'), 'expected_moves': depth},
+            },
             'starting_position_reference': {'owner_score': baseline, 'sample_count': games},
             'chapters': [{}] * chapters,
             'manifest': {'filters': {'speeds': 'blitz,rapid,classical'}, 'overall_basis': 'standard starting position'},
@@ -817,7 +821,7 @@ def test_combined_score_uses_equal_color_weights_before_elo_conversion():
     assert result['centipawn_equivalent'] == pytest.approx(centipawn_equivalent(0.6))
     assert result['baseline_centipawn_equivalent'] == pytest.approx(0)
     assert result['centipawn_delta'] == pytest.approx(centipawn_delta(0.6, 0.5))
-    assert result['expected_prepared_depth'] == pytest.approx(6)
+    assert result['expected_prepared_depth'] == pytest.approx(5.5)
     assert result['chapters'] == 23
     averaged_elo = (elo_equivalent(0.7, 0.55) + elo_equivalent(0.5, 0.45)) / 2
     assert result['elo_equivalent'] != pytest.approx(averaged_elo)

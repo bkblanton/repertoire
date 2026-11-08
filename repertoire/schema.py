@@ -37,10 +37,16 @@ class Posterior(TypedDict):
 
 
 class PreparedDepth(TypedDict):
+    """Expected prepared own moves. `expected_answers` (the reported depth) leaves out an own move available at
+    the start, which answers no opponent move; `expected_moves` counts it."""
+
+    expected_answers: float | None
     expected_moves: float | None
     unit: str
     status: NotRequired[Status]
+    answer_bounds: NotRequired[list[float]]
     conditional_bounds: NotRequired[list[float]]
+    first_move_share: NotRequired[float]
 
 
 class ScoreSummary(TypedDict):

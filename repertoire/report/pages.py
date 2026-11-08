@@ -241,7 +241,7 @@ def chapter_page(
             + f"{about('alternatives')}.",
             '',
         ]
-    depth = s.get('prepared_depth', {}).get('expected_moves')
+    depth = s.get('prepared_depth', {}).get('expected_answers')
     reach = s.get('entry_probability')
     text += table(
         [
@@ -249,7 +249,7 @@ def chapter_page(
             'Entry baseline',
             'Repertoire score',
             'Delta',
-            'Prepared depth (own moves)',
+            'Prepared depth (opponent moves answered)',
             'Score spread',
             'Equivalent gap reach',
         ],
@@ -567,13 +567,13 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
         char = scope_by_id(b.get('character')).get('overall', {})
         moves = b.get('vulnerabilities', {}).get('overall', {})
         prep = scope_by_id(b.get('preparation')).get('overall', {}).get('depth_distribution', {})
-        depth = r['overall'].get('prepared_depth', {}).get('expected_moves')
+        depth = r['overall'].get('prepared_depth', {}).get('expected_answers')
         median = prep.get('median_moves')
         chapters = len(r['chapters'])
         text += [
             f'## {color.title()} repertoire',
             '',
-            f"Preparation lasts **{number(depth, 1)} own moves** on average"
+            f"Preparation answers **{number(depth, 1)} opponent moves** on average"
             + (f' (median {median})' if median is not None else '')
             + f" across {chapters} chapter{'' if chapters == 1 else 's'}. "
             f"Equivalent gap reach **{gap_percentage(char.get('gap_coverage'))}** "
@@ -685,9 +685,9 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                 '</details>',
                 '',
             ]
-        metrics = [['Expected prepared depth', number(depth, 1) + ' own moves']]
+        metrics = [['Expected prepared depth', number(depth, 1) + ' opponent moves answered']]
         if median is not None:
-            metrics.append(['Median prepared depth', f'{median} own moves'])
+            metrics.append(['Median prepared depth', f'{median} opponent moves answered'])
         if 'reuse' in char:
             reuse, pred = char['reuse'], char['predictability']
             curve = next((x for x in reuse['curve'] if x['games'] == 100), None)

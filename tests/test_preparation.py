@@ -2,7 +2,7 @@ import chess
 import pytest
 from helpers import data, graph, position, run_fixture, sample
 
-from repertoire.depth import prepared_depth_values, summarize_depth
+from repertoire.depth import prepared_depth_values, root_moves, summarize_depth
 from repertoire.evaluate import KNOWN, UNKNOWN, backward
 from repertoire.graph import resolve, topology
 from repertoire.model import MissingEvidence, empirical, prepare
@@ -16,12 +16,13 @@ def test_continuation_matches_core_scorer_and_depth(tmp_path):
     model = prepare(g, t, order, True, evidence)
     raw = empirical(model, True)
     values = backward(model, order, raw, 30)
-    depth = summarize_depth(prepared_depth_values(model, order, raw), {g.roots[0]: 1})
+    depth = summarize_depth(prepared_depth_values(model, order, raw), {g.roots[0]: 1}, root_moves(model, g.roots))
     evaluator = Evaluator(g, True, evidence, chess_facts(g, True, evidence))
     actual = evaluator.evaluate({g.roots[0]: 1})
     assert actual[0] == pytest.approx(values[g.roots[0]][KNOWN]) == pytest.approx(0.22)
     assert actual[1] == values[g.roots[0]][UNKNOWN]
     assert actual[2] == pytest.approx(depth['expected_moves'])
+    assert evaluator.answers({g.roots[0]: 1}) == pytest.approx(depth['expected_answers']) == actual[2] - 1
     evaluator.reaches({g.roots[0]: 1})
 
 

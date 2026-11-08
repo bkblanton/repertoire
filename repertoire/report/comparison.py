@@ -219,7 +219,7 @@ def preparation_table(data: JsonObject) -> list[str]:
     return table(
         ['Measure', 'Your repertoire', 'Improving only', 'All alternatives'],
         [
-            ['Expected prepared own moves', *[number(m.get('expected_moves')) for m in metrics]],
+            ['Prepared depth (opponent moves answered)', *[number(m.get('expected_answers')) for m in metrics]],
             ['Own moves to know', *[f"{m['distinct_decisions']:,}" if m else 'unavailable' for m in metrics]],
             ['Equivalent gap reach', *[percentage(m.get('equivalent_gap_reach')) for m in metrics]],
             ['Largest single gap', *[percentage(m.get('largest_gap_reach')) for m in metrics]],
@@ -331,7 +331,7 @@ def decision_section(d: JsonObject, data: JsonObject, page: str | Path) -> list[
                     for o in options
                 ],
             ],
-            ['Expected prepared own moves', *metric('expected_moves', number)],
+            ['Prepared depth (opponent moves answered)', *metric('expected_answers', number)],
             ['Own moves to know', *metric('distinct_decisions', lambda v: 'unavailable' if v is None else f'{v:,}')],
             ['Equivalent gap reach', *metric('equivalent_gap_reach', percentage)],
             ['Largest single gap', *metric('largest_gap_reach', percentage)],

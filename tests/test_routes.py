@@ -36,6 +36,25 @@ def test_survival_and_stopping_depths_reproduce_expected_depth(tmp_path):
     ) == pytest.approx(1)
 
 
+def test_answered_depth_leaves_out_only_a_move_at_the_root(tmp_path):
+    g, evidence = sample(tmp_path)
+    e = evaluator(g, evidence)
+    # 1. e4 answers no opponent move: the same games, one move less than test_survival_... counts.
+    result = depth_distribution(e, {g.roots[0]: 1.0}, answered=True)
+    assert result['unit'] == 'opponent_moves_answered'
+    assert [r['probability'] for r in result['survival']] == pytest.approx([1, 1, 0.8])
+    assert result['expected_moves'] == pytest.approx(1.8) == e.answers({g.roots[0]: 1.0})
+    endings = {r['own_moves']: r for r in result['endings']}
+    assert endings[1]['unprepared_reply'] == pytest.approx(0.2)
+    # Entered on your move after 1...e5, 2. Nf3 answers that move and still counts.
+    later = {position('e4 e5'): 1.0}
+    assert (
+        e.answers(later)
+        == pytest.approx(e.evaluate(later)[2])
+        == pytest.approx(depth_distribution(e, later, answered=True)['expected_moves'])
+    )
+
+
 def test_depth_is_known_even_when_leaf_score_has_no_observations(tmp_path):
     g, evidence = sample(tmp_path)
     evidence[position('e4 e5 Nf3 Nc6 Bb5')] = data(0, 0, 0)

@@ -18,7 +18,7 @@ from .attribution import enrich
 from .baseline import chapter_entry_baseline
 from .board_cache import STARTING_POSITION, children, owner_outcome, position_of, san, turn
 from .context import DEFAULT_CACHE
-from .depth import chapter_prepared_depth, prepared_depth_values, summarize_depth
+from .depth import chapter_prepared_depth, prepared_depth_values, root_moves, summarize_depth
 from .evaluate import (
     COMPLETED,
     KNOWN,
@@ -360,6 +360,7 @@ def chapter_result(
         profile['depth'],
         positions,
         summary,
+        root_moves(profile['model'], graph.roots),
         lambda weights: entry_states(profile['model'], profile['order'], profile['raw'], plan.root_weights, weights),
     )
     actual_hits = hitting_bounds(overall['model'], overall['order'], overall['raw'], set(positions))
@@ -451,7 +452,9 @@ def score_repertoire(
             if row['source_id'] in profile['chapters']
         )
     result = summarize(raw_root, overall_posterior)
-    result['prepared_depth'] = summarize_depth(overall['depth'], root_weights)
+    result['prepared_depth'] = summarize_depth(
+        overall['depth'], root_weights, root_moves(overall['model'], graph.roots)
+    )
     return dict(
         overall=result,
         chapters=chapters,
@@ -700,10 +703,10 @@ def analyze(args: argparse.Namespace) -> JsonObject | None:
         },
     }
     report['manifest']['prepared_depth_definition'] = (
-        'Expected remaining own prepared moves before a deviation, theory leaf, or terminal outcome; '
-        'includes an available own move at entry, uses the merged repertoire and empirical opponent probabilities, '
-        'and uses chapter comparison policies and first-entry weights. No '
-        'depth cutoff, discount, or bonus for entry itself. '
+        'Expected own prepared moves played in answer to an opponent move (expected_answers) before a deviation, '
+        'theory leaf, or terminal outcome; an own move at a repertoire root answers nothing and is left out, while '
+        'expected_moves counts it. Both use the merged repertoire, empirical opponent probabilities, chapter '
+        'comparison policies and first-entry weights. No depth cutoff, discount, or bonus for entry itself. '
         'Missing move distributions or first-entry weights remain unresolved with conditional bounds.'
     )
     enrich(report, graph)

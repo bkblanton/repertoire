@@ -16,16 +16,17 @@ if TYPE_CHECKING:
 ENDING_TYPES = ('prepared_endpoint', 'unprepared_reply', 'game_over', 'other_stop', 'unresolved_distribution')
 
 
-def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonObject:
+def depth_distribution(evaluator: 'Evaluator | None', starts: Weights, answered: bool = False) -> JsonObject:
     """Propagate board AND elapsed own-move count, retaining transposed histories.
 
-    Missing leaf scores do not obscure depth. Missing reply distributions leave
+    With `answered`, an own move at a repertoire root is not counted, so depth is in opponent moves answered
+    (see depth.py). Missing leaf scores do not obscure depth. Missing reply distributions leave
     a finite interval between moves already played and the longest continuation.
     """
     if not starts:
         return dict(
             status=Status.UNRESOLVED_ENTRY_WEIGHTS,
-            unit='own_moves',
+            unit='opponent_moves_answered' if answered else 'own_moves',
             endings=[],
             survival=[],
             expected_moves=None,
@@ -39,11 +40,18 @@ def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonOb
         raise ValueError('Depth distribution requires normalized nonnegative starting weights')
     evaluator = cast('Evaluator', evaluator)
     value = evaluator.evaluate(starts)
+    first = evaluator.first_moves(starts) if answered else 0.0
     starts = evaluator.entry_nodes(starts)
     mass: dict[Position, defaultdict[int, float]] = {k: defaultdict(float) for k in evaluator.values}
+
+    def reward(k: Position) -> int:
+        node, fact = evaluator.graph.nodes[position_of(k)], evaluator.facts[position_of(k)]
+        return int(bool(node.edges) and fact['turn'] == evaluator.color and fact['outcome'] is None)
+
     for k, weight in starts.items():
         if weight:
-            mass[k][0] += weight
+            # An own move at a root answers nothing, so the count reaches zero after it.
+            mass[k][-1 if answered and evaluator.root_move(k) else 0] += weight
     endings: defaultdict[int, dict[str, float]] = defaultdict(lambda: dict.fromkeys(ENDING_TYPES, 0.0))
     unknown: list[tuple[int, int, float]] = []
     lengths: dict[Position, int] = {}
@@ -69,11 +77,10 @@ def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonOb
         return result
 
     for k in reversed(evaluator.values):
-        node, fact = evaluator.graph.nodes[position_of(k)], evaluator.facts[position_of(k)]
-        reward = int(bool(node.edges) and fact['turn'] == evaluator.color and fact['outcome'] is None)
+        played = reward(k)
         for depth, arrival in mass[k].items():
             for _, probability, target in evaluator.edges[k]:
-                mass[target][depth + reward] += arrival * probability
+                mass[target][depth + played] += arrival * probability
             for _, probability, kind, _, fixed in evaluator.stops[k]:
                 probability *= arrival
                 if not probability:
@@ -90,7 +97,7 @@ def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonOb
                     else 'other_stop'
                 )
                 # A repetition can end the game on your own move, which counts as played.
-                endings[depth + reward][ending] += probability
+                endings[depth + played][ending] += probability
                 if ending == 'unresolved_distribution':
                     unknown.append((depth, depth + remaining(k), probability))
 
@@ -107,7 +114,7 @@ def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonOb
         survival.append(dict(own_moves=depth, probability=low if low == high else None, bounds=[low, high]))
     low = sum(row['bounds'][0] for row in survival[1:])
     high = sum(row['bounds'][1] for row in survival[1:])
-    if not math.isclose(low, float(value[2]), abs_tol=1e-10):
+    if not math.isclose(low + first, float(value[2]), abs_tol=1e-10):
         raise AssertionError('Survival curve does not reproduce expected prepared depth')
 
     def median(upper: bool) -> int | None:
@@ -124,7 +131,7 @@ def depth_distribution(evaluator: 'Evaluator | None', starts: Weights) -> JsonOb
     median_bounds = [median(False), median(True)]
     return dict(
         status=Status.RESOLVED if low == high else Status.UNRESOLVED_MOVE_DISTRIBUTION,
-        unit='own_moves',
+        unit='opponent_moves_answered' if answered else 'own_moves',
         expected_moves=low if low == high else None,
         expected_bounds=[low, high],
         median_moves=median_bounds[0] if median_bounds[0] == median_bounds[1] else None,

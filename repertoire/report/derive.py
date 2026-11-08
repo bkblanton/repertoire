@@ -57,7 +57,7 @@ def combined_overall(bundles: Iterable[Bundle]) -> JsonObject | None:
         'baseline_centipawn_equivalent': centipawn_equivalent(baseline),
         'centipawn_delta': centipawn_delta(score, baseline),
         'expected_prepared_depth': average(
-            [r['overall'].get('prepared_depth', {}).get('expected_moves') for r in (white, black)]
+            [r['overall'].get('prepared_depth', {}).get('expected_answers') for r in (white, black)]
         ),
         'outcomes': combined_outcomes,
         'branch_score_spread': combined_spread,

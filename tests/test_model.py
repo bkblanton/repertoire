@@ -128,15 +128,15 @@ def test_transposition_incoming_mass_and_first_entry(tmp_path):
     assert chapter['first_entry_weights'][leaf] == 0
     assert chapter['raw_empirical_score'] == pytest.approx(0.4)
     depths = prepared_depth_values(m, o, r)
-    assert summarize_depth(depths, {root: 1})['expected_moves'] == pytest.approx(3)
-    assert chapter_prepared_depth(depths, [position('Nf3'), position('g3'), leaf], chapter)[
+    assert summarize_depth(depths, {root: 1}, set())['expected_moves'] == pytest.approx(3)
+    assert chapter_prepared_depth(depths, [position('Nf3'), position('g3'), leaf], chapter, set())[
         'expected_moves'
     ] == pytest.approx(2)
     with (tmp_path / 'fixture.pgn').open('a') as stream:
         stream.write('\n\n1. Nf3 d5 2. g3 Nf6 3. Bg2 *')
     duplicate = parse(tmp_path / 'fixture.pgn')
     dm, do, dr, *_ = setup(duplicate, True, evidence, policy)
-    assert summarize_depth(prepared_depth_values(dm, do, dr), {root: 1})['expected_moves'] == pytest.approx(3)
+    assert summarize_depth(prepared_depth_values(dm, do, dr), {root: 1}, set())['expected_moves'] == pytest.approx(3)
 
 
 def test_conflict_cycle_color_and_reproducibility(tmp_path):

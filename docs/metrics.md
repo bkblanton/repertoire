@@ -139,9 +139,11 @@ Each move that was not played then gets a table of its lines. Its games are foll
 
 ### Prepared depth
 
-**Expected prepared depth** is the expected number of your own prepared moves still to come before preparation ends. Each of your moves counts one; opponent moves count nothing themselves but weight what follows by how often they are played. An available move at the start counts; earlier moves and the entry itself do not. There is no cutoff or discount. Chapter depth starts from the chapter's entries and follows the whole repertoire from there.
+**Expected prepared depth** is the expected number of opponent moves you answer from preparation before it ends. Each prepared move you play in answer to an opponent move counts one; opponent moves count nothing themselves but weight what follows by how often they are played. There is no cutoff or discount. Chapter depth starts from the chapter's entries and follows the whole repertoire from there. A chapter entered on your move counts that move, since it answers the opponent move before the entry.
 
-Depth is computed backward: a position where you move has depth `1 + depth after your move`, an opponent position has `sum(reply probability * depth after reply)`, and an unprepared reply or end of a line has depth zero. Positions reached by several move orders are counted once. Missing results do not affect depth; a missing reply table gives lower and upper bounds.
+White's first move from the starting position (or an own move at a custom-FEN root) answers nothing and is left out. Counting it would give White a free move Black can never have: in one repertoire White averaged 5.6 own moves and Black 4.6, yet games survived each opponent move equally often with both colors.
+
+Depth is computed backward: a position where you move has depth `1 + depth after your move` (less the first move at a root), an opponent position has `sum(reply probability * depth after reply)`, and an unprepared reply or end of a line has depth zero. Positions reached by several move orders are counted once. Missing results do not affect depth; a missing reply table gives lower and upper bounds.
 
 The **prepared-depth distribution** in the full report shows the probability of playing at least each number of prepared moves, and where games end at each depth: at a prepared endpoint, an unprepared reply or another stop. Paths that transpose into the same position keep their own move counts. The "at least" probabilities from depth 1 sum to the expected depth. The summary shows the median.
 

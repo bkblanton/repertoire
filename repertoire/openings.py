@@ -353,7 +353,8 @@ def cohort(
             fixed = evaluator.facts[k]['outcome']
             base = fixed if fixed is not None else score(sample, evaluator.color)
             continuation = wdl[entry['node']]
-            depth += weight * evaluator.values[entry['node']][2]
+            # Prepared depth in opponent moves answered (see depth.py).
+            depth += weight * (evaluator.values[entry['node']][2] - evaluator.root_move(entry['node']))
             regular_starts[entry['node']] = regular_starts.get(entry['node'], 0.0) + weight
             regular_mass += weight
         outcomes += weight * continuation

@@ -174,6 +174,20 @@ class Evaluator:
                 self.compile(k)
         return sum((w * self.values[k] for k, w in starts.items() if w), np.zeros(5))
 
+    def first_moves(self, starts: Weights) -> float:
+        """Share of `starts` at a root with a prepared own move, which depth counts but answers no opponent move."""
+        starts = self.entry_nodes(starts)
+        self.evaluate(starts)
+        return sum(w for k, w in starts.items() if w and self.root_move(k))
+
+    def root_move(self, k: Position) -> bool:
+        """Whether node `k` plays a prepared own move with no opponent move before it (see depth.py)."""
+        return self.model[k].mode == 'own' and position_of(k) in self.graph.roots
+
+    def answers(self, starts: Weights) -> float:
+        """Expected prepared depth in opponent moves answered; see depth.py. Bounds need depth_distribution."""
+        return float(self.evaluate(starts)[2]) - self.first_moves(starts)
+
     def reaches(self, starts: Weights, stop_at: Collection[Position] = ()) -> dict[Position, float]:
         """Incoming probability at each compiled node; see evaluate.reaches."""
         self.evaluate(starts)
@@ -357,10 +371,10 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
             raise AssertionError('Preparation analysis did not reproduce the saved scope score')
         scope['stops'] = stopping_rows(evaluator, scope['starts'], scope['baseline'], lines)
         scope['score'] = float(value[0]) if value[1] == 0 else None
-        scope['prepared_depth'] = float(value[2]) if value[1] == 0 else None
+        scope['prepared_depth'] = evaluator.answers(scope['starts']) if value[1] == 0 else None
         scope['status'] = Status.RESOLVED if value[1] == 0 else Status.UNRESOLVED_EVIDENCE
-        scope['depth_distribution'] = depth_distribution(evaluator, scope['starts'])
-        bounds = expected.get('prepared_depth', {}).get('conditional_bounds')
+        scope['depth_distribution'] = depth_distribution(evaluator, scope['starts'], answered=True)
+        bounds = expected.get('prepared_depth', {}).get('answer_bounds')
         if bounds is not None and not np.allclose(scope['depth_distribution']['expected_bounds'], bounds, atol=1e-10):
             raise AssertionError('Depth distribution did not reproduce the saved depth bounds')
         if scope['chapter']:
@@ -377,7 +391,8 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
         color=saved['color'],
         scopes=scopes,
         manifest=analysis.companion_manifest(
-            depth_distribution_definition='Remaining own moves from the same scope entry mixture; survival '
+            depth_distribution_definition='Remaining own moves played in answer to an opponent move, from the '
+            'same scope entry mixture; an own move at a repertoire root is not counted. Survival '
             'probabilities and exact stopping depths retain transposed '
             'elapsed-depth histories. Missing reply distributions have finite '
             'structural bounds. Missing leaf scores do not affect depth.',

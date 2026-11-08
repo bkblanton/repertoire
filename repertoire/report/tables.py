@@ -60,7 +60,7 @@ def chapter_table(
                 bounded_score(s),
                 *([engine_cell(engine.get(c['id'], {}).get('exits', {}))] if engine is not None else []),
                 bounded_delta_points(s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s)),
-                number(s.get('prepared_depth', {}).get('expected_moves'), 1),
+                number(s.get('prepared_depth', {}).get('expected_answers'), 1),
                 spread_display(s.get('branch_score_spread'), False),
                 gaps,
                 opponent_rating(c.get('opponent_ratings', {}).get('score_evidence')),
