@@ -791,8 +791,9 @@ def write_outputs(result: JsonObject, data_dir: str | Path, report_dir: str | Pa
     games = comparison.scenarios.candidate_games_for(choice, namespaced=False)
     if games:
         adopt.parent.mkdir(parents=True, exist_ok=True)
-        exporter = chess.pgn.StringExporter(headers=True, variations=True, comments=True)
-        adopt.write_text('\n\n'.join(g.accept(exporter) for g in games) + '\n', encoding='utf-8', newline='\n')
+        # A StringExporter keeps adding to its output, so each game gets its own.
+        exported = [g.accept(chess.pgn.StringExporter(headers=True, variations=True, comments=True)) for g in games]
+        adopt.write_text('\n\n'.join(exported) + '\n', encoding='utf-8', newline='\n')
         # The exported lines must reproduce the improving scenario when placed before your chapters.
         check = parse_games([*read_games(adopt), *comparison.repertoire_games], comparison.scenarios.exclusions)
         scenario = comparison.evaluate(choice)

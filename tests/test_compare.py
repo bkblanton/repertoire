@@ -255,3 +255,12 @@ def test_saved_comparisons_rerun_and_appear_in_the_summary(tmp_path, monkeypatch
     path.write_text(json.dumps(data))
     generate([path], strict=False)
     assert '**Out of date:**' in (tmp_path / 'reports' / 'summary.md').read_text(encoding='utf-8')
+
+
+def test_adopt_pgn_holds_each_adopted_chapter_once(tmp_path, monkeypatch):
+    # With 2.Nf3 scoring above 2.Nc3, both candidate chapters improve the repertoire.
+    monkeypatch.setitem(LEAVES, 'e4 e5 Nf3 Nc6', 70)
+    result, page = run(tmp_path, monkeypatch, '\n\n'.join([SCHLECHTER, KING_KNIGHT]))
+    assert result['validation']['adopt_pgn_reproduces_selection']
+    adopt = read_games(page.with_name(f"{result['name']}.adopt.pgn"))
+    assert [g.headers['ChapterName'] for g in adopt] == ['Schlechter', "King's knight"]
