@@ -83,6 +83,11 @@ def generate(
     aliases = {'report': full_path, 'summary': summary_path, **{name[:-3]: folder / name for name in rendered}}
     # Comparison pages are written by `repertoire compare` beside the report.
     aliases.update({f'comparisons/{p.stem}': p for p in sorted((folder / 'comparisons').glob('*.md'))})
+    # The coverage stage writes the trimmed PGN beside the score's own report folder.
+    for b in bundles:
+        if 'coverage' in b:
+            trimmed = b['coverage']['at_goal']['pgn']['path']
+            aliases[trimmed] = report_directory(b['path']) / trimmed
     pages[full_path] = pages[full_path].replace('](summary.md)', '](@summary)')
     # Use relative paths even when callers place the outputs in different folders.
     for b in bundles:

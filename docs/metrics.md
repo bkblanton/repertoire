@@ -27,6 +27,7 @@ A few rules hold throughout:
   - [Score spread and outcome volatility](#score-spread-and-outcome-volatility)
   - [Reuse, reply variety and position profiles](#reuse-reply-variety-and-position-profiles)
   - [Effort and value](#effort-and-value)
+  - [Coverage goal](#coverage-goal)
   - [Engine view](#engine-view)
   - [Opening names](#opening-names)
   - [Opponent ratings](#opponent-ratings)
@@ -192,6 +193,22 @@ The full report weighs what your preparation earns against the moves it takes to
 - **Valuable moves you rarely play.** A move reached with probability `p` per game is missing from your last 100 games with probability `(1 - p) ** 100`. Ranking `reach * gain` by that chance favors moves worth a lot that come up about once per hundred games: common moves are practised in play, and very rare ones are worth little.
 
 The summary's preparation table adds one line: how many of your moves come up less than once in 1,000 games, and their share of the edge. Thinly sampled moves are left out of both lists.
+
+### Coverage goal
+
+A coverage goal of **1 in N games** keeps every position where you are to move that games reach at least once in N games, with the moves you play there, and cuts rarer ones. The reply into a cut position becomes an unprepared reply, scored with its row in the parent table like any other, so the trimmed repertoire needs no new tables and is scored exactly like your full repertoire. Set the goal with [`coverage_goal`](usage.md#coverage-goal-and-trimmed-pgn); the default is 1 in 300.
+
+Reach counts only routes through kept positions, deciding the positions nearer the start first. Every kept position therefore comes up at least that often in the trimmed repertoire itself, and nothing kept depends on a line that was cut. A position can be cut although its reach in the full repertoire is just above the goal, when part of its games arrive through positions that were cut: games that leave preparation at a cut position never get there.
+
+The full report's **Coverage goal** section compares goals from 1 in 100 to 1 in 1,000 games, your own goal and every line:
+
+- **Your moves** counts the positions with a prepared move that games reach, kept out of all of them.
+- **Games leaving prep earlier** is the probability of arriving at a cut position.
+- **Change** is the trimmed score minus your full score, with a paired 95% interval, since both use the same tables.
+
+It then lists the positions your goal cuts, where games now leave preparation. A cut's **cost** is the games arriving there times your score there minus the reply's database score. The costs add up exactly to the change, and each dropped move is counted under the first cut on its most common route, so both columns add up to the totals.
+
+The scores assume you remember every kept move and would have remembered every cut one. A line you meet once in a thousand games is easy to forget, so a cut's cost is the most it can cost in practice.
 
 ### Engine view
 

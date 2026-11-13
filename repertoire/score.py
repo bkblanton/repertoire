@@ -153,10 +153,17 @@ class Plan:
 
 
 CONFIG = "configs/{}.json"
+# The coverage goal only trims the PGN written for training (coverage.py); it never changes a score or analysis.
+COVERAGE_KEY = "coverage_goal"
 
 
 def load_config(path: str | Path | None) -> JsonObject:
     return json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
+
+
+def scored_configuration(config: JsonObject) -> JsonObject:
+    """The configuration a score depends on: everything but the coverage goal."""
+    return {k: v for k, v in config.items() if k != COVERAGE_KEY}
 
 
 def config_path(color: str, path: str | None = None) -> str:
@@ -663,7 +670,7 @@ def analyze(args: argparse.Namespace) -> JsonObject | None:
             "created_at": datetime.now(UTC).isoformat(),
             "input_path": str(Path(args.pgn).resolve()),
             "input_sha256": hashlib.sha256(Path(args.pgn).read_bytes()).hexdigest(),
-            "configuration": config,
+            "configuration": scored_configuration(config),
             "filters": explorer.filters,
             "endpoint": "https://explorer.lichess.org/lichess",
             "evidence": explorer.provenance,

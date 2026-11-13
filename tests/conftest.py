@@ -3,6 +3,7 @@ import json
 import pytest
 from helpers import run_fixture
 
+from repertoire import coverage
 from repertoire.character import analyze as character
 from repertoire.engine import analyze as engine
 from repertoire.openings import analyze as openings
@@ -35,4 +36,5 @@ def complete(tmp_path, monkeypatch):
     ]:
         data = analyze(path, cache)
         path.with_suffix(f'.{name}.json').write_text(json.dumps(data))
+    coverage.run(path, cache)
     return path, report

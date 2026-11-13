@@ -153,6 +153,18 @@ $$
 
 where $c$ is the evaluation in centipawns from your side, and mate counts as 1 or 0. The reports compare $E$ with database scores where preparation ends and use its changes to judge single moves. A position without an evaluation stays missing. After an unprepared reply without one, the evaluation of the position before the reply, which assumes the opponent's best reply, is a lower bound, and is reported apart from evaluations.
 
+## Coverage goals
+
+A coverage goal of 1 in N games trims the repertoire to the positions games reach often enough to be worth learning. Positions are decided from the roots forward: a position where you are to move is kept when the probability arriving at it through kept positions is at least $1/N$, and cut otherwise, and no probability flows past a cut. Inside a repetition loop a position is kept or cut as a whole. Roots and finished games are never cut, and positions reached only through a missing reply table are kept.
+
+A cut position leaves the graph, so the opponent's move into it becomes a deviation, scored with its row in the parent table. The trimmed repertoire is then scored by the same model. Writing $f_e$ for the probability on an arrival $e$ into a cut position $c_e$ and $S(e)$ for that arrival's row score,
+
+$$
+V_{\text{full}} - V_{\text{trimmed}} = \sum_{e} f_e \bigl(V(c_e) - S(e)\bigr),
+$$
+
+since every other stopping event keeps its probability and score. The interval on the change is paired: both scores are functions of the same posterior tables. The trimmed PGN is written from the original chapters and read back to check that it gives exactly the trimmed repertoire.
+
 ## Outputs
 
 Each score is saved as JSON containing:

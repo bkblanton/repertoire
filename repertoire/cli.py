@@ -21,6 +21,7 @@ COMMANDS = [
     ('openings', 'openings', 'Opening names, reach and first-entry cohorts'),
     ('insights', 'report_insights', 'Gap priorities, branch-score spread and gain intervals'),
     ('engine', 'engine', 'Engine evaluations where preparation ends and of the moves, from the evaluation store'),
+    ('coverage', 'coverage', 'Score the repertoire at coverage goals and write the trimmed PGN for your goal'),
     ('correlations', 'position_correlations', 'Prepared depth versus continuation gain'),
     ('rating-correlations', 'rating_correlations', 'Opponent rating versus score within parent positions'),
 ]

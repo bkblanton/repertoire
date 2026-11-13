@@ -11,7 +11,7 @@ from ..schema import JsonObject
 from ..sharpness import stopping_wdl
 from ..sharpness import summarize as summarize_outcomes
 
-Family = Literal['vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights', 'engine']
+Family = Literal['vulnerabilities', 'preparation', 'character', 'ratings', 'openings', 'insights', 'engine', 'coverage']
 FAMILIES: tuple[Family, ...] = (
     'vulnerabilities',
     'preparation',
@@ -20,6 +20,7 @@ FAMILIES: tuple[Family, ...] = (
     'openings',
     'insights',
     'engine',
+    'coverage',
 )
 # Companions built from other companions, which must still match the files they were built from.
 SUPPORTED: dict[str, set[str]] = {
@@ -47,6 +48,7 @@ class Bundle(TypedDict):
     openings: NotRequired[JsonObject]
     insights: NotRequired[JsonObject]
     engine: NotRequired[JsonObject]
+    coverage: NotRequired[JsonObject]
 
 
 def load(paths: Iterable[str | Path], strict: bool = True, require_complete: bool = False) -> list[Bundle]:

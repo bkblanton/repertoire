@@ -363,6 +363,7 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
 
     from repertoire import (
         character,
+        coverage,
         engine,
         openings,
         position_correlations,
@@ -382,6 +383,8 @@ def test_entire_cached_pipeline_keeps_two_readable_reports(tmp_path, monkeypatch
     for module in [vulnerabilities, preparation, character, ratings, openings, report_insights, engine]:
         monkeypatch.setattr(sys, 'argv', ['analysis', str(path), '--cache', str(cache)])
         module.main()
+    monkeypatch.setattr(sys, 'argv', ['coverage', str(path), '--cache', str(cache), '--goal', '300'])
+    coverage.main()
     monkeypatch.setattr(sys, 'argv', ['correlations', str(path), '--cache', str(cache)])
     position_correlations.main()
     generate([path], require_complete=True)
@@ -963,6 +966,7 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
             'Vulnerabilities',
             'Strengths',
             'Effort and value',
+            'Coverage goal',
             'Equivalent gap reach',
             'Prepared-depth distribution',
             'Branch score spread',

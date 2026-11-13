@@ -65,12 +65,30 @@ def parse(path: str | Path, exclusions: Collection[str] = ()) -> Graph:
     return parse_games(read_games(path), exclusions)
 
 
+def chapter_ids(games: Iterable[chess.pgn.Game], exclusions: Collection[str] = ()) -> list[str | None]:
+    """Each game's chapter ID: the last part of its ChapterURL, else its number among included chapters, with a
+    suffix for repeats. None for a chapter left out by `exclusions`."""
+    result: list[str | None] = []
+    included: list[str] = []
+    for game in games:
+        cid = game.headers.get("ChapterURL", "").rstrip("/").split("/")[-1] or str(len(included) + 1)
+        if cid in exclusions:
+            result.append(None)
+            continue
+        if cid in included:
+            cid += f"-copy-{len(included) + 1}"
+        included.append(cid)
+        result.append(cid)
+    return result
+
+
 def parse_games(games: Iterable[chess.pgn.Game], exclusions: Collection[str] = ()) -> Graph:
     """The repertoire graph of PGN games, each one a chapter, in priority order."""
     nodes: dict[Position, Node] = {}
     chapters: list[GraphChapter] = []
     roots: list[Position] = []
-    for game in games:
+    games = list(games)
+    for game, cid in zip(games, chapter_ids(games, exclusions)):
         if game.errors:
             raise ValueError(f"Malformed chapter: {game.headers}: {game.errors}")
         if game.headers.get("Variant", "Standard") not in ("Standard", "Chess"):
@@ -78,11 +96,8 @@ def parse_games(games: Iterable[chess.pgn.Game], exclusions: Collection[str] = (
         board = game.board()
         if not board.is_valid():
             raise ValueError(f"Invalid root position: {board.fen()}")
-        cid = game.headers.get("ChapterURL", "").rstrip("/").split("/")[-1] or str(len(chapters) + 1)
-        if cid in exclusions:
+        if cid is None:
             continue
-        if any(c["id"] == cid for c in chapters):
-            cid += f"-copy-{len(chapters) + 1}"
         root = key(board)
         roots.append(root)
         mainline = [root]

@@ -12,6 +12,7 @@ import pytest
 from helpers import cache_row, data, graph, position, setup
 from test_consolidated import check_links
 
+from repertoire import coverage
 from repertoire import score as cli
 from repertoire.board_cache import position_of
 from repertoire.character import analyze as character
@@ -231,6 +232,10 @@ def test_every_stage_and_report_handle_a_repetition_loop(tmp_path, monkeypatch):
     ]:
         result = analyze(path, cache)
         path.with_suffix(f'.{name}.json').write_text(json.dumps(result))
+    # Trimming cuts into the loop at some goals; the trimmed PGN must still reproduce each trimmed repertoire.
+    for goal in (2, 5, 50):
+        coverage.run(path, cache, goal)
+    coverage.run(path, cache)
     moves = json.loads(path.with_suffix('.vulnerabilities.json').read_text())['overall']['all_signed_rows']
     second = [r for r in moves if r.get('node') and r['move'] == 'd8f6']
     assert len(second) == 1 and second[0]['position'] == position('e4 e5 Nc3')

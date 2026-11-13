@@ -11,6 +11,7 @@ Run every command from the repository root. Repertoire reads your Lichess studie
 - [Analyzing other PGN files](#analyzing-other-pgn-files)
 - [Keeping results up to date](#keeping-results-up-to-date)
 - [Configuration](#configuration)
+- [Coverage goal and trimmed PGN](#coverage-goal-and-trimmed-pgn)
 - [Comparing alternative preparation](#comparing-alternative-preparation)
 - [Engine evaluations](#engine-evaluations)
 - [Running single stages](#running-single-stages)
@@ -36,6 +37,7 @@ Everything runs through `uv run repertoire <command>`. Add `--help` to any comma
 | `fetch` | Fetch the Explorer tables both repertoires need, without building. |
 | `compare` | Compare a candidate study or PGN with your repertoire. See [Comparing alternative preparation](#comparing-alternative-preparation). |
 | `evals` | Import Lichess cloud evaluations for your positions from the downloaded export. See [Engine evaluations](#engine-evaluations). |
+| `coverage` | Score the repertoire at coverage goals and write the trimmed PGN. See [Coverage goal and trimmed PGN](#coverage-goal-and-trimmed-pgn). |
 | `report` | Render the Markdown reports from saved results, offline. |
 | `score` | Inspect or score one repertoire PGN. |
 | `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `engine`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. See [Running single stages](#running-single-stages). |
@@ -71,6 +73,7 @@ The reports are:
 | `reports/report.md` | The full report for both colors, with a glossary. |
 | `reports/chapters/` | One page per chapter: `W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, .... |
 | `reports/openings/` | Opening-by-opening evidence for each color. |
+| `reports/trimmed/` | Your repertoire trimmed to your [coverage goal](#coverage-goal-and-trimmed-pgn), as `white-1-in-300.pgn` and `black-1-in-300.pgn`. |
 
 Useful options:
 
@@ -142,7 +145,7 @@ Configuration files are keyed by chapter ID, so a different PGN needs its own co
 | What changed | What to run |
 | --- | --- |
 | Your Lichess studies | `uv run repertoire build --token-file ...` |
-| Your configuration files | `uv run repertoire build --offline`, or with `--token-file` if new tables are needed. |
+| Your configuration files | `uv run repertoire build --offline`, or with `--token-file` if new tables are needed. Changing only `coverage_goal` reruns just the coverage step and the reports. |
 | Display limits, such as rows per table | `uv run repertoire report reports/data/white.json reports/data/black.json --require-complete` |
 | Lichess statistics themselves | Refresh with `score run --refresh` (below), then `uv run repertoire build --offline`. |
 
@@ -167,7 +170,8 @@ Each color has a configuration file, `configs/white.json` and `configs/black.jso
   "entries": {"<chapter-id>": [{"path": ["e4", "e5", "Nc3", "Nf6", "g3", "Nc6"]}]},
   "filters": {"ratings": "0,1000,1200,1400,1600,1800,2000,2200,2500", "speeds": "blitz,rapid,classical", "since": "1952-01", "until": "3000-12"},
   "exclude": [],
-  "root_weights": {}
+  "root_weights": {},
+  "coverage_goal": 300
 }
 ```
 
@@ -201,8 +205,30 @@ In a full repertoire this places each chapter where it starts to differ from the
 
 - `exclude` leaves lines out of the repertoire. An entry is a chapter ID, to drop the whole chapter, or a `chapter-id:canonical-FEN:uci` string, to drop one move and everything after it from that chapter.
 - `root_weights` maps the starting positions of custom-FEN chapters to weights that sum to one, so chapters with no connecting route get absolute reach probabilities.
+- `coverage_goal` is N in "1 in N games", the [coverage goal](#coverage-goal-and-trimmed-pgn) for the trimmed PGN. It defaults to 300 and never changes a score.
 
 A line that returns to an earlier position, such as 2...Qf6 3.Nd5 Qd8 4.Nc3 in the Vienna, needs no exclusion: the game is followed until a position occurs for the third time, which is scored as a draw (see [Repetitions](design.md#repetitions)).
+
+## Coverage goal and trimmed PGN
+
+A deep repertoire has lines that come up so rarely they are not worth memorizing. A **coverage goal** of 1 in N games keeps your moves only where games reach the position at least once in N games, and leaves rarer positions to the database. Set it per color with `coverage_goal` in `configs/white.json` and `configs/black.json`; without one it is 1 in 300 games:
+
+```json
+{"policy": {}, "coverage_goal": 300}
+```
+
+Every build then writes:
+
+- **A trimmed PGN** for each color, `reports/trimmed/white-1-in-300.pgn` and `black-1-in-300.pgn`, ready to import into a trainer such as ChessTempo. It is made from your exported study: the same chapters, headers, comments, arrows and annotations, with the rare lines cut. It holds only the moves you play, so alternatives that lost are left out, and chapters that add nothing to the chapters before them are skipped. A line recorded only below a cut position is placed under a move order that still reaches it, so no kept move is lost. The build checks that the PGN, read back, gives exactly the trimmed repertoire.
+- **A coverage section** in the full report, with a line in the summary: how many moves you keep, how often games leave preparation earlier, and your score at goals from 1 in 100 to 1 in 1,000 games and with every line, then the positions your goal cuts with what each costs. See [Coverage goal](metrics.md#coverage-goal).
+
+Nothing is thrown away. Your studies and `studies/*.pgn` are only read, the trimmed PGN is a separate file, and every other score and report section still uses the full repertoire. The goal is not an input to any score, so changing it reruns only the coverage step and the reports. A trimmed PGN from an earlier goal is removed when the goal changes. If you import into a trainer again after changing the goal, check whether it replaces your existing repertoire or adds to it; moving to a stricter goal may need an empty repertoire there.
+
+To try another goal without changing your configuration, run the stage on the saved scores:
+
+```sh
+uv run repertoire coverage reports/data/white.json --goal 500
+```
 
 ## Comparing alternative preparation
 
@@ -308,6 +334,7 @@ These read saved scores and the cache and refresh the reports when they finish. 
 | `openings` | `<color>.openings.json` | |
 | `insights` | `<color>.insights.json` | Needs preparation, character, vulnerabilities and openings. |
 | `engine` | `<color>.engine.json` | Needs vulnerabilities and preparation; reads the [evaluation store](#engine-evaluations). |
+| `coverage` | `<color>.coverage.json` | Also writes the trimmed PGN in `reports/trimmed/`. `--goal N` overrides `coverage_goal`. |
 | `correlations` | `prepared-depth-gain-correlation.json` | Needs vulnerabilities. |
 | `rating-correlations` | `opponent-rating-score-correlation.json` | Needs ratings and vulnerabilities. Also writes `reports/comparisons/opponent-rating-score.md`. |
 

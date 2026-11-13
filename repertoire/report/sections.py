@@ -754,6 +754,144 @@ def effort_section(
     return text
 
 
+def coverage_goal_label(goal: int | None) -> str:
+    return 'Every line' if goal is None else f'1 in {goal:,} games'
+
+
+def coverage_change(row: JsonObject) -> str:
+    """A level's score change from the full repertoire, with its paired 95% interval."""
+    change = bounded(row['change_pp'], row['change_bounds_pp'], lambda v: score_points(v, signed=True))
+    return change + '<br>95%: ' + interval_cell(row.get('change_interval_pp'))
+
+
+def coverage_sentence(bundle: Bundle) -> str | None:
+    """The summary's line on the coverage goal and the trimmed PGN."""
+    data = bundle.get('coverage')
+    if not data:
+        return None
+    color = bundle['report']['color']
+    goal, path = data['goal'], data['at_goal']['pgn']['path']
+    row = next(r for r in data['levels'] if r['goal'] == goal)
+    full = data['levels'][-1]
+    return (
+        f'At your coverage goal of **1 in {goal:,} games**, you keep {row["decisions"]:,} of '
+        f'{full["decisions"]:,} moves and score {bounded_score(row["score"])} instead of '
+        f'{bounded_score(full["score"])}; {percentage(row["leaving_earlier"])} of games leave preparation earlier. '
+        f'[Coverage goal](#{color}-coverage) · [Trimmed PGN](@{path}).'
+    )
+
+
+def coverage_section(
+    bundle: Bundle, refs: Chapters, top: int, level: str = '###', anchor: str | None = None
+) -> list[str]:
+    """How the repertoire scores when trimmed to each coverage goal, and what your own goal cuts."""
+    data = bundle.get('coverage')
+    if not data:
+        return []
+    goal, details = data['goal'], data['at_goal']
+    pgn = details['pgn']
+    name = pgn['path'].rsplit('/', 1)[-1]
+    levels = data['levels']
+    total = levels[-1]['decisions']
+    text = [
+        *section(f'{level} Coverage goal', anchor),
+        f'Your coverage goal is **1 in {goal:,} games**. The trimmed repertoire keeps your moves at the positions '
+        'games reach at least that often, counting only routes that stay in the trimmed repertoire, and leaves rarer '
+        'positions to the database: the reply into one becomes an unprepared reply. The trimmed PGN, '
+        f'[{name}](@{pgn["path"]}), is ready to import into a trainer such as ChessTempo. Your studies and every '
+        'other section keep the full repertoire. Set the goal with `coverage_goal` in your configuration. '
+        f'{about("coverage")}.',
+        '',
+        *table(
+            ['Coverage goal', 'Your moves', 'Games leaving prep earlier', 'Score', 'Change'],
+            [
+                [
+                    f'**{coverage_goal_label(r["goal"])}** (your goal)'
+                    if r['goal'] == goal
+                    else coverage_goal_label(r['goal']),
+                    f'{r["decisions"]:,}' if r['goal'] is None else f'{r["decisions"]:,} of {total:,}',
+                    percentage(r['leaving_earlier']),
+                    bounded_score(r['score']),
+                    '' if r['goal'] is None else coverage_change(r),
+                ]
+                for r in levels
+            ],
+        ),
+    ]
+    cuts = details['cuts']
+    if cuts:
+        cost = sum(c['cost_bounds_pp'][0] for c in cuts), sum(c['cost_bounds_pp'][1] for c in cuts)
+        exact = all(c['cost_pp'] is not None for c in cuts)
+        dropped = sum(c['decisions_dropped'] for c in cuts)
+        text += [
+            f'**Where preparation now ends at 1 in {goal:,} games**',
+            '',
+            f'{len(cuts):,} positions are cut, dropping {dropped:,} of your moves for '
+            + bounded(cost[0] if exact else None, cost, lambda v: per_thousand(v, signed=True))
+            + ' points per 1,000 games. Each row is a position games now leave preparation at, with how often they '
+            'reach it in the trimmed repertoire. Its moves are those dropped below it, each counted under the first '
+            'cut on its most common route, and its cost is the games arriving there times your score there minus the '
+            "reply's database score, so the rows add up. The costliest cuts come first.",
+            '',
+            *table(
+                ['Line', 'Chapter source', 'Reach', 'Moves dropped', 'Cost per 1,000 games'],
+                [
+                    [
+                        refs.position_cell(c),
+                        refs.sources(c),
+                        reach_cell(c['reach']),
+                        f'{c["decisions_dropped"]:,}',
+                        bounded(c['cost_pp'], c['cost_bounds_pp'], lambda v: per_thousand(v, signed=True)),
+                    ]
+                    for c in cuts[:top]
+                ],
+            ),
+        ]
+    notes = []
+    if pgn['moved']:
+        moved = len(pgn['moved'])
+        notes.append(
+            f'{moved:,} kept line{"s were" if moved != 1 else " was"} recorded only below a cut position; the trimmed '
+            'PGN places them under a move order that still reaches them.'
+        )
+    if pgn['chapters_left_out']:
+        notes.append(
+            'Chapters left out of the trimmed PGN because they add nothing to the chapters before them: '
+            + ', '.join(refs.label(cid) for cid in pgn['chapters_left_out'])
+            + '.'
+        )
+    if details['never_reached']:
+        notes.append(
+            f'{details["never_reached"]:,} recorded moves are never reached with the moves you play, such as '
+            'alternatives that lost and answers to replies with no games; they are left out at every goal.'
+        )
+    if notes:
+        text += [' '.join(notes), '']
+    chapters = [c for c in details['chapters'] if c['decisions']]
+    if chapters:
+        text += [
+            '<details>',
+            f'<summary>Moves kept by chapter at 1 in {goal:,} games</summary>',
+            '',
+            'A move recorded in several chapters counts in each.',
+            '',
+            *table(
+                ['Chapter', 'Moves kept', 'Share kept'],
+                [
+                    [
+                        refs.label(c['id'], True),
+                        f'{c["kept"]:,} of {c["decisions"]:,}',
+                        percentage(c['kept'] / c['decisions']),
+                    ]
+                    for c in chapters
+                ],
+            ),
+            '</details>',
+            '',
+        ]
+    return text
+
+
 def transposing_cell(row: JsonObject, refs: Chapters) -> str:
     """Your move after the reply, linked to the prepared position it reaches, and the chapters holding it."""
     route = refs.move_route(row)

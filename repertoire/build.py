@@ -14,6 +14,7 @@ from typing import Any, cast
 from . import (
     character,
     compare,
+    coverage,
     engine,
     evals,
     fetch,
@@ -224,7 +225,9 @@ def build(
                     Callable[[], JsonObject],
                     lambda args=args: dict(
                         code=analysis_code,
-                        files=file_inputs([args.pgn] + ([args.config] if args.config else [])),
+                        files=file_inputs([args.pgn]),
+                        # The coverage goal is left out, so changing it never rescores.
+                        configuration=scoring.scored_configuration(scoring.load_config(args.config)),
                         color=args.color,
                         cache=cache,
                         prior=args.prior,
@@ -255,6 +258,22 @@ def build(
                     [path.with_suffix(f'.{family}.json')],
                     analyze,
                 )
+        for color, config, path in zip(('white', 'black'), (white_config, black_config), paths):
+            # The goal decides only this step and the trimmed PGN; the score and other analyses ignore it.
+            goal = coverage.goal_from_config(scoring.load_config(config))
+
+            def coverage_inputs(path: Path = path, goal: int = goal) -> JsonObject:
+                return dict(code=analysis_code, files=file_inputs([path]), goal=goal, cache=cache)
+
+            def trim(path: Path = path, goal: int = goal) -> None:
+                coverage.run(path, cache, goal)
+
+            runner.step(
+                f'{color}.coverage',
+                coverage_inputs,
+                [path.with_suffix('.coverage.json'), coverage.pgn_path(path, color, goal)],
+                trim,
+            )
         correlation = directory / 'prepared-depth-gain-correlation.json'
         preparation_inputs = paths + [path.with_suffix('.vulnerabilities.json') for path in paths]
         runner.step(
@@ -279,7 +298,7 @@ def build(
         results += compare_step(runner, entry, directory, folder, cache, offline, comparison_code)
     render_inputs = (
         paths
-        + [path.with_suffix(f'.{family}.json') for path in paths for family in FAMILIES]
+        + [path.with_suffix(f'.{family}.json') for path in paths for family in (*FAMILIES, 'coverage')]
         + [correlation, rating_correlation]
         + results
     )

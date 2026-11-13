@@ -11,7 +11,7 @@ import numpy as np
 
 from .board_cache import children, position_of
 from .graph import Graph, Policy, chapter_alternatives, policy_transitions, topology, unroll
-from .model import REPETITION, Branch, Evidence, Model, Sampled, node_empirical, prepare_node
+from .model import REPETITION, Branch, Evidence, Model, ModelNode, Sampled, node_empirical, prepare_node
 from .schema import ChapterScore, Position, ScoreSummary
 from .schema import Posterior as PosteriorSummary
 from .status import Status
@@ -267,6 +267,60 @@ def reaches(
     if not np.allclose(left, sum(roots.values()), atol=1e-9):
         raise AssertionError("Forward reach does not conserve probability")
     return mass
+
+
+def own_turn(node: ModelNode) -> bool:
+    """Whether you are to move at a node: with a prepared move, or at a theory leaf; finished games are neither."""
+    first = node.branches[0] if node.branches else None
+    return node.mode == "own" or (
+        node.mode == "stop" and first is not None and first.kind == "theory_leaf" and first.fixed_score is None
+    )
+
+
+def coverage(
+    model: Model, order: list[Position], sampled: Sampled, roots: Weights, threshold: float
+) -> tuple[dict[Position, float], set[Position], set[Position]]:
+    """Reach under a coverage goal: games continue only through positions that come up often enough.
+
+    Every node where you are to move, prepared or a theory leaf, is kept when the probability arriving at it through
+    kept nodes is at least `threshold`, and cut otherwise; flow stops at cut nodes. Deciding parents first means
+    every kept node is reached that often in the trimmed repertoire itself, so nothing kept relies on a cut route.
+    Roots and finished games are never cut. Nodes reachable only through a missing reply table have unknown reach
+    and are kept. Inside a repetition loop a position is kept or cut as a whole: kept if any occurrence is.
+
+    Returns the probability arriving at each node, the cut nodes and the nodes of unknown reach.
+    """
+    forced: set[Position] = set()
+    while True:
+        mass = dict.fromkeys(order, 0.0)
+        for k, weight in roots.items():
+            mass[k] += weight
+        cut: set[Position] = set()
+        unknown: set[Position] = set()
+        for k in reversed(order):
+            node = model[k]
+            if (
+                own_turn(node)
+                and k not in roots
+                and k not in unknown
+                and position_of(k) not in forced
+                and mass[k] < threshold
+            ):
+                cut.add(k)
+                continue
+            for b, (p, _) in zip(node.branches, sampled[k]):
+                if b.target is not None:
+                    mass[b.target] += mass[k] * p
+            if k in unknown:
+                unknown.update(b.target for b in node.branches if b.target is not None)
+            if k in unknown or (node.branches[0].kind == "unresolved_distribution" and mass[k] > 0):
+                unknown.update(node.potential_targets)
+        # Only occurrences games arrive at keep a position.
+        kept = {position_of(k) for k in order if k not in cut and mass[k] > 0}
+        mixed = {position_of(k) for k in cut} & kept - forced
+        if not mixed:
+            return mass, cut, unknown
+        forced |= mixed
 
 
 def by_position(values: Mapping[Position, float]) -> dict[Position, float]:

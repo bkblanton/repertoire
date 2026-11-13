@@ -15,6 +15,7 @@ The score describes database results when you play your repertoire's moves. It i
 - **Where your edge comes from:** the delta split move by move into parts that add up, so you can see which decisions earn it.
 - **Engine view:** with the Lichess evaluation export imported, Stockfish's verdict where your preparation ends, on your moves and on common opponent mistakes, beside the database score.
 - **Effort and value:** chapters ranked by edge per move to remember, lines worth little for their length, and valuable moves that come up too rarely to stay fresh.
+- **Coverage goal:** how many moves you keep and what you score if you only learn positions that come up at least once in N games, for goals from 1 in 100 to 1 in 1,000, plus a trimmed PGN at your own goal, ready to import into a trainer such as ChessTempo.
 - **Chapter reach and depth:** how often each chapter is reached, by which move orders, and how many opponent moves you answer from preparation on average.
 - **Alternatives:** where chapters or side variations play different moves in the same position, each choice is scored and the best one is used. The report follows each move that was not played line by line until it meets the played move again, so you can see what a different move order changes.
 - **Candidate comparisons:** whether another study would improve your repertoire, decision by decision.

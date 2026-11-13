@@ -36,6 +36,8 @@ from .sections import (
     common_positions_section,
     comparisons_section,
     correlations_section,
+    coverage_section,
+    coverage_sentence,
     depth_section,
     edge_section,
     effort_section,
@@ -443,6 +445,7 @@ def full_report(
         )
         text += engine_section(b, refs, top, anchor=f'{color}-engine')
         text += effort_section(b, refs, top, anchor=f'{color}-effort')
+        text += coverage_section(b, refs, top, anchor=f'{color}-coverage')
         text += gap_section(characters.get('overall'), refs=refs, top=top)
         text += depth_section(preparation.get('overall'), anchor=f'{color}-prepared-depth')
         text += branch_spread_section(characters.get('overall'))
@@ -586,6 +589,9 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
         engine = engine_sentence(b)
         if engine:
             text += [engine, '']
+        trimmed = coverage_sentence(b)
+        if trimmed:
+            text += [trimmed, '']
         text += exits_section(char, refs, 5)
         text += [f'[More exit points](#{color}-exits) · [All positions and gaps](#{color}-common-positions)', '']
         own_bad = own_priorities(moves.get('rankings', {}).get('own', []))
