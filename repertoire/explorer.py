@@ -20,6 +20,7 @@ from .board_cache import children
 from .schema import JsonObject, Position
 
 ENDPOINT = "https://explorer.lichess.org/lichess"
+USER_AGENT = "repertoire/0.1 (+https://github.com/bkblanton/repertoire)"
 DEFAULT_FILTERS = {
     "variant": "standard",
     "speeds": "blitz,rapid,classical",
@@ -176,6 +177,14 @@ def collect(explorer: 'Explorer', positions: Iterable[Position], label: str) -> 
     return evidence
 
 
+def lichess_headers(token: str | None) -> dict[str, str]:
+    """Headers for every Lichess request: an identifying User-Agent, plus the token when there is one."""
+    headers = {"User-Agent": USER_AGENT}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def add_token_option(parser: ArgumentParser) -> None:
     parser.add_argument(
         '--token-file', help='File containing a Lichess API token; overrides LICHESS_TOKEN for this run'
@@ -249,7 +258,7 @@ class Explorer:
             # A run stopped mid-write leaves a temporary file; the table itself was never cached.
             for leftover in self.cache.glob("*.tmp"):
                 leftover.unlink(missing_ok=True)
-        self.client = httpx.Client(headers={"Authorization": f"Bearer {token}"} if token else {}, timeout=45)
+        self.client = httpx.Client(headers=lichess_headers(token), timeout=45)
         self.provenance: dict[Position, dict[str, str]] = {}
         self.last_request: float = 0
         # Shown with backoff messages, so a long rate-limit wait still says how far the run has got.

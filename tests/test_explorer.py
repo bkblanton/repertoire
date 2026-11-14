@@ -2,8 +2,23 @@ import chess
 import httpx
 import pytest
 
-from repertoire.explorer import DEFAULT_FILTERS, Explorer, Progress, collect, duration, fetch_missing
+from repertoire.explorer import (
+    DEFAULT_FILTERS,
+    USER_AGENT,
+    Explorer,
+    Progress,
+    collect,
+    duration,
+    fetch_missing,
+    lichess_headers,
+)
 from repertoire.graph import key
+
+
+def test_lichess_requests_identify_the_tool():
+    assert USER_AGENT.startswith('repertoire/0.1 ')
+    assert lichess_headers(None) == {'User-Agent': USER_AGENT}
+    assert lichess_headers('secret') == {'User-Agent': USER_AGENT, 'Authorization': 'Bearer secret'}
 
 
 def test_cache_auth_identity_and_offline_reuse(tmp_path, monkeypatch):

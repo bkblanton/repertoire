@@ -37,7 +37,7 @@ from .board_cache import STARTING_POSITION, canonical, children, fen_number, mov
 from .character import scope_metrics
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256
 from .evaluate import COMPLETED, KNOWN, UNKNOWN, Route, Weights, backward, by_position, reaches, select_alternatives
-from .explorer import CacheMiss, Explorer, add_token_option, apply_token_file, counts, survey
+from .explorer import CacheMiss, Explorer, add_token_option, apply_token_file, counts, lichess_headers, survey
 from .graph import Graph, Transitions, parse_games, read_games, resolve, topology
 from .layout import data_json, report_directory
 from .model import Evidence, MissingEvidence, Model, Sampled, empirical, prepare, score
@@ -166,7 +166,7 @@ def load_inputs(
     if downloads and export:
         token = os.environ.get('LICHESS_TOKEN', '').strip()
         owned = client is None
-        client = client or httpx.Client(headers={'Authorization': f'Bearer {token}'} if token else {}, timeout=60)
+        client = client or httpx.Client(headers=lichess_headers(token), timeout=60)
         try:
             for i, value in downloads.items():
                 texts[i] = studies.download(client, value, url=studies.chapter_url(value), orientation=True)

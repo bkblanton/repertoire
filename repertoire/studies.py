@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from .explorer import OUTAGE_PATIENCE, Backoff, add_token_option, apply_token_file
+from .explorer import OUTAGE_PATIENCE, Backoff, add_token_option, apply_token_file, lichess_headers
 from .graph import parse
 
 SOURCES = 'studies.json'
@@ -106,7 +106,7 @@ def export(
     paths = default_paths(directory)
     Path(directory).mkdir(parents=True, exist_ok=True)
     owned = client is None
-    client = client or httpx.Client(headers={'Authorization': f'Bearer {token}'}, timeout=60)
+    client = client or httpx.Client(headers=lichess_headers(token), timeout=60)
     try:
         for color, study in studies.items():
             text = download(client, study)
