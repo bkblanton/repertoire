@@ -62,7 +62,7 @@ from .sections import (
     summary_edge_section,
     vulnerabilities_section,
 )
-from .tables import chapter_table, leading_entries, summary_own_priorities
+from .tables import chapter_table, engine_cell, leading_entries, summary_own_priorities
 
 LINKS_NOTE = (
     'Line links open the position on the Lichess analysis board, where you choose your move; '
@@ -245,25 +245,36 @@ def chapter_page(
         ]
     depth = s.get('prepared_depth', {}).get('expected_answers')
     reach = s.get('entry_probability')
+    alternative = bool(chapter.get('policy_overrides'))
+    engine = scope_by_id(bundle.get('engine')) if engine_resolved(bundle) else None
+    reach_text = percentage(reach) + (f'<br>{encounters(reach, color.title())}' if reach else '')
+    if alternative:
+        reach_text += '<br>Overall ' + percentage(s.get('overall_policy_entry_probability', reach))
     text += table(
         [
-            'Chapter reach',
+            'Chapter reach' + ('<br>Overall-policy reach' if alternative else ''),
             'Entry baseline',
             'Repertoire score',
+            *(['Engine where prep ends'] if engine is not None else []),
             'Delta',
             'Prepared depth (opponent moves answered)',
             'Score spread',
-            'Equivalent gap reach',
+            'Equivalent gap reach<br>Weighted contribution',
+            'Opponent rating',
         ],
         [
             [
-                percentage(reach) + (f'<br>{encounters(reach, color.title())}' if reach else ''),
+                reach_text,
                 percentage(base.get('raw_score')),
                 bounded_score(s),
+                *([engine_cell(engine.get(cid, {}).get('exits', {}))] if engine is not None else []),
                 headline_delta(s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s)),
                 number(depth, 1),
                 spread_display(s.get('branch_score_spread'), False),
-                gap_percentage(chapter.get('gap_coverage')),
+                gap_percentage(chapter.get('gap_coverage'))
+                + '<br>Weighted '
+                + gap_percentage(chapter.get('gap_coverage'), weighted=True),
+                opponent_rating(chapter.get('opponent_ratings', {}).get('score_evidence')),
             ]
         ],
     )

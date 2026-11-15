@@ -548,7 +548,23 @@ def test_cp_appears_only_beside_headline_deltas(complete):
         rows = [row for row in page.splitlines() if ' cp)' in row]
         assert len(rows) == 1 and re.search(r'\| [+-][\d.]+% \([+-]\d+ cp\) \|', rows[0])
         lines = page.splitlines()
-        assert lines[lines.index(rows[0]) - 2].startswith('| Chapter reach | Entry baseline | Repertoire score |')
+        header = lines[lines.index(rows[0]) - 2]
+        assert header.startswith('| Chapter reach')
+        assert '| Entry baseline | Repertoire score |' in header
+        assert header.endswith('| Equivalent gap reach<br>Weighted contribution | Opponent rating |')
+
+
+def test_chapter_summary_has_every_chapter_table_column(complete):
+    path, report = complete
+    generate([path])
+    full = (path.parent / 'report.md').read_text(encoding='utf-8')
+    main = next(row for row in full.splitlines() if row.startswith('| Chapter | Chapter reach'))
+    expected = [c.strip() for c in main.strip('|').split('|')][1:]
+    expected = ['Prepared depth (opponent moves answered)' if c == 'Prepared depth' else c for c in expected]
+    for page in chapter_pages(path.parent, report):
+        header = next(row for row in page.splitlines() if row.startswith('| Chapter reach'))
+        columns = [c.strip() for c in header.strip('|').split('|')]
+        assert [c.split('<br>')[0] for c in columns] == [c.split('<br>')[0] for c in expected]
 
 
 def test_all_repertoire_score_tables_show_spread_without_extra_columns(complete):
