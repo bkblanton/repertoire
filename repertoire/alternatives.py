@@ -263,6 +263,23 @@ class Scenarios:
         transitions = alternative_transitions(graph, self.color, policy)
         return graph, transitions, reachable(transitions, [*roots, *graph.roots])
 
+    def line_ends(self) -> set[Position]:
+        """Boards where some candidate line ends. A trimmed scenario can leave one without a move even when the
+        same chapter continues from it along another line, so the superset alone hides it."""
+        ends: set[Position] = set()
+
+        def walk(node: chess.pgn.GameNode, board: chess.Board) -> None:
+            if not node.variations:
+                ends.add(canonical(board))
+            for child in node.variations:
+                board.push(child.move)
+                walk(child, board)
+                board.pop()
+
+        for game in self.games:
+            walk(game, game.board())
+        return ends
+
     @staticmethod
     def _full(cid: str, game: chess.pgn.Game) -> chess.pgn.Game:
         copy = chess.pgn.Game()
@@ -274,15 +291,21 @@ class Scenarios:
 
 
 def required_tables(
-    graph: Graph, transitions: Transitions, positions: Iterable[Position], color: bool
+    graph: Graph,
+    transitions: Transitions,
+    positions: Iterable[Position],
+    color: bool,
+    line_ends: Iterable[Position] = (),
 ) -> list[Position]:
-    """Tables a scenario may need: every opponent turn, and own turns some chapter leaves without a move."""
+    """Tables a scenario may need: every opponent turn, own turns some chapter leaves without a move, and own
+    turns where a candidate line ends (`Scenarios.line_ends`)."""
+    ends = set(line_ends)
     result = []
     for k in positions:
         if terminal_white(k) is not None:
             continue
         node = graph.nodes.get(k)
-        if turn(k) != color or not transitions[k] or node is None:
+        if turn(k) != color or not transitions[k] or node is None or k in ends:
             result.append(k)
         elif any(not node.chapter_moves.get(c) for c in node.chapters):
             result.append(k)

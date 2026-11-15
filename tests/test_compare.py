@@ -203,6 +203,27 @@ def test_decisions_follow_each_chapter_against_the_repertoire(tmp_path):
     assert Choice({added.id: 1}).active(decisions) == decisions
 
 
+def test_a_side_line_ending_in_a_transposition_counts_its_table(tmp_path, monkeypatch):
+    # The 1...Nc6 side line ends where the main line continues with 3.Nc3. Adopting 2.Nf3 against 1...Nc6
+    # while keeping your 2.Nc3 against 1...e5 trims the main line, so that board needs its own table even
+    # though the chapter has a move there.
+    candidate = (
+        '[ChapterURL "https://lichess.org/study/cand0001/fourknt1"]\n[ChapterName "Four knights"]\n\n'
+        '1. e4 e5 (1... Nc6 2. Nf3 e5) 2. Nf3 Nc6 3. Nc3 *\n'
+    )
+    monkeypatch.setitem(LEAVES, 'e4 e5 Nf3 Nc6 Nc3', 50)
+    monkeypatch.delitem(LEAVES, 'e4 e5 Nf3 Nc6')
+    path, cache = scored(tmp_path, candidate)
+    transposed = position('e4 e5 Nf3 Nc6')
+    rows = [p for p in cache.iterdir() if json.loads(p.read_text())['identity']['query']['fen'] == transposed + ' 0 1']
+    assert len(rows) == 1
+    rows[0].unlink()
+    no_network(monkeypatch)
+    # The count before fetching names it, rather than a scenario failing on it later.
+    with pytest.raises(ValueError, match='1 Explorer table not cached'):
+        compare.run([str(tmp_path / 'candidate.pgn')], color='white', score=path, cache=str(cache), offline=True)
+
+
 def test_study_urls_are_exported_with_orientation_and_chapter_links(tmp_path, monkeypatch):
     monkeypatch.setenv('LICHESS_TOKEN', 'test')
     seen = []

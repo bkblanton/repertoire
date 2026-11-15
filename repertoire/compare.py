@@ -242,7 +242,11 @@ def planned_tables(entry: JsonObject, pgn: str | Path, config: JsonObject) -> li
     target = parse_entry(entry['entry']) if entry.get('entry') else common_entry(candidate, decisions)
     return list(
         dict.fromkeys(
-            [*required_tables(graph, transitions, positions, color), *(d.position for d in decisions), target]
+            [
+                *required_tables(graph, transitions, positions, color, scenarios.line_ends()),
+                *(d.position for d in decisions),
+                target,
+            ]
         )
     )
 
@@ -314,7 +318,7 @@ class Comparison:
     def required(self) -> list[Position]:
         """Every table a scenario or the report can use: replies, unanswered boards, decisions and the entry."""
         graph, transitions, positions = self.scenarios.superset(self.config_policy, self.starts)
-        tables = required_tables(graph, transitions, positions, self.color)
+        tables = required_tables(graph, transitions, positions, self.color, self.scenarios.line_ends())
         extra = [STARTING_POSITION, self.entry, *(d.position for d in self.decisions)]
         return list(dict.fromkeys([*self.analysis.manifest['evidence'], *tables, *extra]))
 
