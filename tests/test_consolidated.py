@@ -864,6 +864,9 @@ def test_partly_unresolved_scores_show_bounds():
     assert bounded(0.4, [0.39, 0.41]) == '40.0%'
     assert bounded(None, [0.39, 0.41]) == '39.0% to 41.0% (bounds)'
     assert bounded(None, None) == 'unresolved'
+    # Bounds that round to the same displayed value collapse into that one value.
+    assert bounded(None, [0.4001, 0.4004]) == '40.0%'
+    assert bounded_delta_points(None, 0.5, [0.4001, 0.4004]) == '-10.0%'
     resolved = dict(raw_empirical_score=0.4, conditional_bounds=[0.4, 0.4])
     partial = dict(raw_empirical_score=None, conditional_bounds=[0.39, 0.41])
     assert score_bounds(resolved) is None and score_bounds(partial) == [0.39, 0.41]

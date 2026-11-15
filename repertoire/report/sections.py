@@ -47,6 +47,7 @@ from .format import (
     reach_cell,
     score_bounds,
     score_points,
+    span,
     spread_display,
 )
 from .links import Chapters, analysis_url, bundle_refs, exit_reply, linked_line
@@ -1854,7 +1855,7 @@ def depth_section(scope: JsonObject | None, level: str = '###', anchor: str | No
     mean = (
         number(distribution['expected_moves'], 1)
         if distribution['expected_moves'] is not None
-        else ' to '.join(number(bound, 1) for bound in bounds)
+        else span(bounds, lambda bound: number(bound, 1))
     )
     median = distribution.get('median_moves')
     text += [
@@ -1865,9 +1866,7 @@ def depth_section(scope: JsonObject | None, level: str = '###', anchor: str | No
     rows: list[list[Cell]] = []
     for r in distribution['survival']:
         stop = endings.get(r['own_moves'], {})
-        probability = (
-            percentage(r['probability']) if r['probability'] is not None else ' to '.join(map(percentage, r['bounds']))
-        )
+        probability = percentage(r['probability']) if r['probability'] is not None else span(r['bounds'])
         rows.append(
             [
                 r['own_moves'],

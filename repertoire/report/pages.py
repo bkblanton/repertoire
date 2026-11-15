@@ -23,6 +23,7 @@ from .format import (
     rating_difference,
     reach_cell,
     score_bounds,
+    span,
     spread_display,
 )
 from .links import Chapters, bundle_refs, linked_line
@@ -476,7 +477,7 @@ def full_report(
                     ' to '.join(map(percentage, interval)) if interval else 'unavailable',
                 ],
                 ['Unresolved probability', percentage(o['unresolved_mass'])],
-                ['Conditional score bounds', ' to '.join(map(percentage, o['conditional_bounds']))],
+                ['Conditional score bounds', span(o['conditional_bounds'])],
                 ['Sparse probability', percentage(o['sparse_mass'])],
                 ['Sparse-evidence range', ' to '.join(map(percentage, o['sparse_sensitivity']))],
             ],

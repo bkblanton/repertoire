@@ -207,7 +207,14 @@ def bounded(
     all unresolved probability."""
     if value is not None or not bounds:
         return render(value)
-    return ' to '.join(render(v) for v in bounds) + ' (bounds)'
+    shown = span(bounds, render)
+    return shown if len({render(v) for v in bounds}) == 1 else shown + ' (bounds)'
+
+
+def span(bounds: Sequence[float | None], render: Callable[[float | None], str] = percentage) -> str:
+    """Bounds as 'low to high', or a single value once both round to the same display."""
+    shown = [render(v) for v in bounds]
+    return shown[0] if len(set(shown)) == 1 else ' to '.join(shown)
 
 
 def score_bounds(row: Mapping | None, field: str = 'raw_empirical_score') -> list[float] | None:
