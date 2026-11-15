@@ -18,13 +18,13 @@ from .format import (
     interval_cell,
     number,
     opponent_rating,
-    per_thousand,
     percentage,
     rating_difference,
     reach_cell,
     score_bounds,
     span,
     spread_display,
+    weighted,
 )
 from .links import Chapters, bundle_refs, linked_line
 from .markdown import Cell, SourceCell, about, drop_uniform, report_navigation, section, table
@@ -489,8 +489,8 @@ def full_report(
         text += section('### Uncertainty priorities and prior sensitivity', f'{color}-uncertainty-prior-sensitivity')
         text += [
             'Where more database games would narrow the score most, and how the score responds to the prior. '
-            'Priority is the reach of a stopping route times the width of its score interval, in points per '
-            '1,000 games; it is a guide to review, not a share of the variance.',
+            'Priority is the reach of a stopping route times the width of its score interval, in percentage '
+            'points of the overall score; it is a guide to review, not a share of the variance.',
             '',
             '<details>',
             '<summary>Show the routes and priors</summary>',
@@ -500,7 +500,7 @@ def full_report(
             [
                 'Stopping route',
                 'Chapter source',
-                'Priority per 1,000 games',
+                'Priority',
                 'Games',
                 'Opponent rating',
                 'Rating Δ vs parent',
@@ -509,7 +509,7 @@ def full_report(
                 [
                     linked_line(' '.join(e['representative_path_san']), e.get('position'), refs.color),
                     refs.sources(e),
-                    per_thousand(100 * e['uncertainty_priority']),
+                    weighted(100 * e['uncertainty_priority']),
                     count(e['sample_count']),
                     opponent_rating(e.get('opponent_rating')),
                     rating_difference(e.get('opponent_rating')),
@@ -664,7 +664,7 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                 '<details>',
                 '<summary>Costly unprepared replies</summary>',
                 '',
-                'Opponent replies you have not prepared, ranked by drag per 1,000 games: how far the score falls '
+                'Opponent replies you have not prepared, ranked by weighted drag: how far the score falls '
                 f'from where it stood before the reply, times how often the reply comes up. {about("drag")}.',
                 '',
                 *table(
@@ -675,7 +675,7 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                         'Score before → after',
                         'Score spread before reply',
                         'Drag',
-                        'Drag per 1,000 games',
+                        'Weighted drag',
                         'Games',
                         'Opponent rating',
                         'Rating Δ vs parent',
@@ -690,7 +690,7 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                             delta_points(x['move_score'], x['reference_score'], drag=True)
                             + '<br>95%: '
                             + interval_cell(x.get('local_drop_interval_pp')),
-                            per_thousand(x['weighted_drag_pp']),
+                            weighted(x['weighted_drag_pp']),
                             count(x['sample_count']),
                             opponent_rating(x.get('opponent_rating')),
                             rating_difference(x.get('opponent_rating')),
@@ -758,7 +758,7 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
         '- **Equivalent gap reach:** the reach of a single gap that would repeat as often as all first gaps '
         f'together. Lower is better. {about("gap-reach", "Definition and chapter weighting")}.',
         '- **Delta, gain and drag:** positive delta and gain are good; positive drag is a shortfall. '
-        '*Per 1,000 games* multiplies a difference by how often it comes up.',
+        '*Weighted* values multiply a difference by how often it comes up, giving its effect on the overall score.',
         '- **1 in N games:** how often a position or move comes up, assuming independent games.',
         '- Rows in other tables overlap and cannot be added. Opponent ratings describe the database games and '
         'never adjust a score. The 95% ranges are approximate model intervals, not proof of a causal gain.',

@@ -18,8 +18,8 @@ from repertoire.report.format import (
     elo_equivalent,
     headline_delta,
     line,
-    per_thousand,
     spread_display,
+    weighted,
 )
 from repertoire.report.generate import generate, page_names
 from repertoire.report.links import Chapters
@@ -639,9 +639,9 @@ def test_reply_vulnerabilities_show_local_drag_weighted_drag_and_signed_cp_delta
     assert f'| 57.5% | 52.5% | {before}<br>{after} | 5.0%<br>95%:' in prepared
     assert f'| 57.5% | 52.5% | {before} | 5.0%<br>95%:' in unprepared  # nothing after an unprepared reply
     assert '| Score spread before reply |' in unprepared and '| Score spread<br>Before / after |' in prepared
-    # 0.1 percentage points per game is one point per 1,000 games.
-    assert per_thousand(0.1) == '1.0' and full.count('| 1.0 |') == 2
-    assert full.count('| Drag | Drag per 1,000 games |') == 2
+    # 0.1 percentage points of the overall score keeps two significant digits.
+    assert weighted(0.1) == '0.10%' and full.count('| 0.10% |') == 2
+    assert full.count('| Drag | Weighted drag |') == 2
     assert ' cp' not in full and centipawn_delta(0.525, 0.575) < 0
     assert check_score_tables(full) == 0
     bundle['vulnerabilities']['overall'] = scope
@@ -808,7 +808,7 @@ def test_position_contributions_include_intermediate_boards_and_cached_unprepare
     assert 'Position reach after chapter entry' in displayed
     assert 'Rows overlap, so do not add them' in displayed
     # Both displayed rows are prepared positions, so the uniform type column is dropped.
-    assert '| Position type |' not in displayed and per_thousand(57.0) == '570' and '| 570 |' in displayed
+    assert '| Position type |' not in displayed and weighted(57.0) == '57.0%' and '| 57.0% |' in displayed
     assert check_score_tables(displayed) == 0
 
 
@@ -1291,3 +1291,22 @@ def test_summary_leads_with_exits_and_own_moves_and_keeps_snapshot_notices_visib
     for text in (summary, full):
         assert not re.search(r'\b[1-9]\d*\.\d{2}%', text)
         assert re.search(r'\b\d+\.\d%', text)
+
+
+def test_weighted_percentages_keep_two_significant_digits_below_one_percent():
+    cases = {
+        57.04: '57.0%',
+        1.0: '1.0%',
+        0.996: '1.0%',
+        0.43: '0.43%',
+        0.0996: '0.10%',
+        0.0317: '0.032%',
+        0.0047: '0.0047%',
+        0.00123: '0.0012%',
+        0.00004: '<0.0001%',
+        0.0: '0.0%',
+        -0.25: '-0.25%',
+    }
+    assert {v: weighted(v) for v in cases} == cases
+    assert weighted(0.00004, signed=True) == '+<0.0001%' and weighted(-0.00004) == '-<0.0001%'
+    assert weighted(0.0317, signed=True) == '+0.032%' and weighted(None) == 'unresolved'

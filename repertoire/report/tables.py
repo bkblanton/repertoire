@@ -18,7 +18,6 @@ from .format import (
     move_reach_label,
     number,
     opponent_rating,
-    per_thousand,
     percentage,
     position_reach_label,
     rating_difference,
@@ -26,6 +25,7 @@ from .format import (
     score_bounds,
     score_points,
     spread_display,
+    weighted,
 )
 from .links import Chapters, linked_line
 from .markdown import Cell, SourceCell, drop_uniform, table
@@ -145,7 +145,7 @@ def reply_table(rows: Iterable[JsonObject], scope: JsonObject, refs: Chapters, p
             'After reply (repertoire)' if prepared else 'After reply (database)',
             spread_header,
             'Drag',
-            'Drag per 1,000 games',
+            'Weighted drag',
             'Games',
             'Opponent rating',
             'Rating Δ vs parent',
@@ -160,7 +160,7 @@ def reply_table(rows: Iterable[JsonObject], scope: JsonObject, refs: Chapters, p
                 percentage(r['move_score']),
                 spread(r),
                 score_points(r['local_drop_pp']) + '<br>95%: ' + interval_cell(r.get('local_drop_interval_pp')),
-                per_thousand(r['weighted_drag_pp']),
+                weighted(r['weighted_drag_pp']),
                 count(r['sample_count']),
                 opponent_rating(r.get('opponent_rating')),
                 rating_difference(r.get('opponent_rating')),
@@ -204,7 +204,7 @@ def position_contribution_table(rows: Iterable[JsonObject], scope: JsonObject, r
             position_reach_label(scope),
             'Score',
             'Score spread',
-            'Contribution per 1,000 games',
+            'Contribution',
             'Games',
             'Opponent rating',
         ],
@@ -216,7 +216,7 @@ def position_contribution_table(rows: Iterable[JsonObject], scope: JsonObject, r
                 reach_cell(r['reach']),
                 percentage(r['score']),
                 spread_display(r.get('branch_score_spread')),
-                per_thousand(r['contribution_pp']),
+                weighted(r['contribution_pp']),
                 position_games(r),
                 opponent_rating(r.get('opponent_rating')),
             ]
@@ -270,7 +270,7 @@ def summary_own_priorities(
             'Repertoire score',
             'Score spread',
             label,
-            label + ' per 1,000 games',
+            'Weighted ' + label.lower(),
             'Opponent rating',
         ],
         [
@@ -291,7 +291,7 @@ def summary_own_priorities(
                 )
                 + '<br>95%: '
                 + interval_cell(r.get('local_gain_interval_pp' if strongest else 'local_drop_interval_pp')),
-                per_thousand(r['branch_reach'] * r[field], signed=strongest),
+                weighted(r['branch_reach'] * r[field], signed=strongest),
                 opponent_rating(r.get('opponent_rating')),
             ]
             for r in rows

@@ -156,7 +156,7 @@ def test_entry_examples_merge_unrecorded_immediate_transpositions(tmp_path):
     assert row['example']['path_san'] == ['e4', 'e5', 'Nc3', 'Nc6', 'g3', 'Bc5', 'Bg2', 'Nf6']
 
 
-def test_own_summary_ranking_weights_reach_filters_sparse_and_shows_points_per_thousand_games():
+def test_own_summary_ranking_weights_reach_filters_sparse_and_shows_weighted_percentages():
     def row(line, reach, gain, **extra):
         return dict(
             line=line,
@@ -179,9 +179,10 @@ def test_own_summary_ranking_weights_reach_filters_sparse_and_shows_points_per_t
     refs = Chapters(dict(color='white', chapters=[]))
     rendered = '\n'.join(summary_own_priorities(ranked, refs, strongest=True))
     assert '| 10.0%<br>1 in 10 games |' in rendered
-    # Reach 10% times a 1-point gain is 0.1 percentage points per game, or one point per 1,000 games.
-    assert '| +10.0%<br>95%: unavailable | +1.0 |' in rendered and ' cp)' not in rendered
-    assert '| Gain | Gain per 1,000 games |' in rendered
+    # Reach 10% times a 1-point gain is 0.1 percentage points of the overall score.
+    assert '| +10.0%<br>95%: unavailable | +0.10% |' in rendered and ' cp)' not in rendered
+    assert '| +0.0030% |' in rendered  # small weighted values keep two significant digits
+    assert '| Gain | Weighted gain |' in rendered
     assert 'sparse' not in rendered
 
 

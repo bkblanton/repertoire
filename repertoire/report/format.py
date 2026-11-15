@@ -59,13 +59,27 @@ def score_points(value: float | None, digits: int | None = None, signed: bool = 
     return 'unresolved' if value is None else number(value, digits, signed) + '%'
 
 
-def per_thousand(value_pp: float | None, signed: bool = False) -> str:
-    """Reach-weighted percentage points as score points per 1,000 games with that color or scope."""
+WEIGHTED_MAX_DIGITS = 4
+
+
+def weighted(value_pp: float | None, signed: bool = False) -> str:
+    """Reach-weighted percentage points: the change in the score of every game with that color or scope.
+
+    From 1% up these take the page's usual decimals; below 1% they keep two significant digits (0.43%, 0.032%,
+    0.0047%), so small values neither round to zero nor run together, down to 0.0001%, below which they read
+    '<0.0001%'."""
     if value_pp is None:
         return 'unresolved'
-    value = 10 * value_pp
-    digits = 0 if abs(value) >= 100 else 1 if abs(value) >= 1 else 2
-    return number(value, digits, signed)
+    size, digits = abs(value_pp), _display.get()['digits']
+    if 0 < size < 1:
+        digits = max(digits, min(WEIGHTED_MAX_DIGITS, 1 - math.floor(math.log10(size))))
+        # 0.0996 would round to 0.100: one decimal fewer keeps two significant digits.
+        if digits > _display.get()['digits'] and round(size, digits) >= 10 ** (2 - digits):
+            digits -= 1
+    if 0 < size < 0.5 * 10**-digits:
+        sign = '-' if value_pp < 0 else '+' if signed else ''
+        return f'{sign}<{10**-digits:.{digits}f}%'
+    return number(value_pp, digits, signed) + '%'
 
 
 def count(value: int | None) -> str:

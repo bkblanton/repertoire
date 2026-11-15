@@ -7,7 +7,7 @@
   missing from the last 100 games with probability (1 - r) ** 100; the review list ranks reach x gain by that
   chance, so it favors valuable moves met about once per hundred games.
 
-Values are in percentage points per game with that color; reports show them per 1,000 games.
+Values are in percentage points per game with that color; reports show them as percentages.
 """
 
 from collections import defaultdict

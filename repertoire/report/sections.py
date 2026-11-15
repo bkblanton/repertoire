@@ -37,7 +37,6 @@ from .format import (
     number,
     opponent_rating,
     pawns,
-    per_thousand,
     percentage,
     plies,
     population_text,
@@ -49,6 +48,7 @@ from .format import (
     score_points,
     span,
     spread_display,
+    weighted,
 )
 from .links import Chapters, analysis_url, bundle_refs, exit_reply, linked_line
 from .markdown import Cell, about, drop_uniform, section, table
@@ -416,7 +416,7 @@ def vulnerabilities_section(
     refs = refs.for_scope(scope.get('id'))
     text = [
         *section(f'{level} Vulnerabilities', anchor),
-        'Drag is how far a move lowers the expected score. Opponent replies rank by drag per 1,000 games, which '
+        'Drag is how far a move lowers the expected score. Opponent replies rank by weighted drag, which '
         'also counts how often they come up; your moves rank by drag against the database score of the position '
         f'they are played from. Rows overlap, so do not add them. {about("drag")}.',
         '',
@@ -473,8 +473,8 @@ def strengths_section(
         text += [
             '**Positions contributing the most to the repertoire score**',
             '',
-            'Contribution = reach × score, in points per 1,000 games, for prepared positions and unprepared replies. '
-            f'Rows overlap, so do not add them. {about("contribution")}.',
+            'Contribution = reach × score, in percentage points of the overall score, for prepared positions and '
+            f'unprepared replies. Rows overlap, so do not add them. {about("contribution")}.',
             '',
         ]
         text += position_contribution_table(rows, cast(JsonObject, positions), refs)
@@ -506,14 +506,14 @@ def edge_table(rows: Sequence[JsonObject], scope: JsonObject, refs: Chapters) ->
 
     refs = refs.for_scope(scope.get('id'))
     return table(
-        ['Line', 'Chapter source', 'Move reach', 'Move gain', 'Edge per 1,000 games'],
+        ['Line', 'Chapter source', 'Move reach', 'Move gain', 'Edge'],
         [
             [
                 refs.move_cell(r),
                 refs.sources(r),
                 reach_cell(r['branch_reach']),
                 move_gain(r),
-                per_thousand(r['edge_pp'], signed=True),
+                weighted(r['edge_pp'], signed=True),
             ]
             for r in rows
         ],
@@ -526,16 +526,16 @@ def other_edge_pp(ledger: JsonObject) -> float:
 
 
 def edge_totals(ledger: JsonObject) -> list[str]:
-    rows = [[f"Your moves ({ledger['decision_count']:,})", per_thousand(ledger['decisions_pp'], signed=True)]]
+    rows = [[f"Your moves ({ledger['decision_count']:,})", weighted(ledger['decisions_pp'], signed=True)]]
     for key, label in (
         ('move_orders_pp', 'Move orders at transpositions'),
         ('theory_leaves_pp', 'Theory leaves'),
         ('finished_games_pp', 'Finished games'),
     ):
         if abs(ledger[key]) > 1e-12:
-            rows.append([label, per_thousand(ledger[key], signed=True)])
-    rows.append(['**Total: the delta**', '**' + per_thousand(ledger['delta_pp'], signed=True) + '**'])
-    return table(['Part', 'Per 1,000 games'], rows)
+            rows.append([label, weighted(ledger[key], signed=True)])
+    rows.append(['**Total: the delta**', '**' + weighted(ledger['delta_pp'], signed=True) + '**'])
+    return table(['Part', 'Edge'], rows)
 
 
 def edge_sentence(ledger: JsonObject, shares: bool = True) -> str:
@@ -543,7 +543,7 @@ def edge_sentence(ledger: JsonObject, shares: bool = True) -> str:
     move numbers mean little on chapter pages, which start part-way into a game."""
     costs = (
         f"{ledger['costing_count']:,} of your moves score below their position, costing "
-        f"{per_thousand(-ledger['costs_pp'])} per 1,000 games in all."
+        f"{weighted(-ledger['costs_pp'])} of the score in all."
     )
     delta = ledger['delta_pp']
     if not shares or delta <= 0:
@@ -568,9 +568,9 @@ def summary_edge_section(scope: JsonObject | None, refs: Chapters, color: str, t
         f'minus the database score of the position. Unlike other tables, these rows add up. {about("edge")}.',
         '',
         *edge_table(rows, cast(JsonObject, scope), refs),
-        f"Your {ledger['decision_count']:,} moves add up to {per_thousand(ledger['decisions_pp'], signed=True)} "
-        f'per 1,000 games and move orders at transpositions to {per_thousand(other_edge_pp(ledger), signed=True)}, '
-        f"for the delta of {per_thousand(ledger['delta_pp'], signed=True)}. {edge_sentence(ledger)}",
+        f"Your {ledger['decision_count']:,} moves add up to {weighted(ledger['decisions_pp'], signed=True)} "
+        f'and move orders at transpositions to {weighted(other_edge_pp(ledger), signed=True)}, '
+        f"for the delta of {weighted(ledger['delta_pp'], signed=True)}. {edge_sentence(ledger)}",
         '',
         f'[All of your edge, move by move](#{color}-edge).',
         '',
@@ -606,8 +606,8 @@ def edge_section(
     ]
     if detailed:
         text += table(
-            ['Your move number', 'Per 1,000 games'],
-            [[g['moves'], per_thousand(g['edge_pp'], signed=True)] for g in ledger['by_move_number']],
+            ['Your move number', 'Edge'],
+            [[g['moves'], weighted(g['edge_pp'], signed=True)] for g in ledger['by_move_number']],
         )
     for gains, name in ((True, 'Moves earning the most'), (False, 'Moves costing the most')):
         rows = edge_rows(scope, gains)[:top]
@@ -623,12 +623,12 @@ def edge_section(
             "games do. Each arrival shows its share of the position's reach and the database score of its move.",
             '',
             *table(
-                ['Position', 'Arrivals', 'Effect per 1,000 games'],
+                ['Position', 'Arrivals', 'Effect'],
                 [
                     [
                         refs.position_cell(t),
                         '<br>'.join(arrival_text(a, t, refs) for a in t['arrivals']),
-                        per_thousand(t['effect_pp'], signed=True),
+                        weighted(t['effect_pp'], signed=True),
                     ]
                     for t in shown
                 ],
@@ -661,7 +661,7 @@ def rare_moves_metric(scope: JsonObject | None) -> list[str] | None:
     earned = (
         f'{percentage(effort["rare_edge_pp"] / delta)} of the edge'
         if delta is not None and delta > 0
-        else f'{per_thousand(effort["rare_edge_pp"], signed=True)} per 1,000 games'
+        else weighted(effort['rare_edge_pp'], signed=True)
     )
     games = f'{round(1 / effort["rare_reach"]):,}'
     return [f'Moves met less than once in {games} games', f'{rare:,} of {total:,}, earning {earned}']
@@ -678,7 +678,7 @@ def effort_section(
     color = refs.color
     text = [
         *section(f'{level} Effort and value', anchor),
-        'What your preparation earns for the moves it takes to know. Edge per 1,000 games is the same as in '
+        'What your preparation earns for the moves it takes to know. Edge is the same as in '
         f'[where your edge comes from](#{color}-edge). {about("effort")}.',
         '',
     ]
@@ -691,13 +691,13 @@ def effort_section(
             'that games reach. A move recorded in several chapters counts in each.',
             '',
             *table(
-                ['Chapter', 'Moves', 'Edge per 1,000 games', 'Per move'],
+                ['Chapter', 'Moves', 'Edge', 'Per move'],
                 [
                     [
                         refs.label(c['id'], True),
                         f"{c['decisions']:,}",
-                        per_thousand(c['edge_pp'], signed=True),
-                        per_thousand(c['edge_per_decision_pp'], signed=True),
+                        weighted(c['edge_pp'], signed=True),
+                        weighted(c['edge_per_decision_pp'], signed=True),
                     ]
                     for c in sorted(chapters, key=lambda c: (-c['edge_per_decision_pp'], c['id']))
                 ],
@@ -714,14 +714,14 @@ def effort_section(
             f'own are in [vulnerabilities](#{color}-vulnerabilities).',
             '',
             *table(
-                ['Line', 'Chapter source', 'Move reach', 'Moves', 'Value per 1,000 games'],
+                ['Line', 'Chapter source', 'Move reach', 'Moves', 'Value'],
                 [
                     [
                         refs.move_cell(r),
                         refs.sources(r),
                         reach_cell(r['branch_reach']),
                         f"{r['decisions_dropped']:,}",
-                        per_thousand(r['drop_value_pp'], signed=True),
+                        weighted(r['drop_value_pp'], signed=True),
                     ]
                     for r in pruning
                 ],
@@ -828,21 +828,21 @@ def coverage_section(
             f'**Where preparation now ends at 1 in {goal:,} games**',
             '',
             f'{len(cuts):,} positions are cut, dropping {dropped:,} of your moves for '
-            + bounded(cost[0] if exact else None, cost, lambda v: per_thousand(v, signed=True))
-            + ' points per 1,000 games. Each row is a position games now leave preparation at, with how often they '
+            + bounded(cost[0] if exact else None, cost, lambda v: weighted(v, signed=True))
+            + ' of the overall score. Each row is a position games now leave preparation at, with how often they '
             'reach it in the trimmed repertoire. Its moves are those dropped below it, each counted under the first '
             'cut on its most common route, and its cost is the games arriving there times your score there minus the '
             "reply's database score, so the rows add up. The costliest cuts come first.",
             '',
             *table(
-                ['Line', 'Chapter source', 'Reach', 'Moves dropped', 'Cost per 1,000 games'],
+                ['Line', 'Chapter source', 'Reach', 'Moves dropped', 'Cost'],
                 [
                     [
                         refs.position_cell(c),
                         refs.sources(c),
                         reach_cell(c['reach']),
                         f'{c["decisions_dropped"]:,}',
-                        bounded(c['cost_pp'], c['cost_bounds_pp'], lambda v: per_thousand(v, signed=True)),
+                        bounded(c['cost_pp'], c['cost_bounds_pp'], lambda v: weighted(v, signed=True)),
                     ]
                     for c in cuts[:top]
                 ],
@@ -1236,15 +1236,15 @@ def alternative_lines(
         return percentage(sum(r[key] for r in rows if r['kind'] == kind))
 
     difference = None if option['score'] is None or played['score'] is None else option['score'] - played['score']
-    weighted = None if difference is None or alternative['reach'] is None else alternative['reach'] * difference
+    change = None if difference is None or alternative['reach'] is None else alternative['reach'] * difference
     chapters = {o['move']: option_chapters(o, refs) for o in (option, played)}
     sentence = (
         f"{mine} ({chapters[option['move']]}) scores {percentage(option['score'])} here against "
         f"{percentage(played['score'])} for {theirs} ({chapters[played['move']]}): "
         f"{score_points(None if difference is None else 100 * difference, signed=True)} at the position"
     )
-    if weighted is not None:
-        sentence += f', {per_thousand(100 * weighted, signed=True)} points per 1,000 {color} games'
+    if change is not None:
+        sentence += f', {weighted(100 * change, signed=True)} on your {color} score'
     text = [
         *section(f'{level} {mine} instead of {theirs} after {line(line_text(board))}', anchor),
         sentence + '.',
@@ -1333,7 +1333,7 @@ def alternatives_section(
             difference = (
                 None if option['score'] is None or played['score'] is None else option['score'] - played['score']
             )
-            weighted = None if difference is None or alternative['reach'] is None else alternative['reach'] * difference
+            change = None if difference is None or alternative['reach'] is None else alternative['reach'] * difference
             target = f"{details}-{index}-{option['move']}"
             move = escape(option['san'])
             if option is played:
@@ -1353,7 +1353,7 @@ def alternatives_section(
                     ''
                     if option is played
                     else score_points(None if difference is None else 100 * difference, signed=True),
-                    '' if option is played else per_thousand(None if weighted is None else 100 * weighted, signed=True),
+                    '' if option is played else weighted(None if change is None else 100 * change, signed=True),
                 ]
             )
             if detailed and option is not played and option.get('lines'):
@@ -1365,16 +1365,16 @@ def alternatives_section(
         intro = (
             'Where your repertoire records more than one move, in different chapters or as a side variation, each '
             'move is scored with the best choices after it and the highest-scoring one is played. The table shows '
-            'what each move that was not played would change, at the position and in points per 1,000 '
-            f'{color.title()} games'
+            'what each move that was not played would change, at the position and to your overall '
+            f'{color.title()} score'
         )
     else:
         title = f'{level} Alternatives'
         intro = (
             "Positions where this chapter records more than one move, or its move competes with another chapter's. "
             'Each move is scored with the best choices after it and the highest-scoring one is played; the table '
-            'shows what each move that was not played would change, at the position and in points per 1,000 '
-            f'{color.title()} games'
+            'shows what each move that was not played would change, at the position and to your overall '
+            f'{color.title()} score'
         )
     intro += (
         ". Below it, each of those moves is followed line by line until its games meet the played move's again."
@@ -1393,7 +1393,7 @@ def alternatives_section(
                 'Chapters',
                 'Repertoire score',
                 'Difference vs played',
-                'Points per 1,000 games',
+                'Change in overall score',
             ],
             rows,
         ),

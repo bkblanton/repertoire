@@ -64,7 +64,7 @@ Each chapter has its own page in `reports/chapters/` (`W1.md`, `W2.md`, ... and 
 | Gap reach | Probability of first reaching a position where you have no prepared move. |
 | Score spread | How much the scores of the continuations vary, including later replies. Omitted for unprepared replies, where preparation has ended. |
 | 1 in N games | How often a position or move comes up, shown under its reach: 1 / reach, assuming independent games. |
-| Per 1,000 games | A reach-weighted gain, drag or contribution, in score points per 1,000 games with that color (or entering the chapter). |
+| Weighted | A reach-weighted gain, drag or contribution: the difference times how often it comes up, in percentage points of the score with that color (or entering the chapter). |
 | Games | Games in the database at that position or in the parent table's row for that move. A position where you have a prepared move counts the opponent move rows that lead to it. Not the sample size of the whole continuation. |
 | Opponent rating | The average rating of the opponents at that point, with its difference from the parent position on reply rows. It describes the database games and never adjusts a score. |
 
@@ -132,7 +132,7 @@ Chapters still overlap where one chapter's line passes through another's entry, 
 
 ### Alternatives
 
-Where chapters record different first moves in the same position, or a chapter records a side variation of your own move, each move is scored with the best choices after it and the highest-scoring one is played (see [Move selection](usage.md#move-selection)). The full report lists every such position after the chapter table, with each move's score, its difference from the move played, and that difference times the position's reach in points per 1,000 games. Chapter pages show the positions where their own first move competes.
+Where chapters record different first moves in the same position, or a chapter records a side variation of your own move, each move is scored with the best choices after it and the highest-scoring one is played (see [Move selection](usage.md#move-selection)). The full report lists every such position after the chapter table, with each move's score, its difference from the move played, and that difference times the position's reach: the change in your overall score. Chapter pages show the positions where their own first move competes.
 
 Each move that was not played then gets a table of its lines. Its games are followed, with your usual moves after it, until they reach a position the played move's games also reach. Below such a **transposition** both moves continue identically, so all that changes is how often each move order arrives there. A line that can no longer meet the played move's games is one row, scored as a whole (**only after** that move), and an unprepared reply or the end of preparation before either is a row of its own. The played move is split the same way, so each row shows its share after both moves, and a transposition both reach shows both move orders. The table lists the lines with the largest effects and every line reached in at least 5% of games after either move; the rest are combined by kind.
 
@@ -186,7 +186,7 @@ A **gap** is the first position a game reaches where you have no prepared move.
 
 ### Effort and value
 
-The full report weighs what your preparation earns against the moves it takes to know. Values are in score points per 1,000 games with that color, as in the [edge ledger](#where-your-edge-comes-from).
+The full report weighs what your preparation earns against the moves it takes to know. Values are in percentage points of the score with that color, as in the [edge ledger](#where-your-edge-comes-from).
 
 - **Chapters by edge per move.** A chapter's edge is its entry probability times its delta, and its moves are the own moves it records that games reach. A move recorded in several chapters counts in each, since you study it in each. Chapters near the bottom earn little for what they ask you to remember.
 - **Lines to consider pruning.** Dropping one of your moves leaves preparation at that position, so it loses `move reach * gain`, where the gain is the repertoire score after the move minus the database score of the position. It also removes every move of yours that can only be reached through it: the positions it dominates, with transpositions accounted for. Each row is such a move with everything it dominates, ranked by value per move, showing groups of at least three moves. The rows never overlap, because a smaller group inside a listed one is not listed again. Moves that lose score on their own belong to the vulnerability tables instead.
@@ -258,7 +258,7 @@ The full report includes two reach-weighted correlations. Both are point estimat
 
 Tables for positions where you have a prepared move are never fetched, because your move is forced and the score does not need them. The position's database score is therefore pooled from the opponent move rows that lead to it, or its own table at the starting position, and your move's database score is the whole table after it. Where a position is reached by one move order, these are the same games its own table would hold. At a transposition, the position's score counts only the routes in your studies, and the table after your move counts every move order.
 
-Weighted values are shown in score points per 1,000 games, so a weighted drag of `0.0317%` reads as `0.32`. The summary ranks your moves by reach times gain or drag; the full report ranks them by the gain or drag itself. Intervals on gains and drags combine every table the comparison depends on. **1 in N games** is `1 / reach`: how many games with that color (or entering the chapter) pass before a position comes up once on average.
+Weighted values are percentage points of the score with that color (or entering the chapter): a weighted drag of `0.032%` lowers that score by about 0.032 points. From 1% up they show one decimal; smaller values keep two significant digits, so they never round to zero, down to `<0.0001%`. The summary ranks your moves by reach times gain or drag; the full report ranks them by the gain or drag itself. Intervals on gains and drags combine every table the comparison depends on. **1 in N games** is `1 / reach`: how many games with that color (or entering the chapter) pass before a position comes up once on average.
 
 Chapter rankings are among games that enter the chapter. For a chapter whose moves lost to an alternative, they describe the alternative, not the repertoire you play.
 
@@ -271,7 +271,7 @@ The moves alone add up to slightly more or less than the delta, for two reasons,
 - **Move orders at transpositions.** A prepared position's database score pools the opponent moves leading to it by game count, but your repertoire arrives through each move order in its own proportion. Rare move orders often score differently: after 1.e4 d6 2.d4 Nf6 3.Nc3 g6 4.g3 Bg7, games arriving by the Modern order (1...g6) may score better than the Pirc order, and your repertoire may send more games through it than the database does. Each arrival adds `its reach * (pooled score - score of its own move row)`. In a chapter, the row also covers move orders the chapter never uses and an entry where you are to move, whose baseline is its own table.
 - **Theory leaves**, which are scored with their own table, while the move into them is compared with its row in the parent table. Finished games (checkmate, stalemate, insufficient material, threefold repetition) are scored exactly and form a third row when they occur.
 
-Together these reproduce the delta exactly; the build checks this for every color and chapter. Values are in score points per 1,000 games, so the total equals the delta times ten. Thinly sampled moves count in the totals but are left out of the ranked tables, as elsewhere.
+Together these reproduce the delta exactly; the build checks this for every color and chapter. Values are in percentage points, so the total equals the delta. Thinly sampled moves count in the totals but are left out of the ranked tables, as elsewhere.
 
 ### Position contributions
 
