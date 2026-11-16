@@ -299,13 +299,17 @@ def summary_own_priorities(
     )
 
 
-def opening_table(rows: Iterable[JsonObject], refs: Chapters, anchors: Mapping[str, str]) -> list[str]:
+def opening_table(
+    rows: Iterable[JsonObject], refs: Chapters, anchors: Mapping[str, str], chapters: bool = True
+) -> list[str]:
+    """Opening rows; names link to their evidence. A chapter page leaves out the chapter column."""
     values: list[list[Cell]] = []
     for row in rows:
         base, repertoire = row['entry_baseline']['raw_score'], row['repertoire_score']
+        anchor = anchors.get(row['id'])
         values.append(
             [
-                f"[{escape(row['name'])}](#{anchors[row['id']]})",
+                f"[{escape(row['name'])}](#{anchor})" if anchor else escape(row['name']),
                 escape(row['eco']),
                 percentage(row['reach']),
                 percentage(base),
@@ -314,7 +318,7 @@ def opening_table(rows: Iterable[JsonObject], refs: Chapters, anchors: Mapping[s
                 spread_display(row.get('branch_score_spread'), False),
                 number(row['expected_prepared_moves'], 1),
                 gap_percentage(row['gap_coverage']),
-                refs.sources({'chapter_attribution': {'source_ids': row['chapter_ids']}}),
+                *([refs.sources({'chapter_attribution': {'source_ids': row['chapter_ids']}})] if chapters else []),
             ]
         )
     return table(
@@ -328,7 +332,7 @@ def opening_table(rows: Iterable[JsonObject], refs: Chapters, anchors: Mapping[s
             'Score spread',
             'Prepared depth',
             'Equivalent gap reach',
-            'Chapters',
+            *(['Chapters'] if chapters else []),
         ],
         values,
     )

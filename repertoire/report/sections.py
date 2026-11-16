@@ -1950,6 +1950,38 @@ def entry_routes_section(chapter: JsonObject, scope: JsonObject | None, refs: Ch
     )
 
 
+def chapter_openings_section(bundle: Bundle, cid: str, refs: Chapters, top: int, anchor: str) -> list[str]:
+    """Openings reached after entering one chapter; reach is a share of the games that enter it."""
+    text = section('## Openings reached', anchor)
+    data = bundle.get('openings')
+    scope = next((s for s in (data or {}).get('chapters', []) if s['id'] == cid), None)
+    if scope is None:
+        return text + ['Opening analysis pending. Run `repertoire openings` with the saved score results.', '']
+    if scope.get('status') != Status.RESOLVED:
+        return text + ['Opening reach is unavailable because the chapter entry weights are unresolved.', '']
+    rows = scope['openings']
+    text += [
+        'Reach counts the first arrival at a named opening or one of its named variations after entering this '
+        'chapter, by any move order, as a share of the games that enter it; an entry position inside an opening '
+        'counts. Openings and their variations overlap, so do not add their reach. Each name opens its evidence '
+        f'across the whole repertoire. {about("opening-names")}.',
+        '',
+    ]
+    if not rows:
+        return text + ['No named opening is reached from this chapter.', '']
+    text += opening_table(rows[:top], refs, refs.opening_anchors, chapters=False)
+    if len(rows) > top:
+        text += [
+            '<details>',
+            f'<summary>Remaining {len(rows) - top} openings</summary>',
+            '',
+            *opening_table(rows[top:], refs, refs.opening_anchors, chapters=False),
+            '</details>',
+            '',
+        ]
+    return text
+
+
 def openings_section(bundle: Bundle, refs: Chapters) -> list[str]:
     """Opening table for the full report; per-opening evidence lives on its own page."""
     data = bundle.get('openings')

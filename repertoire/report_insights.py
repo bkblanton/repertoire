@@ -267,6 +267,27 @@ class LocalComparisons:
         return result
 
 
+def origin_spread(
+    origin: JsonObject, position: Position, position_values: Mapping[Position, JsonObject], color: bool
+) -> JsonObject:
+    """Spread after one first-entry origin: the recursive value at a regular entry, else the reply's games."""
+    if origin['parent'] is None:
+        return position_values[origin.get('node', position)]
+    return stopping_counts(origin['counts_white_draw_black'], color, origin['fixed_outcome'])
+
+
+def opening_spread(
+    row: JsonObject, origins: Iterable[JsonObject], position_values: Mapping[Position, JsonObject], color: bool
+) -> JsonObject:
+    """Score spread across an opening's first entries; chapter origins always carry their node."""
+    result = spread_mixture(
+        [(o['conditional_weight'], origin_spread(o, o['node'], position_values, color)) for o in origins],
+        row['repertoire_score'],
+    )
+    assert_outcomes(result, row['outcomes'])
+    return result
+
+
 def add_recursive_spreads(
     value: JsonObject,
     saved: JsonObject,
@@ -285,6 +306,7 @@ def add_recursive_spreads(
     comparisons = supporting['vulnerabilities']
     moves = {'overall': comparisons['overall'], **{s['id']: s for s in comparisons['chapters']}}
     insights = {s['id']: s for s in value['scopes']}
+    openings_by_chapter = {s['id']: s['openings'] for s in supporting['openings'].get('chapters', [])}
     profiles: defaultdict[str, list[str]] = defaultdict(list)
     profiles['{}'].append('overall')
     for chapter in saved['chapters']:
@@ -336,6 +358,11 @@ def add_recursive_spreads(
                 assert_outcomes(metric, row['outcomes'])
                 positions[row['position']] = metric
             scope['position_spreads'] = positions
+            chapter_rows = openings_by_chapter.get(sid, [])
+            if chapter_rows:
+                scope['opening_spreads'] = {
+                    row['id']: opening_spread(row, row['origins'], position_values, color) for row in chapter_rows
+                }
             for row in moves[sid].get('all_signed_rows', []):
                 after = (
                     position_values[target]
@@ -360,12 +387,7 @@ def add_recursive_spreads(
                 all_parts, entries = [], {}
                 for entry in row['entries']:
                     parts = [
-                        (
-                            origin['conditional_weight'],
-                            position_values[origin.get('node', entry['position'])]
-                            if origin['parent'] is None
-                            else stopping_counts(origin['counts_white_draw_black'], color, origin['fixed_outcome']),
-                        )
+                        (origin['conditional_weight'], origin_spread(origin, entry['position'], position_values, color))
                         for origin in entry['origins']
                     ]
                     all_parts.extend(parts)

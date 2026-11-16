@@ -252,6 +252,10 @@ def attach_insights(bundle: Bundle) -> None:
         row['branch_score_spread'] = added.get('branch_score_spread')
         for entry in row['entries']:
             entry['branch_score_spread'] = added.get('entries', {}).get(entry['position'])
+    for scope in bundle.get('openings', {}).get('chapters', []):
+        spreads = insights.get(scope['id'], {}).get('opening_spreads', {})
+        for row in scope['openings']:
+            row['branch_score_spread'] = spreads.get(row['id'])
     for scope in [
         bundle.get('vulnerabilities', {}).get('overall', {}),
         *bundle.get('vulnerabilities', {}).get('chapters', []),

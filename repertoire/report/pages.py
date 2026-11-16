@@ -32,6 +32,7 @@ from .sections import (
     NO_EVALUATIONS,
     alternatives_section,
     branch_spread_section,
+    chapter_openings_section,
     character_section,
     common_positions_for_scope,
     common_positions_section,
@@ -217,6 +218,7 @@ def chapter_page(
         ('exits', 'Where preparation ends'),
         ('free-transpositions', 'Free transpositions'),
         ('common-positions', 'Most common positions'),
+        ('openings', 'Openings reached'),
         ('vulnerabilities', 'Vulnerabilities'),
         ('strengths', 'Strengths'),
         ('engine', 'Engine view'),
@@ -341,6 +343,7 @@ def chapter_page(
     text += common_positions_for_scope(
         char or {'id': cid}, refs, position_top, level='##', anchor=f'{anchor}-common-positions'
     )
+    text += chapter_openings_section(bundle, cid, refs, max(chapter_top, 10), f'{anchor}-openings')
     text += vulnerabilities_section(
         vulnerabilities.get(cid), refs, chapter_top, level='##', anchor=f'{anchor}-vulnerabilities'
     ) or section('## Vulnerabilities', f'{anchor}-vulnerabilities') + ['Vulnerability analysis pending.', '']

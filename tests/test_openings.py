@@ -8,6 +8,7 @@ from helpers import data, graph, position, run_fixture
 
 from repertoire.openings import (
     analyze,
+    chapter_openings,
     chapter_sources,
     classify,
     cohort,
@@ -22,7 +23,7 @@ from repertoire.preparation import Evaluator, Evaluators, chess_facts
 from repertoire.report.links import Chapters
 from repertoire.report.markdown import table
 from repertoire.report.pages import opening_details_page
-from repertoire.report.sections import openings_section
+from repertoire.report.sections import chapter_openings_section, openings_section
 from repertoire.sharpness import recursive_wdl
 
 
@@ -261,6 +262,14 @@ def test_cache_only_analysis_preserves_scores_sources_and_validates_staleness(tm
     assert {'French Defense', 'French Defense: Advance Variation'} <= {r['name'] for r in result['openings']}
     assert 'French Defense: Tarrasch Variation' in {r['name'] for r in result['catalog']}
     assert result['coverage']['ever_classified_probability'] == pytest.approx(1.0)
+    chapters = {s['id']: s for s in result['chapters']}
+    assert set(chapters) == {c['id'] for c in saved['chapters']}
+    for scope in chapters.values():
+        assert scope['status'] == 'resolved' and scope['openings']
+        # Every game in the fixture is a French, so each chapter's games are all in it.
+        french = next(r for r in scope['openings'] if r['name'] == 'French Defense')
+        assert french['reach'] == pytest.approx(1.0)
+        assert all(0 < r['reach'] <= 1 + 1e-10 and r['origins'] and 'entries' not in r for r in scope['openings'])
     g = graph(tmp_path, Path(saved['manifest']['input_path']).read_text())
     # Only the tables the score used are read, whatever else the cache holds.
     assert set(calls) == set(saved['manifest']['evidence']) < set(g.nodes)
@@ -431,3 +440,52 @@ def test_source_cells_go_under_the_line_they_describe():
     assert table(['Line', 'Chapter source'], [['e4', SourceCell('None', 'unavailable')]])[2] == '| e4 |'
     # A chapter list column stays a column of its own.
     assert table(['Opening', 'Chapters'], [['Vienna', source]])[0] == '| Opening | Chapters |'
+
+
+def test_chapter_openings_count_names_held_at_entry_and_later_arrivals(tmp_path):
+    names = {}
+    g, e, ev = transposing(tmp_path)
+    one = named(names, position('Nf3 d5'), 'Family: One')
+    other = named(names, position('g3 Nf6'), 'Other')
+    leaf = position('Nf3 d5 g3 Nf6 Bg2')
+    deeper = named(names, leaf, 'Family: One, Deeper')
+    catalog, exact, _, _ = classify(g, names, ev.facts, True)
+    shared = position('Nf3 d5 g3 Nf6')
+    saved = dict(
+        manifest=dict(root_weights={g.roots[0]: 1.0}),
+        chapters=[dict(id='c', score=dict(first_entry_weights={shared: 1.0}), entries=[dict(position=shared)])],
+    )
+    initials = {'c': {shared: name_flow(ev, {g.roots[0]: 1.0}, exact)[shared]}}
+    assert initials['c'][shared] == pytest.approx({one: 0.4, other: 0.6})
+    scope = chapter_openings(lambda _: ev, saved, catalog, named_regions(exact, catalog), initials)[0]
+    reach = {r['id']: r['reach'] for r in scope['openings']}
+    # Games entering by the Other move order are in Other; all of them then reach the deeper Family: One
+    # variation, which also brings the remaining 60% into Family: One.
+    assert reach == pytest.approx({one: 1.0, other: 0.6, deeper: 1.0})
+    rows = {r['id']: r for r in scope['openings']}
+    assert {o['node'] for o in rows[one]['origins']} == {shared, leaf}
+    assert sum(o['conditional_weight'] for o in rows[one]['origins']) == pytest.approx(1.0)
+    # The score at the entry is the chapter's own, whichever name the game carries.
+    assert rows[other]['repertoire_score'] == pytest.approx(ev.evaluate({shared: 1.0})[0])
+    assert chapter_openings(
+        lambda _: ev, dict(saved, chapters=[dict(id='c', score={}, entries=[])]), catalog, {}, {}
+    )[0]['status'] == 'unresolved_first_entry_weights'
+
+
+def test_chapter_page_openings_table_drops_chapter_column(tmp_path):
+    names = {}
+    g, e, ev = transposing(tmp_path)
+    identity = named(names, position('Nf3 d5'), 'Family: One')
+    catalog, exact, _, _ = classify(g, names, ev.facts, True)
+    entries, total, _ = first_entries(ev, {g.roots[0]: 1.0}, named_regions(exact, catalog)[identity])
+    row = dict(**catalog[identity], reach=total, chapter_ids=['1'], **cohort(ev, entries, total, recursive_wdl(ev)))
+    report = dict(color='white', chapters=g.chapters)
+    cid = g.chapters[0]['id']
+    scope = dict(id=cid, status='resolved', openings=[row])
+    bundle = dict(report=report, openings=dict(openings=[row], chapters=[scope]))
+    refs = Chapters(report, bundle['openings'])
+    text = '\n'.join(chapter_openings_section(bundle, cid, refs, 10, 'x-openings'))
+    assert text.startswith('<a id="x-openings"></a>') and '## Openings reached' in text
+    assert '[Family: One](#white-opening-1)' in text and '| Chapters |' not in text
+    assert 'share of the games that enter it' in text
+    assert 'pending' in '\n'.join(chapter_openings_section(dict(report=report), cid, refs, 10, 'x'))

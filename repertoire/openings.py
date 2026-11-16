@@ -180,20 +180,119 @@ def most_common_source(weights: Mapping[str | None, float]) -> JsonObject | None
     return dict(id=identity, share=mass / total)
 
 
+def chapter_starts(chapter: JsonObject) -> dict[Position, float]:
+    """First-entry weights of a chapter; a single entry needs none."""
+    starts = {k: w for k, w in chapter['score'].get('first_entry_weights', {}).items() if w}
+    if not starts and len(chapter['entries']) == 1:
+        starts = {chapter['entries'][0]['position']: 1.0}
+    return starts
+
+
+def opening_row(
+    evaluator: Evaluator,
+    roots: Weights,
+    opening: JsonObject,
+    region: Collection[Position],
+    wdl: Mapping[Position, np.ndarray],
+    held: Weights | None = None,
+) -> tuple[JsonObject, list[JsonObject]] | None:
+    """An opening's reach and first-entry cohort from `roots`, or None when no game reaches it.
+
+    `held` is start mass whose games are already in the opening when they arrive; it counts at its start.
+    """
+    entries: list[JsonObject]
+    entries, total, missed = first_entries(evaluator, roots, region) if roots else ([], 0.0, 0.0)
+    if held:
+        more, extra, _ = first_entries(evaluator, held, {*region, *map(position_of, held)})
+        entries, total = entries + more, total + extra
+    if not total:
+        return None
+    return dict(**opening, reach=total, not_reached_probability=missed, **cohort(evaluator, entries, total, wdl)), entries
+
+
+def chapter_openings(
+    evaluators: Evaluators,
+    saved: JsonObject,
+    catalog: Mapping[str, JsonObject],
+    regions: Mapping[str, set[Position]],
+    initials: Mapping[str, Mapping[Position, Mapping[str | None, float]]],
+) -> list[JsonObject]:
+    """Openings reached in the games that enter each chapter, as a share of those games.
+
+    Games already in an opening when they enter, by their name flow at the entry, count at the entry; the
+    rest follow the overall first-arrival rule from the chapter's first-entry weights under its comparison
+    policy. Per-entry rows are reduced to their origins, which the insights stage needs for the score spread.
+    """
+    wdls: dict[int, dict[Position, np.ndarray]] = {}
+    scopes: list[JsonObject] = []
+    for chapter in saved['chapters']:
+        starts = chapter_starts(chapter)
+        if not starts:
+            scopes.append(dict(id=chapter['id'], status=Status.UNRESOLVED_ENTRY_WEIGHTS, openings=[]))
+            continue
+        evaluator = evaluators(chapter['id'])
+        evaluator.evaluate(starts)
+        wdl = wdls.get(id(evaluator))
+        if wdl is None or len(wdl) < len(evaluator.values):
+            wdl = wdls[id(evaluator)] = recursive_wdl(evaluator, wdl)
+        total = sum(starts.values())
+        starts = {k: w / total for k, w in starts.items()}
+        # Skip openings no game from this chapter can arrive at; first_entries walks the whole graph.
+        seen: set[Position] = set()
+        for k, mass in evaluator.reaches(starts).items():
+            if mass > 0:
+                seen.add(position_of(k))
+                for move, p, kind, _, _ in evaluator.stops[k]:
+                    if kind == 'deviation' and p > 0:
+                        seen.add(evaluator.facts[position_of(k)]['after'][move][0])
+        # The share of each entry's games already inside each opening, broader parents included.
+        inside: defaultdict[str, dict[Position, float]] = defaultdict(dict)
+        for k, names in initials[chapter['id']].items():
+            for name, share in names.items():
+                for category in [] if name is None else [name, *catalog[name]['parent_ids']]:
+                    inside[category][k] = inside[category].get(k, 0.0) + share
+        rows: list[JsonObject] = []
+        for identity, opening in catalog.items():
+            if seen.isdisjoint(regions[identity]) and identity not in inside:
+                continue
+            shares = inside.get(identity, {})
+            held = {k: w * min(1.0, shares[k]) for k, w in starts.items() if shares.get(k)}
+            rest = {k: w - held.get(k, 0.0) for k, w in starts.items() if w - held.get(k, 0.0) > 1e-15}
+            result = opening_row(evaluator, rest, opening, regions[identity], wdl, held)
+            if result is None:
+                continue
+            row = result[0]
+            row['origins'] = [
+                dict(origin, node=origin.get('node', entry['position']))
+                for entry in row.pop('entries')
+                for origin in entry['origins']
+            ]
+            del row['validation']
+            rows.append(row)
+        scopes.append(
+            dict(
+                id=chapter['id'],
+                status=Status.RESOLVED,
+                openings=sorted(rows, key=lambda r: (-r['reach'], r['name'], r['eco'])),
+            )
+        )
+    return scopes
+
+
 def chapter_sources(
     evaluators: Evaluators,
     saved: JsonObject,
     exact: Mapping[Position, str],
     overall_flows: Mapping[Position, Mapping[str | None, float]],
+    initials: dict[str, dict[Position, dict[str | None, float]]] | None = None,
 ) -> list[JsonObject]:
+    """Most common opening source per board in each scope; `initials` collects each chapter's entry name flow."""
     scopes: list[JsonObject] = [
         dict(id='overall', positions={k: most_common_source(v) for k, v in overall_flows.items()}, entry_sources={})
     ]
     manifest = saved['manifest']
     for chapter in saved['chapters']:
-        starts = {k: w for k, w in chapter['score'].get('first_entry_weights', {}).items() if w}
-        if not starts and len(chapter['entries']) == 1:
-            starts = {chapter['entries'][0]['position']: 1.0}
+        starts = chapter_starts(chapter)
         scope: JsonObject = dict(id=chapter['id'], positions={}, entry_sources={})
         if not starts:
             scope['status'] = Status.UNRESOLVED_ENTRY_WEIGHTS
@@ -209,6 +308,8 @@ def chapter_sources(
                 raise AssertionError('Positive chapter entry lacks name flow under its comparison policy')
             initial[k] = {identity: mass / total for identity, mass in incoming.items()}
             scope['entry_sources'][k] = most_common_source(incoming)
+        if initials is not None:
+            initials[chapter['id']] = initial
         value = evaluator.evaluate(starts)
         if not math.isclose(value[0], chapter['score']['resolved_contribution'], abs_tol=1e-10) or not math.isclose(
             value[1], chapter['score']['unresolved_mass'], abs_tol=1e-10
@@ -545,10 +646,12 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
     unreachable: list[str]
     rows, unreachable = [], []
     for identity, opening in catalog.items():
-        entries, total, missed = first_entries(evaluator, roots, regions[identity])
-        if not total:
+        result = opening_row(evaluator, roots, opening, regions[identity], wdl)
+        if result is None:
             unreachable.append(identity)
             continue
+        row, entries = result
+        total = row['reach']
         for k, mass in entered_reach(evaluator, entries).items():
             board = positions[k]
             # Inside a repetition loop a board's reach counts each occurrence, so it can exceed the opening's.
@@ -563,17 +666,12 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
         for entry in entries:
             if entry['parent']:
                 chapter_ids.update(graph.nodes[entry['parent']].chapters)
-        rows.append(
-            dict(
-                **opening,
-                reach=total,
-                not_reached_probability=missed,
-                chapter_ids=[c['id'] for c in graph.chapters if c['id'] in chapter_ids],
-                **cohort(evaluator, entries, total, wdl),
-            )
-        )
+        row['chapter_ids'] = [c['id'] for c in graph.chapters if c['id'] in chapter_ids]
+        rows.append(row)
     _, classified_reach, _ = first_entries(evaluator, roots, set(exact))
-    sources = chapter_sources(evaluators, saved, exact, flows)
+    initials: dict[str, dict[Position, dict[str | None, float]]] = {}
+    sources = chapter_sources(evaluators, saved, exact, flows, initials)
+    chapters = chapter_openings(evaluators, saved, catalog, regions, initials)
     analysis.require_source('opening analysis')
     return dict(
         color=saved['color'],
@@ -581,6 +679,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
         catalog=sorted(catalog.values(), key=lambda r: (r['name'], r['eco'])),
         positions=positions,
         source_scopes=sources,
+        chapters=chapters,
         coverage=dict(
             ever_classified_probability=classified_reach,
             unreachable_opening_ids=sorted(unreachable),
@@ -607,6 +706,9 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE) -> JsonObject:
             score_rule='Recursive repertoire WDL at regular entries; parent move-row WDL at '
             'unprepared entries. Baselines, depth and gap distributions use the '
             'same normalized first-entry weights.',
+            chapter_rule='Chapter reach is a share of the games that enter the chapter. Games already in an '
+            'opening at entry, by their name flow there, count at the entry; the rest apply the reach rule '
+            'from the chapter first-entry weights under the chapter comparison policy.',
         ),
         validation=dict(
             saved_score_reproduced=True,
