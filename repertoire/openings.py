@@ -207,7 +207,8 @@ def opening_row(
         entries, total = entries + more, total + extra
     if not total:
         return None
-    return dict(**opening, reach=total, not_reached_probability=missed, **cohort(evaluator, entries, total, wdl)), entries
+    row = dict(**opening, reach=total, not_reached_probability=missed, **cohort(evaluator, entries, total, wdl))
+    return row, entries
 
 
 def chapter_openings(

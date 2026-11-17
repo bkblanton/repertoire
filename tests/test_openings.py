@@ -467,9 +467,12 @@ def test_chapter_openings_count_names_held_at_entry_and_later_arrivals(tmp_path)
     assert sum(o['conditional_weight'] for o in rows[one]['origins']) == pytest.approx(1.0)
     # The score at the entry is the chapter's own, whichever name the game carries.
     assert rows[other]['repertoire_score'] == pytest.approx(ev.evaluate({shared: 1.0})[0])
-    assert chapter_openings(
-        lambda _: ev, dict(saved, chapters=[dict(id='c', score={}, entries=[])]), catalog, {}, {}
-    )[0]['status'] == 'unresolved_first_entry_weights'
+    assert (
+        chapter_openings(lambda _: ev, dict(saved, chapters=[dict(id='c', score={}, entries=[])]), catalog, {}, {})[0][
+            'status'
+        ]
+        == 'unresolved_first_entry_weights'
+    )
 
 
 def test_chapter_page_openings_table_drops_chapter_column(tmp_path):
