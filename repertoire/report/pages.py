@@ -432,13 +432,19 @@ def full_report(
         o = r['overall']
         characters = scope_by_id(b.get('character'))
         preparation = scope_by_id(b.get('preparation'))
+        order_note = (
+            f' Chapters are ordered by opening line and group reach rather than study order '
+            f'({about("chapter-order", "Chapter order")}).'
+            if r.get('chapter_order') == 'opening'
+            else ''
+        )
         text += section(f'## {color.title()} repertoire', color)
         text += section(f'### {color.title()} chapters ({len(r["chapters"])})', f'{color}-chapters')
         text += [
             'Chapter reach is the chance that a game reaches one of the chapter\'s entry positions, by any move '
             'order; every other column counts only the games that enter the chapter. Each chapter name opens its '
             'own page. Chapters overlap only where one chapter\'s line transposes onto another\'s entry position, '
-            f'and some games reach no chapter, so reaches and scores are not additive. {about("entry")}.',
+            f'and some games reach no chapter, so reaches and scores are not additive. {about("entry")}.{order_note}',
             '',
             *chapter_table(r, refs, engine=scope_by_id(b.get('engine')) if engine_resolved(b) else None),
         ]
@@ -640,13 +646,19 @@ def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = 
                 '</details>',
                 '',
             ]
+        order_note = (
+            f' Chapters are ordered by opening line and group reach rather than study order '
+            f'({about("chapter-order", "Chapter order")}).'
+            if r.get('chapter_order') == 'opening'
+            else ''
+        )
         text += [
             '<details>',
             f'<summary>Chapter comparisons ({chapters} chapter{"" if chapters == 1 else "s"})</summary>',
             '',
             'Chapter reach counts games that reach a chapter by any move order; the other columns count only those '
             'games. Chapters can overlap through transpositions and some games reach no chapter, so they are not '
-            f'additive. {about("entry")}.',
+            f'additive. {about("entry")}.{order_note}',
             '',
             *chapter_table(r, refs, detailed=False),
             '</details>',

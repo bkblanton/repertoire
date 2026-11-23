@@ -130,6 +130,8 @@ Chapters still overlap where one chapter's line passes through another's entry, 
 
 **Entry routes** (chapter pages) show the most likely single route to each entry. An entry's weight includes every route that reaches it first; the route shown may carry only part of that weight.
 
+**Chapter order** defaults to your study or PGN order. Setting [`chapter_order`](usage.md#other-options) to `"opening"` anchors each chapter at the most likely route to the deepest common ancestor position of its active entries in the repertoire graph and recursively orders branches by the union first-entry reach of the chapters in each branch under the overall policy (so overlapping chapters and competing alternatives are never double-counted). Chapters anchored directly at a branching position compete as single-chapter siblings alongside deeper sub-openings. The order applies to chapter numbering (`W1`, `W2`, ...), chapter tables, chapter pages, comparison links and the trimmed PGN.
+
 ### Alternatives
 
 Where chapters record different first moves in the same position, or a chapter records a side variation of your own move, each move is scored with the best choices after it and the highest-scoring one is played (see [Move selection](usage.md#move-selection)). The full report lists every such position after the chapter table, with each move's score, its difference from the move played, and that difference times the position's reach: the change in your overall score. Chapter pages show the positions where their own first move competes.

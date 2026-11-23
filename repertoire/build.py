@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from . import (
+    chapter_order,
     character,
     compare,
     coverage,
@@ -226,7 +227,7 @@ def build(
                     lambda args=args: dict(
                         code=analysis_code,
                         files=file_inputs([args.pgn]),
-                        # The coverage goal is left out, so changing it never rescores.
+                        # The coverage goal and chapter order are left out, so changing them never rescores.
                         configuration=scoring.scored_configuration(scoring.load_config(args.config)),
                         color=args.color,
                         cache=cache,
@@ -259,14 +260,17 @@ def build(
                     analyze,
                 )
         for color, config, path in zip(('white', 'black'), (white_config, black_config), paths):
-            # The goal decides only this step and the trimmed PGN; the score and other analyses ignore it.
-            goal = coverage.goal_from_config(scoring.load_config(config))
+            # The goal and chapter order decide only this step, the trimmed PGN and rendering; the score and other
+            # analyses ignore them.
+            loaded = scoring.load_config(config)
+            goal = coverage.goal_from_config(loaded)
+            order = chapter_order.order_from_config(loaded)
 
-            def coverage_inputs(path: Path = path, goal: int = goal) -> JsonObject:
-                return dict(code=analysis_code, files=file_inputs([path]), goal=goal, cache=cache)
+            def coverage_inputs(path: Path = path, goal: int = goal, order: str = order) -> JsonObject:
+                return dict(code=analysis_code, files=file_inputs([path]), goal=goal, chapter_order=order, cache=cache)
 
-            def trim(path: Path = path, goal: int = goal) -> None:
-                coverage.run(path, cache, goal)
+            def trim(path: Path = path, goal: int = goal, order: str = order) -> None:
+                coverage.run(path, cache, goal, order)
 
             runner.step(
                 f'{color}.coverage',
@@ -345,7 +349,13 @@ def compare_step(
 
     def inputs() -> JsonObject:
         files = [score, *compare.source_files(entry['sources'], name)]
-        return dict(code=code, entry=entry, files=file_inputs(files), cache=cache)
+        saved_score = json.loads(score.read_text(encoding='utf-8')) if score.is_file() else {}
+        _, chapters = (
+            chapter_order.saved_order_for_score(score, saved_score, digest(score) or '')
+            if saved_score
+            else (chapter_order.DEFAULT_ORDER, None)
+        )
+        return dict(code=code, entry=entry, files=file_inputs(files), chapters=chapters, cache=cache)
 
     try:
         runner.step(

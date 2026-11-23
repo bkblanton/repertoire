@@ -1192,7 +1192,8 @@ STOP_LABELS = {
 
 def option_chapters(option: JsonObject, refs: Chapters) -> str:
     """The chapters recording a move, marked when only their side variations do."""
-    text = ', '.join(refs.label(cid) for cid in option['chapters'])
+    ordered = sorted(option['chapters'], key=lambda cid: refs.entries.get(cid, (float('inf'),))[0])
+    text = ', '.join(refs.label(cid) for cid in ordered)
     return text + (' (side variation)' if option.get('sideline') else '')
 
 

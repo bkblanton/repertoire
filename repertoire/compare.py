@@ -34,6 +34,7 @@ from .alternatives import (
     required_tables,
 )
 from .board_cache import STARTING_POSITION, canonical, children, fen_number, move_text, san, turn
+from .chapter_order import apply_order, saved_order_for_score
 from .character import scope_metrics
 from .context import DEFAULT_CACHE, AnalysisContext, file_sha256
 from .evaluate import COMPLETED, KNOWN, UNKNOWN, Route, Weights, backward, by_position, reaches, select_alternatives
@@ -546,7 +547,11 @@ def repertoire_chapters(
     if node is None or not isinstance(move, str) or move not in node.provenance:
         return []
     color = comparison.analysis.saved['color']
-    pages = {c['id']: (i, c['name']) for i, c in enumerate(comparison.analysis.saved['chapters'], 1)}
+    _, order = saved_order_for_score(
+        comparison.analysis.path, comparison.analysis.saved, comparison.analysis.report_sha256
+    )
+    ordered = apply_order(comparison.analysis.saved['chapters'], order, lambda c: c['id'])
+    pages = {c['id']: (i, c['name']) for i, c in enumerate(ordered, 1)}
     return [
         dict(id=cid, name=pages[cid][1], page=f'{color[0].upper()}{pages[cid][0]}')
         for cid in sorted(node.provenance[move], key=lambda cid: pages.get(cid, (len(pages) + 1,))[0])

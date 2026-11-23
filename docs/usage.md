@@ -145,7 +145,7 @@ Configuration files are keyed by chapter ID, so a different PGN needs its own co
 | What changed | What to run |
 | --- | --- |
 | Your Lichess studies | `uv run repertoire build --token-file ...` |
-| Your configuration files | `uv run repertoire build --offline`, or with `--token-file` if new tables are needed. Changing only `coverage_goal` reruns just the coverage step and the reports. |
+| Your configuration files | `uv run repertoire build --offline`, or with `--token-file` if new tables are needed. Changing only `coverage_goal` or `chapter_order` reruns just the coverage step, affected comparisons and the reports. |
 | Display limits, such as rows per table | `uv run repertoire report reports/data/white.json reports/data/black.json --require-complete` |
 | Lichess statistics themselves | Refresh with `score run --refresh` (below), then `uv run repertoire build --offline`. |
 
@@ -171,7 +171,8 @@ Each color has a configuration file, `configs/white.json` and `configs/black.jso
   "filters": {"ratings": "0,1000,1200,1400,1600,1800,2000,2200,2500", "speeds": "blitz,rapid,classical", "since": "1952-01", "until": "3000-12"},
   "exclude": [],
   "root_weights": {},
-  "coverage_goal": 300
+  "coverage_goal": 300,
+  "chapter_order": "study"
 }
 ```
 
@@ -206,6 +207,7 @@ In a full repertoire this places each chapter where it starts to differ from the
 - `exclude` leaves lines out of the repertoire. An entry is a chapter ID, to drop the whole chapter, or a `chapter-id:canonical-FEN:uci` string, to drop one move and everything after it from that chapter.
 - `root_weights` maps the starting positions of custom-FEN chapters to weights that sum to one, so chapters with no connecting route get absolute reach probabilities.
 - `coverage_goal` is N in "1 in N games", the [coverage goal](#coverage-goal-and-trimmed-pgn) for the trimmed PGN. It defaults to 300 and never changes a score.
+- `chapter_order` orders chapters in the reports and the trimmed PGN. `"study"` (the default) keeps your study or PGN order. `"opening"` anchors each chapter at the deepest common ancestor position of its active entries in the repertoire graph and orders branches recursively by the union first-entry reach of the chapters in each branch, without double-counting overlapping chapters. Like `coverage_goal`, it never changes a score or move selection.
 
 A line that returns to an earlier position, such as 2...Qf6 3.Nd5 Qd8 4.Nc3 in the Vienna, needs no exclusion: the game is followed until a position occurs for the third time, which is scored as a draw (see [Repetitions](design.md#repetitions)).
 
@@ -334,7 +336,7 @@ These read saved scores and the cache and refresh the reports when they finish. 
 | `openings` | `<color>.openings.json` | |
 | `insights` | `<color>.insights.json` | Needs preparation, character, vulnerabilities and openings. |
 | `engine` | `<color>.engine.json` | Needs vulnerabilities and preparation; reads the [evaluation store](#engine-evaluations). |
-| `coverage` | `<color>.coverage.json` | Also writes the trimmed PGN in `reports/trimmed/`. `--goal N` overrides `coverage_goal`. |
+| `coverage` | `<color>.coverage.json` | Also writes the trimmed PGN in `reports/trimmed/`. `--goal N` overrides `coverage_goal`, and `--chapter-order` overrides `chapter_order`. |
 | `correlations` | `prepared-depth-gain-correlation.json` | Needs vulnerabilities. |
 | `rating-correlations` | `opponent-rating-score-correlation.json` | Needs ratings and vulnerabilities. Also writes `reports/comparisons/opponent-rating-score.md`. |
 

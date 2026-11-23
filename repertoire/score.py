@@ -153,8 +153,10 @@ class Plan:
 
 
 CONFIG = "configs/{}.json"
-# The coverage goal only trims the PGN written for training (coverage.py); it never changes a score or analysis.
+# The coverage goal and chapter order never change a score or upstream analysis (coverage.py, chapter_order.py).
 COVERAGE_KEY = "coverage_goal"
+CHAPTER_ORDER_KEY = "chapter_order"
+UNSCORED_KEYS = (COVERAGE_KEY, CHAPTER_ORDER_KEY)
 
 
 def load_config(path: str | Path | None) -> JsonObject:
@@ -162,8 +164,8 @@ def load_config(path: str | Path | None) -> JsonObject:
 
 
 def scored_configuration(config: JsonObject) -> JsonObject:
-    """The configuration a score depends on: everything but the coverage goal."""
-    return {k: v for k, v in config.items() if k != COVERAGE_KEY}
+    """The configuration a score depends on: everything but the coverage goal and chapter order."""
+    return {k: v for k, v in config.items() if k not in UNSCORED_KEYS}
 
 
 def config_path(color: str, path: str | None = None) -> str:

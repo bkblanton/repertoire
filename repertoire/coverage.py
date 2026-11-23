@@ -14,7 +14,7 @@ comments and annotations. Your studies, the export and every other analysis keep
 import argparse
 import io
 import json
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -24,6 +24,16 @@ import chess.pgn
 import numpy as np
 
 from .board_cache import canonical, fen_number, position_of, route_line, turn
+from .chapter_order import (
+    DEFAULT_ORDER,
+    apply_order,
+    configured_order,
+    order_chapters,
+    order_from_config,
+)
+from .chapter_order import (
+    MODES as ORDER_MODES,
+)
 from .context import DEFAULT_CACHE, AnalysisContext, write_companion
 from .evaluate import (
     COMPLETED,
@@ -210,12 +220,13 @@ class Coverage:
             result[k] = text, [root, *moves]
         return result
 
-    def chapters_of(self, position: Position) -> list[str]:
+    def chapters_of(self, position: Position, order: Sequence[str] | None = None) -> list[str]:
         """The chapters recording a position, in chapter order."""
         recorded = self.graph.nodes[position].chapters
-        return [c['id'] for c in self.graph.chapters if c['id'] in recorded]
+        ids = order if order is not None else [c['id'] for c in self.graph.chapters]
+        return [cid for cid in ids if cid in recorded]
 
-    def details(self, level: Level) -> JsonObject:
+    def details(self, level: Level, order: Sequence[str] | None = None) -> JsonObject:
         """At your goal: every cut and every move it drops, each move counted under the first cut on its most
         common route, so both add up to the totals."""
         routes = self.lines()
@@ -271,12 +282,13 @@ class Coverage:
                     decisions_dropped=counted.get(p, 0),
                     cost_pp=cost if exact else None,
                     cost_bounds_pp=[cost - added.get(p, 0.0), cost + lost.get(p, 0.0)],
-                    chapter_attribution=dict(source_ids=self.chapters_of(p)),
+                    chapter_attribution=dict(source_ids=self.chapters_of(p, order)),
                 )
             )
         kept = self.kept(level)
         chapters = []
-        for c in self.graph.chapters:
+        ordered_chapters = apply_order(self.graph.chapters, order, lambda c: c['id'])
+        for c in ordered_chapters:
             recorded = {p for p in self.decisions if c['id'] in self.graph.nodes[p].chapters}
             chapters.append(dict(id=c['id'], decisions=len(recorded), kept=len(recorded & kept)))
         # Recorded moves you never play: alternatives that lost, and moves at positions games never reach.
@@ -383,15 +395,18 @@ class Writer:
                 if self.keeps(k, v, canonical(following)):
                     stack.append((child, after, v, variation))
 
-    def write(self, source: str | Path, exclusions: Collection[str]) -> tuple[str, JsonObject]:
+    def write(
+        self, source: str | Path, exclusions: Collection[str], order: Sequence[str] | None = None
+    ) -> tuple[str, JsonObject]:
         games, originals = read_games(source), read_games(source)
         ids = chapter_ids(games, exclusions)
+        included = [(game, original, cid) for game, original, cid in zip(games, originals, ids) if cid is not None]
+        if order is not None:
+            included = apply_order(included, order, lambda item: item[2])
         # The first recorded occurrence of every move, to copy its comments and the line after it.
         sources: dict[tuple[Position, str], chess.pgn.ChildNode] = {}
-        for game, cid in zip(originals, ids):
-            if cid is None:
-                continue
-            stack = [(cast(chess.pgn.GameNode, game), game.board())]
+        for _, original, cid in included:
+            stack = [(cast(chess.pgn.GameNode, original), original.board())]
             while stack:
                 node, board = stack.pop()
                 k = canonical(board)
@@ -404,8 +419,8 @@ class Writer:
                     after.push(child.move)
                     stack.append((child, after))
         chapters: list[tuple[chess.pgn.Game, str]] = []
-        for game, cid in zip(games, ids):
-            if cid is not None and canonical(game.board()) in self.kept:
+        for game, _, cid in included:
+            if canonical(game.board()) in self.kept:
                 self.prune(game, cid, exclusions)
                 chapters.append((game, cid))
         # Parents first, so a position is in place before anything is attached below it.
@@ -432,7 +447,8 @@ class Writer:
                 continue
             seen |= moves
             written.append(game)
-        left_out += [cid for cid in ids if cid is not None and cid not in {c for _, c in chapters}]
+        kept_ids = {c for _, c in chapters}
+        left_out += [cid for _, _, cid in included if cid not in kept_ids]
         # A StringExporter keeps adding to its output, so each game gets its own.
         exported = [
             game.accept(chess.pgn.StringExporter(headers=True, variations=True, comments=True)) for game in written
@@ -490,10 +506,22 @@ def goals(goal: int) -> list[int | None]:
     return [*sorted({*GOALS, goal}), None]
 
 
-def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, goal: int = DEFAULT_GOAL) -> tuple[JsonObject, str]:
+def analyze(
+    path: str | Path,
+    cache: str | Path = DEFAULT_CACHE,
+    goal: int = DEFAULT_GOAL,
+    order: str = DEFAULT_ORDER,
+) -> tuple[JsonObject, str]:
     """The coverage comparison and the trimmed PGN text at `goal`."""
+    order = order_from_config({'chapter_order': order})
     analysis = AnalysisContext(path)
     result = Coverage(analysis, cache)
+    ordering = order_chapters(
+        analysis,
+        result.evidence,
+        order,
+        (result.full.transitions, result.full.order, result.full.model, result.full.raw),
+    )
     rows, chosen = [], None
     for level_goal in goals(goal):
         level = result.level(level_goal)
@@ -506,7 +534,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, goal: int = DEF
         raise AssertionError('Every line must keep the whole repertoire')
     writer = Writer(result, chosen)
     exclusions = analysis.manifest['configuration'].get('exclude', [])
-    text, pgn = writer.write(analysis.source, exclusions)
+    text, pgn = writer.write(analysis.source, exclusions, ordering['ids'])
     if not writer.reproduces(text, result, chosen):
         raise AssertionError('The trimmed PGN does not reproduce the trimmed repertoire')
     analysis.require_source('coverage analysis')
@@ -514,8 +542,11 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, goal: int = DEF
     value: JsonObject = dict(
         color=color,
         goal=goal,
+        chapter_order=ordering,
         levels=rows,
-        at_goal=dict(result.details(chosen), pgn=dict(pgn, path=f'{TRIMMED_DIRECTORY}/{pgn_name(color, goal)}')),
+        at_goal=dict(
+            result.details(chosen, ordering['ids']), pgn=dict(pgn, path=f'{TRIMMED_DIRECTORY}/{pgn_name(color, goal)}')
+        ),
         validation=dict(
             costs_reproduce_change=True,
             every_line_reproduces_score=True,
@@ -524,6 +555,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, goal: int = DEF
         manifest=analysis.companion_manifest(
             coverage=dict(
                 goal=goal,
+                chapter_order=order,
                 rule='keep positions where you are to move that games reach at least once in N games through kept '
                 'positions; cut positions are scored as unprepared replies with their parent table rows',
             )
@@ -532,9 +564,14 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, goal: int = DEF
     return value, text
 
 
-def run(path: str | Path, cache: str | Path = DEFAULT_CACHE, goal: int = DEFAULT_GOAL) -> JsonObject:
+def run(
+    path: str | Path,
+    cache: str | Path = DEFAULT_CACHE,
+    goal: int = DEFAULT_GOAL,
+    order: str = DEFAULT_ORDER,
+) -> JsonObject:
     """Save the coverage analysis and the trimmed PGN, removing a trimmed PGN left from an earlier goal."""
-    value, text = analyze(path, cache, goal)
+    value, text = analyze(path, cache, goal, order)
     target = pgn_path(path, value['color'], goal)
     target.parent.mkdir(parents=True, exist_ok=True)
     for old in target.parent.glob(f'{value["color"]}-1-in-*.pgn'):
@@ -562,12 +599,18 @@ def main() -> None:
         type=int,
         help='Coverage goal N, 1 in N games (default: coverage_goal in configs/<color>.json, or 300)',
     )
+    parser.add_argument(
+        '--chapter-order',
+        choices=ORDER_MODES,
+        help='Chapter order: study or opening (default: chapter_order in configs/<color>.json, or study)',
+    )
     args = parser.parse_args()
     try:
         for path in args.reports:
             color = json.loads(path.read_text(encoding='utf-8'))['color']
             goal = goal_from_config({CONFIG_KEY: args.goal}) if args.goal is not None else configured_goal(color)
-            value = run(path, args.cache, goal)
+            order = args.chapter_order if args.chapter_order is not None else configured_order(color)
+            value = run(path, args.cache, goal, order)
             row = next(r for r in value['levels'] if r['goal'] == goal)
             print(
                 f'{color}: 1 in {goal} games keeps {row["decisions"]:,} of {row["decisions"] + row["dropped"]:,} '

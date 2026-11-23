@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal, NotRequired, TypedDict
 
 from .. import SCHEMA_VERSION
+from ..chapter_order import apply_order, saved_chapter_order
 from ..schema import JsonObject
 from ..sharpness import stopping_wdl
 from ..sharpness import summarize as summarize_outcomes
@@ -131,6 +132,10 @@ def load(paths: Iterable[str | Path], strict: bool = True, require_complete: boo
                 bundle['unavailable'][family] = reason
         if require_complete and bundle['unavailable']:
             raise ValueError(f'{color.title()} analyses incomplete: {bundle["unavailable"]}')
+        order_mode, ordered_ids = saved_chapter_order(bundle.get('coverage'), report['chapters'])
+        report['chapter_order'] = order_mode
+        if ordered_ids:
+            report['chapters'] = apply_order(report['chapters'], ordered_ids, lambda c: c['id'])
         if 'ratings' in bundle:
             from ..ratings import attach
 
