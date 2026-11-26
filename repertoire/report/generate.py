@@ -59,6 +59,7 @@ def generate(
     top: int = 10,
     chapter_top: int = 5,
     position_top: int = 20,
+    include_changes: bool | None = None,
 ) -> list[Bundle]:
     if not paths or min(top, chapter_top, position_top) < 1:
         raise ValueError('Supply reports and positive table lengths')
@@ -71,16 +72,28 @@ def generate(
         raise ValueError('Report and summary must be different files')
     if any(p.suffix.lower() != '.md' for p in (full_path, summary_path)):
         raise ValueError('Report and summary destinations must be Markdown (.md) files')
-    rendered = full_report(
-        bundles, correlations, reason, top, chapter_top, position_top, rating_correlations, rating_reason
-    )
     folder = full_path.parent
+    changes_path = folder / 'changes.md'
+    has_changes = changes_path.is_file() if include_changes is None else include_changes
+    rendered = full_report(
+        bundles,
+        correlations,
+        reason,
+        top,
+        chapter_top,
+        position_top,
+        rating_correlations,
+        rating_reason,
+        has_changes=has_changes,
+    )
     pages = {
         full_path: rendered.pop('report.md'),
-        summary_path: summary_report(bundles, correlations) + '\n',
+        summary_path: summary_report(bundles, correlations, has_changes=has_changes) + '\n',
         **{folder / name: content for name, content in rendered.items()},
     }
     aliases = {'report': full_path, 'summary': summary_path, **{name[:-3]: folder / name for name in rendered}}
+    if has_changes:
+        aliases['changes'] = changes_path
     # Comparison pages are written by `repertoire compare` beside the report.
     aliases.update({f'comparisons/{p.stem}': p for p in sorted((folder / 'comparisons').glob('*.md'))})
     # The coverage stage writes the trimmed PGN beside the score's own report folder.

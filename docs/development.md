@@ -23,14 +23,14 @@ All code is in the `repertoire` package.
 | Area | Modules |
 | --- | --- |
 | Command line | `cli.py` dispatches each `repertoire` command to its module's `main`. |
-| Build | `build.py` runs the stages incrementally; `fetch.py` fetches every table a build needs before any stage runs; `studies.py` exports Lichess studies. |
+| Build | `build.py` runs the stages incrementally; `fetch.py` fetches every table a build needs before any stage runs; `studies.py` exports Lichess studies; `changes.py` snapshots completed builds and diffs the current build against the previous one. |
 | PGN and positions | `graph.py` parses PGNs into the merged position graph and finds automatic chapter entries; `board_cache.py` caches move text, child positions and results. |
 | Evidence | `explorer.py` fetches, validates and caches Explorer tables. `evals.py` imports Lichess cloud evaluations from the downloaded export file into a local SQLite store; it makes no requests. |
 | Scoring | `score.py` plans and scores one color; `model.py` turns evidence into probabilities; `evaluate.py` traverses the graph; `uncertainty.py` computes posterior means, variances and intervals; `baseline.py`, `depth.py` and `transitions.py` compute entry baselines, prepared depth and chapter transitions. |
 | Analysis stages | `vulnerabilities.py`, `preparation.py` (with `routes.py`), `character.py` (with `gaps.py`, `sharpness.py` and `spread.py`), `ratings.py`, `openings.py` (with `opening_names.py`), `report_insights.py`, `engine.py`, `coverage.py` (with `chapter_order.py`; also writes the trimmed PGN), `position_correlations.py` and `rating_correlations.py`, sharing `context.py` for loading saved scores and `stats.py` for weighted statistics. |
 | Attribution | `attribution.py` links each line to the chapters that contain it. |
 | Comparisons | `alternatives.py` finds decision points and builds hypothetical repertoires; `compare.py` is the `compare` command. |
-| Reports | The `report` package renders every page from saved JSON: `bundle` loads matching analyses, `derive` and `tables` build rows, `format`, `markdown` and `links` format numbers, tables and lines, `sections` and `pages` lay out the pages, `generate` writes them and resolves links between them, and `comparison` renders comparison pages. `definitions.md` is the glossary. `render.py` is the `report` command. |
+| Reports | The `report` package renders every page from saved JSON: `bundle` loads matching analyses, `derive` and `tables` build rows, `format`, `markdown` and `links` format numbers, tables and lines, `sections` and `pages` lay out the pages, `generate` writes them and resolves links between them, `comparison` renders comparison pages, and `changes` renders `changes.md`. `definitions.md` is the glossary. `render.py` is the `report` command. |
 | Saved data | `schema.py` describes the saved score JSON as TypedDicts; `status.py` holds status values; `ledger.py` builds the end-event ledger saved with each score; `layout.py` decides where outputs go and writes JSON. |
 | Data | `data/chess-openings/` is the bundled opening-name dataset (see its README for updating it). |
 

@@ -12,6 +12,7 @@ COMMANDS = [
     ('fetch', 'fetch', 'Fetch the Explorer tables both repertoires need; slow, resumable, and estimated'),
     ('score', 'score', 'Inspect or score one repertoire PGN'),
     ('report', 'render', 'Render the Markdown reports from saved results, offline'),
+    ('changes', 'changes', 'Show or re-render the most recent build change report'),
     ('compare', 'compare', 'Compare a candidate study or PGN with your repertoire, alternative by alternative'),
     ('evals', 'evals', "Import Lichess cloud evaluations for the repertoire's positions from the downloaded export"),
     ('vulnerabilities', 'vulnerabilities', 'Rank strengths and vulnerabilities from saved scores'),

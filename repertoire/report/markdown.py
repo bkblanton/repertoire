@@ -90,6 +90,21 @@ TEXT_COLUMNS = (
     'Part',
     'Arrivals',
     'Transpose with',
+    'Branch point',
+    'Added continuation',
+    'Deleted continuation',
+    'Previous position',
+    'Current position',
+    'Previous name',
+    'New name',
+    'Previous move',
+    'Current move',
+    'Previous order',
+    'Current order',
+    'Reason',
+    'Scope',
+    'Notes',
+    'Shift',
 )
 
 # Numeric headers that share a prefix with a text column.
@@ -141,7 +156,7 @@ def section(title: str, anchor: str | None = None) -> list[str]:
     return ([f'<a id="{anchor}"></a>', ''] if anchor else []) + [title, '']
 
 
-def report_navigation(text: Sequence[str]) -> list[str]:
+def report_navigation(text: Sequence[str], *, has_changes: bool = False) -> list[str]:
     """Build a nested contents list from actual second- and third-level headings."""
     existing = set(re.findall(r'<a id="([^"]+)"', '\n'.join(text)))
     body: list[str]
@@ -169,6 +184,8 @@ def report_navigation(text: Sequence[str]) -> list[str]:
             headings.append((level, title, anchor, parent))
         body.append(item)
     navigation = ['**Table of contents**', '', '- [Summary](summary.md)']
+    if has_changes:
+        navigation.append('- [Changes](@changes)')
     for level, title, anchor, parent in headings:
         label = 'Chapter-by-chapter table' if anchor in ('white-chapters', 'black-chapters') else title
         indent = '    ' if level == '###' and parent else ''

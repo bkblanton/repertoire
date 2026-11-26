@@ -400,6 +400,8 @@ def full_report(
     position_top: int = 20,
     rating_correlations: JsonObject | None = None,
     rating_correlation_reason: str | None = 'not generated',
+    *,
+    has_changes: bool = False,
 ) -> dict[str, str]:
     """The full report index plus one page per chapter and one opening page per color, keyed by relative path."""
     combined = combined_overall(bundles)
@@ -550,19 +552,23 @@ def full_report(
     text += correlations_section(correlations, correlation_reason)
     text += rating_correlations_section(rating_correlations, rating_correlation_reason) + methods(bundles)
     pages = {
-        'report.md': '\n'.join(report_navigation(text)) + '\n',
+        'report.md': '\n'.join(report_navigation(text, has_changes=has_changes)) + '\n',
         **{name: '\n'.join(row.rstrip() for row in lines) + '\n' for name, lines in pages.items()},
     }
     return pages
 
 
-def summary_report(bundles: Sequence[Bundle], correlations: JsonObject | None = None) -> str:
+def summary_report(
+    bundles: Sequence[Bundle], correlations: JsonObject | None = None, *, has_changes: bool = False
+) -> str:
     """Headline, then what to work on: where preparation ends and own moves to review; the rest collapses."""
     snapshot = snapshot_notes(bundles)
     warnings = [row for row in snapshot if row.startswith('**')]
     metadata = [row for row in snapshot if row and not row.startswith('**')]
     comparisons = comparisons_section(bundles)
     links = ['[Full report](@report)']
+    if has_changes:
+        links.append('[Changes](@changes)')
     if comparisons:
         links.append('[Comparisons](#comparisons)')
     links.append('[Definitions](#methods)')

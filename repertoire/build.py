@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from . import (
+    changes,
     chapter_order,
     character,
     compare,
@@ -29,6 +30,7 @@ from . import (
     vulnerabilities,
 )
 from . import score as scoring
+from .attribution import write_text
 from .context import DEFAULT_CACHE
 from .explorer import add_token_option, apply_token_file, observe_cache
 from .layout import data_json, report_directory
@@ -87,10 +89,7 @@ def file_inputs(paths: Iterable[str | Path]) -> dict[str, str | None]:
 
 
 def write_json(path: str | Path, value: Any) -> None:
-    path = Path(path)
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(data_json(value), encoding='utf-8')
-    temporary.replace(path)
+    write_text(path, data_json(value))
 
 
 def code_inputs(presentation: bool = False) -> dict[str, str | None]:
@@ -102,8 +101,8 @@ def code_inputs(presentation: bool = False) -> dict[str, str | None]:
         *sorted((package / 'report').glob('*.py')),
         package / 'report' / 'definitions.md',
     ]
-    # Study export, table fetching and the command dispatcher never affect analyses or rendering.
-    excluded = ('studies.py', 'fetch.py', 'cli.py', 'render.py', *COMPARISON_CODE)
+    # Study export, table fetching, change diffing and the command dispatcher never affect analyses or rendering.
+    excluded = ('studies.py', 'fetch.py', 'cli.py', 'render.py', 'changes.py', *COMPARISON_CODE)
     files = [p for p in sorted(package.glob('*.py')) if p.name not in excluded]
     # Bundled opening names label the opening analyses.
     files += sorted((package / 'data').rglob('*.tsv'))
@@ -306,26 +305,58 @@ def build(
         + [correlation, rating_correlation]
         + results
     )
+    previous = changes.load_snapshot(directory)
+    current_hashes = changes.source_hashes(paths, pgns, configs, digest_fn=digest)
+    snapshot: JsonObject | None = None
+    diff: JsonObject | None = None
+    if previous is None or previous.get('source_hashes') != current_hashes:
+        snapshot = changes.capture(paths, pgns, configs, hashes=current_hashes)
+        if previous is not None:
+            diff = changes.compare(previous, snapshot)
+    has_new_changes = bool(diff and diff['has_changes'])
+    changes_page = folder / changes.REPORT_NAME
+    include_changes = has_new_changes or changes_page.is_file()
     registry = directory / '.report-index.json'
 
     def render() -> None:
-        generate(paths, require_complete=True)
+        generate(paths, require_complete=True, include_changes=include_changes)
         write_json(registry, {path.stem: path.name for path in paths})
 
     # Chapter and opening pages are outputs too, so a deleted page triggers a fresh render.
     pages = [folder / name for path in paths for name in page_names(json.loads(path.read_text(encoding='utf-8')))]
     runner.step(
         'render',
-        lambda: dict(code=presentation_code, files=file_inputs(render_inputs)),
+        lambda: dict(code=presentation_code, files=file_inputs(render_inputs), has_changes=include_changes),
         [folder / 'report.md', folder / 'summary.md', registry, *pages],
         render,
     )
+    change_status: JsonObject
+    if previous is None:
+        change_status = dict(status='baseline', changed=False)
+    elif has_new_changes and diff is not None:
+        _, written_page = changes.write_report(directory, folder, diff)
+        summary_line = changes.summary_text(diff)
+        print(f'Changes report updated: {written_page} ({summary_line})', flush=True)
+        change_status = dict(status='updated', changed=True, path=str(written_page), summary=summary_line)
+    else:
+        preserved = changes_page.is_file()
+        if preserved:
+            print(
+                f'No repertoire changes since last build; previous change report preserved ({changes_page})',
+                flush=True,
+            )
+        change_status = dict(
+            status='unchanged', changed=False, preserved=preserved, path=str(changes_page) if preserved else None
+        )
+    if snapshot is not None:
+        changes.save_snapshot(directory, snapshot)
     result = dict(
         created_at=datetime.now(UTC).isoformat(),
         seconds=time.perf_counter() - started,
         built=sum(t['status'] == 'built' for t in runner.timings),
         reused=sum(t['status'] == 'reused' for t in runner.timings),
         steps=runner.timings,
+        changes=change_status,
     )
     runner.state['last_run'] = result
     write_json(runner.path, runner.state)
@@ -409,6 +440,13 @@ def main() -> None:
         options[f'{color}_config'] = scoring.config_path(color, options[f'{color}_config'])
     try:
         if args.white_pgn is None:
+            # Capture an initial change baseline before `studies.export` overwrites existing study exports.
+            if not (no_export or args.offline):
+                changes.bootstrap_snapshot(
+                    options['directory'],
+                    studies.default_paths(folder),
+                    dict(white=options['white_config'], black=options['black_config']),
+                )
             # Offline builds never contact Lichess, so they reuse the last export.
             paths = studies.default_paths(folder) if no_export or args.offline else studies.export(sources, folder)
             options.update(white_pgn=paths['white'], black_pgn=paths['black'])

@@ -39,6 +39,7 @@ Everything runs through `uv run repertoire <command>`. Add `--help` to any comma
 | `evals` | Import Lichess cloud evaluations for your positions from the downloaded export. See [Engine evaluations](#engine-evaluations). |
 | `coverage` | Score the repertoire at coverage goals and write the trimmed PGN. See [Coverage goal and trimmed PGN](#coverage-goal-and-trimmed-pgn). |
 | `report` | Render the Markdown reports from saved results, offline. |
+| `changes` | Show or re-render the most recent build change report. |
 | `score` | Inspect or score one repertoire PGN. |
 | `vulnerabilities`, `preparation`, `character`, `ratings`, `openings`, `insights`, `engine`, `correlations`, `rating-correlations` | Run one analysis stage from saved results. See [Running single stages](#running-single-stages). |
 
@@ -71,6 +72,7 @@ The reports are:
 | --- | --- |
 | `reports/summary.md` | The headline scores and what to work on next. Start here. |
 | `reports/report.md` | The full report for both colors, with a glossary. |
+| `reports/changes.md` | What changed since the previous build: chapter and line additions, deletions, renames and reorderings, move-selection and configuration changes, and score deltas. Only the most recent change report is kept; unchanged builds preserve the previous report. |
 | `reports/chapters/` | One page per chapter: `W1.md`, `W2.md`, ... and `B1.md`, `B2.md`, .... |
 | `reports/openings/` | Opening-by-opening evidence for each color. |
 | `reports/trimmed/` | Your repertoire trimmed to your [coverage goal](#coverage-goal-and-trimmed-pgn), as `white-1-in-300.pgn` and `black-1-in-300.pgn`. |
@@ -365,7 +367,7 @@ Rows are filtered before the limit is applied, and the JSON keeps every row. `--
 | `.cache/explorer/` | Every fetched Explorer table, keyed by position, endpoint and filters, with its retrieval time. |
 | `.cache/evals/` | The cloud evaluation store and, if you keep it there, the downloaded export. |
 | `reports/` | The generated reports, chapter and opening pages, and comparison pages. |
-| `reports/data/` | Saved scores and analyses as JSON, and the build's progress in `.build-state.json`. |
+| `reports/data/` | Saved scores and analyses as JSON, the build's progress in `.build-state.json`, the last completed build snapshot in `.build-snapshot.json`, and the most recent diff in `changes.json`. |
 
 All of these are ignored by Git, so your repertoire stays on your computer. Back up `studies.json`, `configs/` and `comparisons.json` yourself if you want their history. Deleting the cache means fetching every table again, and deleting `.cache/evals/` means downloading and importing the evaluation export again.
 

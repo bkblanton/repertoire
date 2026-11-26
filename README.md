@@ -19,6 +19,7 @@ The score describes database results when you play your repertoire's moves. It i
 - **Chapter reach and depth:** how often each chapter is reached, by which move orders, and how many opponent moves you answer from preparation on average.
 - **Alternatives:** where chapters or side variations play different moves in the same position, each choice is scored and the best one is used. The report follows each move that was not played line by line until it meets the played move again, so you can see what a different move order changes.
 - **Candidate comparisons:** whether another study would improve your repertoire, decision by decision.
+- **Change report:** what changed since the previous build: chapter and line additions, deletions, renames and reorderings, move-selection shifts, configuration updates and metric deltas in `reports/changes.md`, keeping only the most recent change report and preserving it across unchanged builds.
 
 ## Requirements
 
