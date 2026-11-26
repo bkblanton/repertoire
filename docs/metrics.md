@@ -130,7 +130,15 @@ Chapters still overlap where one chapter's line passes through another's entry, 
 
 **Entry routes** (chapter pages) show the most likely single route to each entry. An entry's weight includes every route that reaches it first; the route shown may carry only part of that weight.
 
-**Chapter order** defaults to your study or PGN order. Setting [`chapter_order`](usage.md#other-options) to `"opening"` anchors each chapter at the most likely route to the deepest common ancestor position of its active entries in the repertoire graph and recursively orders branches by the union first-entry reach of the chapters in each branch under the overall policy (so overlapping chapters and competing alternatives are never double-counted). Chapters anchored directly at a branching position compete as single-chapter siblings alongside deeper sub-openings. The order applies to chapter numbering (`W1`, `W2`, ...), chapter tables, chapter pages, comparison links and the trimmed PGN.
+**Chapter order** defaults to your study or PGN order. Setting [`chapter_order`](usage.md#other-options) to `"opening"` anchors each chapter at the most likely route to the deepest position in the repertoire graph that strictly more than half of the games entering the chapter pass through (its majority-flow position), then recursively orders branches at every split by the union first-entry reach of all entries of the chapters in each branch under the overall policy (so overlapping chapters and competing alternatives are never double-counted).
+
+Using a strict `> 50%` majority-flow anchor rather than a 100% common ancestor or only the single most common entry balances two problems in multi-entry chapters:
+
+- A strict common ancestor across every entry lets a minor alternative move order pull a chapter up to a much shallower move, separating it from closely related chapters (for example, a Maróczy Bind chapter with 75% of its games in `4.Nxd4 g6 5.c4` and 25% in `3.c4` being pulled back to `2.Nf3 Nc6` and separated from other Accelerated Dragon chapters).
+- Anchoring on only the single largest entry can misfile a broad sidelines chapter whose largest individual entry is still a small minority (for example, a 10-entry sidelines chapter whose top entry is 25% of its games), and makes near-50/50 chapters jump between groups on small database shifts.
+- Strictly more than half avoids both, needs no tunable threshold, and is mathematically unique: incomparable branches in an acyclic graph are disjoint events, so two branches can never both carry more than 50% of a chapter's entries.
+
+Chapters anchored directly at a branching position compete as single-chapter siblings alongside deeper sub-openings. The order applies to chapter numbering (`W1`, `W2`, ...), chapter tables, chapter pages, comparison links and the trimmed PGN.
 
 ### Alternatives
 

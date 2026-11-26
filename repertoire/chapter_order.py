@@ -1,8 +1,10 @@
 """Automatic chapter ordering by move-prefix tree and union first-entry reach.
 
-Each chapter is anchored at the deepest common ancestor position of its active entries in the repertoire DAG
-(using that ancestor's most likely route from the repertoire roots), then branches at every move split are
-ordered recursively by the union first-entry reach of the chapters in each branch under the overall policy.
+Each chapter is anchored at the deepest position in the repertoire DAG that strictly more than half of the games
+entering the chapter pass through (using that position's most likely route from the repertoire roots). Because
+incomparable branches in a DAG are disjoint events, at most one branch can exceed 50%, so this position is always
+unique. Branches at every move split are then ordered recursively by the union first-entry reach of all entries of
+the chapters in each branch under the overall policy.
 """
 
 import json
@@ -15,7 +17,7 @@ from typing import Any
 from . import SCHEMA_VERSION
 from .board_cache import position_of
 from .context import AnalysisContext
-from .evaluate import Route, Weights, best_routes, better_route, reaches
+from .evaluate import Route, Weights, best_routes, reaches
 from .graph import Graph, Transitions, resolve, topology
 from .model import Evidence, Model, Sampled, empirical, prepare
 from .schema import JsonObject, Position
@@ -135,63 +137,39 @@ def _union_reach(profile: ProfileModel, roots: Weights, entries: frozenset[Posit
     return float(sum(m for k, m in mass.items() if position_of(k) in entries))
 
 
-def _common_ancestor_route(
+def _majority_flow_route(
     order: Sequence[Position],
     model: Model,
     raw: Sampled,
     mass: Mapping[Position, float],
     routes: Mapping[Position, Route],
     entry_set: Collection[Position],
-    witnesses: Mapping[Position, Route],
-) -> PathKey:
-    """Most likely route to the deepest common ancestor position of all active entries in the repertoire DAG.
+) -> PathKey | None:
+    """Most likely route to the deepest DAG node that >50% of games entering the chapter pass through.
 
-    Finding the common ancestor position before picking a representative route keeps multi-entry chapters
-    transposition-invariant when one entry's most likely route arrives via a transposition from another branch.
+    A chapter's first-entry flow through node `k` is `mass[k] * hit[k]`, where `mass[k]` is the probability of
+    reaching `k` before entering `entry_set` and `hit[k]` is the probability of reaching `entry_set` from `k`.
+    Strict >50% avoids two failure modes: requiring 100% of entries lets a rare secondary entry pull a chapter out
+    of its sub-opening, while anchoring on only the single largest entry can misfile a broad sidelines chapter by
+    a small plurality. In an acyclic graph, incomparable branches are disjoint events and cannot both exceed 50%,
+    so the nodes with flow > 50% form a totally ordered chain with a unique deepest node (first in postorder).
     """
-    if len(witnesses) == 1:
-        _, root, moves = next(iter(witnesses.values()))
-        return (position_of(root), *moves)
-    bit = {pos: 1 << i for i, pos in enumerate(witnesses)}
-    all_bits = (1 << len(witnesses)) - 1
-    reach_entries: dict[Position, int] = {}
+    total = sum(m for k, m in mass.items() if position_of(k) in entry_set)
+    if total <= 0:
+        return None
+    hit: dict[Position, float] = {}
     for k in order:
-        pos = position_of(k)
-        if pos in bit:
-            reach_entries[k] = bit[pos]
+        if position_of(k) in entry_set:
+            hit[k] = 1.0
             continue
-        if pos in entry_set:
-            reach_entries[k] = 0
-            continue
-        mask = 0
-        for b, (p, _) in zip(model[k].branches, raw[k]):
-            if p > 0 and b.target is not None:
-                mask |= reach_entries[b.target]
-        reach_entries[k] = mask
-    ancestor_set = {k for k in order if mass[k] > 0 and reach_entries[k] == all_bits}
-    if not ancestor_set:
-        return ()
-    has_descendant: dict[Position, bool] = {}
-    for k in order:
-        has_descendant[k] = any(
-            p > 0 and b.target is not None and (b.target in ancestor_set or has_descendant[b.target])
-            for b, (p, _) in zip(model[k].branches, raw[k])
+        hit[k] = sum(
+            p * hit[b.target] for b, (p, _) in zip(model[k].branches, raw[k]) if p > 0 and b.target is not None
         )
-    maximal = [k for k in order if k in ancestor_set and not has_descendant[k]]
-    # When incomparable branches both reach every entry (a transposition diamond), prefer the highest-reach
-    # position, breaking ties by route length and then better_route's deterministic ordering.
-    best_node = max(
-        maximal,
-        key=lambda k: (round(mass[k], 12), len(routes[k][2]), routes[k][0]),
-    )
-    for candidate in maximal:
-        if (
-            round(mass[candidate], 12) == round(mass[best_node], 12)
-            and len(routes[candidate][2]) == len(routes[best_node][2])
-            and better_route(routes[candidate], routes[best_node])
-        ):
-            best_node = candidate
-    _, root, moves = routes[best_node]
+    threshold = 0.5 * total + 1e-12
+    deepest = next((k for k in order if mass[k] * hit[k] > threshold), None)
+    if deepest is None:
+        return ()
+    _, root, moves = routes[deepest]
     return (position_of(root), *moves)
 
 
@@ -203,25 +181,16 @@ def _chapter_anchor(
     profile: ProfileModel,
     roots: Weights,
 ) -> PathKey:
-    """Most likely route to the deepest DAG common ancestor of a chapter's active entries."""
+    """Most likely route to the deepest majority-flow (>50%) ancestor of a chapter's entries."""
     if not entries:
         return (chapter_root,)
     entry_set = set(entries)
     transitions, order, model, raw = profile
     mass = reaches(model, order, raw, roots, stop_at=entry_set)
     routes = best_routes(model, order, raw, roots, stop_at=entry_set)
-    witnesses: dict[Position, Route] = {}
-    for k in reversed(order):
-        if mass[k] <= 0:
-            continue
-        pos = position_of(k)
-        if pos not in entry_set:
-            continue
-        candidate = routes[k]
-        if pos not in witnesses or better_route(candidate, witnesses[pos]):
-            witnesses[pos] = candidate
-    if witnesses:
-        return _common_ancestor_route(order, model, raw, mass, routes, entry_set, witnesses)
+    anchor = _majority_flow_route(order, model, raw, mass, routes, entry_set)
+    if anchor is not None:
+        return anchor
     # Fall back to structural routes when no entry has positive empirical reach (zero-game replies, missing tables,
     # or disconnected custom-FEN chapters).
     structural = _shortest_path(transitions, list(roots), entry_set)

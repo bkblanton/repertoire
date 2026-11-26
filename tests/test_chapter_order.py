@@ -127,7 +127,8 @@ def test_white_recursive_move_prefix_grouping_and_ordering(tmp_path, monkeypatch
 
 
 def test_parent_anchored_high_reach_chapter_sorts_before_smaller_subopening(tmp_path, monkeypatch):
-    # A broad chapter at 1.e4 e6 2.d4 (entries 2...b6 + 2...a6, total 25%) beats a smaller 2...d5 chapter (10%).
+    # A broad chapter split 50/50 at 1.e4 e6 2.d4 (2...b6 12% + 2...a6 12% = 24%) stays anchored at 2.d4 and beats
+    # a smaller 2...d5 chapter (10%).
     pgn = (
         '[ChapterURL "https://lichess.org/study/t/sub"]\n[ChapterName "Sub"]\n\n'
         '1. e4 e6 2. d4 d5 3. Nd2 *\n\n'
@@ -136,7 +137,7 @@ def test_parent_anchored_high_reach_chapter_sorts_before_smaller_subopening(tmp_
     )
     tables = {
         position('e4'): [('e7e6', 50, 0, 50)],
-        position('e4 e6 d4'): [('b7b6', 15, 0, 15), ('a7a6', 10, 0, 10), ('d7d5', 10, 0, 10), ('c7c5', 65, 0, 65)],
+        position('e4 e6 d4'): [('b7b6', 12, 0, 12), ('a7a6', 12, 0, 12), ('d7d5', 10, 0, 10), ('c7c5', 66, 0, 66)],
     }
     score_path, cache = score_pgn(tmp_path, monkeypatch, pgn, tables)
     analysis = AnalysisContext(score_path)
@@ -456,3 +457,100 @@ def test_transposing_entry_keeps_multi_entry_chapter_under_dag_common_ancestor(t
     # Mieses group (mieses-side 34% + mieses-main 8% = 42%) > Paulsen (40%) > Vienna Sidelines (20%) > Anderssen (10%).
     # Without DAG common-ancestor anchoring, mieses-side would pull up to 2.Nc3 and leave mieses-main (8%) last.
     assert result['ids'] == ['mieses-side', 'mieses-main', 'paulsen', 'vienna-side', 'anderssen']
+
+
+def test_majority_flow_ignores_minor_alternative_entry(tmp_path, monkeypatch):
+    # Modeled on Black's Accelerated Dragon: maroczy has 75% of its reach in 3.d4 cxd4 4.Nxd4 g6 5.c4 and 25% in
+    # 3.c4. Majority-flow (>50%) anchors maroczy under 4.Nxd4 g6 5.c4 so all three Accelerated Dragon chapters stay
+    # grouped together ahead of rossolimo (3.Bb5), while maroczy still contributes its full union reach (both entries).
+    pgn = '\n\n'.join(
+        [
+            '[ChapterURL "https://lichess.org/study/t/rossolimo"]\n[ChapterName "Rossolimo"]\n\n'
+            '1. e4 c5 2. Nf3 Nc6 3. Bb5 g6 *',
+            '[ChapterURL "https://lichess.org/study/t/maroczy"]\n[ChapterName "Maroczy Bind"]\n\n'
+            '1. e4 c5 2. Nf3 Nc6 3. d4 (3. c4 g6) 3... cxd4 4. Nxd4 g6 5. c4 Bg7 *',
+            '[ChapterURL "https://lichess.org/study/t/exchange"]\n[ChapterName "Exchange"]\n\n'
+            '1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 g6 5. Nxc6 bxc6 *',
+            '[ChapterURL "https://lichess.org/study/t/modern"]\n[ChapterName "Modern"]\n\n'
+            '1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 g6 5. Nc3 Bg7 *',
+        ]
+    )
+    tables = {
+        position(''): [('e2e4', 500, 0, 500)],
+        position('e4 c5'): [('g1f3', 500, 0, 500)],
+        position('e4 c5 Nf3 Nc6'): [('d2d4', 350, 0, 350), ('f1b5', 130, 0, 130), ('c2c4', 20, 0, 20)],
+        position('e4 c5 Nf3 Nc6 d4 cxd4'): [('f3d4', 350, 0, 350)],
+        position('e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6'): [
+            ('b1c3', 200, 0, 200),
+            ('d4c6', 90, 0, 90),
+            ('c2c4', 60, 0, 60),
+        ],
+    }
+    score_path, cache = score_pgn(tmp_path, monkeypatch, pgn, tables, color='black')
+    analysis = AnalysisContext(score_path)
+    result = chapter_order.order_chapters(analysis, analysis.read_evidence(cache, required=True), 'opening')
+    assert result['ids'] == ['modern', 'exchange', 'maroczy', 'rossolimo']
+
+
+def test_majority_flow_keeps_scattered_sidelines_at_parent_and_avoids_plurality_misfiling(tmp_path, monkeypatch):
+    # Modeled on White's Closed Sicilian: sidelines (36%) is scattered across four 2nd/3rd-move entries (max entry
+    # 12% under 2...e6, i.e. 33% of the chapter) while korchnoi (15%) is under 2...e6 and fianchetto (46%, with 72%
+    # flowing through 2...Nc6 3.g3) + botvinnik (3%) form a 49% group. Pure single-top-entry would merge sidelines +
+    # korchnoi under 2...e6 (51%) ahead of fianchetto; majority-flow keeps sidelines at 2.Nc3 so fianchetto + botvinnik
+    # stay first, followed by sidelines and korchnoi.
+    pgn = '\n\n'.join(
+        [
+            '[ChapterURL "https://lichess.org/study/t/korchnoi"]\n[ChapterName "Korchnoi"]\n\n'
+            '1. e4 c5 2. Nc3 e6 3. Nge2 Nc6 *',
+            '[ChapterURL "https://lichess.org/study/t/sidelines"]\n[ChapterName "Sidelines"]\n\n'
+            '1. e4 c5 2. Nc3 e6 (2... d6 3. g3) (2... a6 3. g3) (2... b6 3. g3) 3. Nge2 a6 *',
+            '[ChapterURL "https://lichess.org/study/t/botvinnik"]\n[ChapterName "Botvinnik"]\n\n'
+            '1. e4 c5 2. Nc3 Nc6 3. g3 g6 4. Bg2 e5 *',
+            '[ChapterURL "https://lichess.org/study/t/fianchetto"]\n[ChapterName "Fianchetto"]\n\n'
+            '1. e4 c5 2. Nc3 Nc6 (2... g6 3. g3) 3. g3 g6 (3... Nf6 4. Bg2) 4. Bg2 Bg7 *',
+        ]
+    )
+    tables = {
+        position('e4'): [('c7c5', 500, 0, 500)],
+        position('e4 c5 Nc3'): [
+            ('b8c6', 180, 0, 180),
+            ('e7e6', 135, 0, 135),
+            ('g7g6', 65, 0, 65),
+            ('d7d6', 45, 0, 45),
+            ('a7a6', 40, 0, 40),
+            ('b7b6', 35, 0, 35),
+        ],
+        position('e4 c5 Nc3 Nc6 g3'): [('g7g6', 100, 0, 100), ('g8f6', 80, 0, 80)],
+        position('e4 c5 Nc3 Nc6 g3 g6 Bg2'): [('f8g7', 85, 0, 85), ('e7e5', 15, 0, 15)],
+        position('e4 c5 Nc3 e6 Nge2'): [('b8c6', 75, 0, 75), ('a7a6', 60, 0, 60)],
+    }
+    score_path, cache = score_pgn(tmp_path, monkeypatch, pgn, tables)
+    analysis = AnalysisContext(score_path)
+    result = chapter_order.order_chapters(analysis, analysis.read_evidence(cache, required=True), 'opening')
+    # fianchetto (46% reach, 72% flows through 2...Nc6 3.g3) + botvinnik (3%) form a 49% 2...Nc6 group;
+    # sidelines (36%, top entry 12% = 33% of chapter) stays at 2.Nc3; korchnoi (15%) is under 2...e6.
+    assert result['ids'] == ['fianchetto', 'botvinnik', 'sidelines', 'korchnoi']
+
+
+def test_exact_fifty_fifty_split_stays_at_parent_node(tmp_path, monkeypatch):
+    # A chapter split exactly 50/50 across 2.c3 and 2.Nf3 Nc6 3.c3 must stay at 1.e4 c5 rather than joining 2.Nf3 Nc6.
+    pgn = '\n\n'.join(
+        [
+            '[ChapterURL "https://lichess.org/study/t/alapin"]\n[ChapterName "Alapin"]\n\n'
+            '1. e4 c5 2. c3 (2. Nf3 Nc6 3. c3 d5) 2... d5 *',
+            '[ChapterURL "https://lichess.org/study/t/open"]\n[ChapterName "Open"]\n\n1. e4 c5 2. Nf3 Nc6 3. d4 *',
+            '[ChapterURL "https://lichess.org/study/t/bowdler"]\n[ChapterName "Bowdler"]\n\n1. e4 c5 2. Bc4 e6 *',
+        ]
+    )
+    tables = {
+        position(''): [('e2e4', 500, 0, 500)],
+        position('e4 c5'): [('g1f3', 200, 0, 200), ('f1c4', 200, 0, 200), ('c2c3', 100, 0, 100)],
+        position('e4 c5 Nf3 Nc6'): [('d2d4', 100, 0, 100), ('c2c3', 100, 0, 100)],
+    }
+    score_path, cache = score_pgn(tmp_path, monkeypatch, pgn, tables, color='black')
+    analysis = AnalysisContext(score_path)
+    # alapin is 20% via 2.c3 and 20% via 2.Nf3 Nc6 3.c3 (exact 50/50 split -> stays at 1.e4 c5 with 40% reach!).
+    # Under 1.e4 c5: bowdler (40%, study index 2) vs alapin (40%, study index 0) vs open (20%, under 2.Nf3 Nc6).
+    # Because alapin does NOT get pulled into 2.Nf3 Nc6, alapin (40%) and bowdler (40%) both beat open (20%).
+    result = chapter_order.order_chapters(analysis, analysis.read_evidence(cache, required=True), 'opening')
+    assert result['ids'] == ['alapin', 'bowdler', 'open']
