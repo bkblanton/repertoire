@@ -145,17 +145,17 @@ Chapters can overlap, so their contributions need not sum to the overall score, 
 
 ## Engine evaluations
 
-Engine evaluations are a separate view, never an input to the model. When the Lichess evaluation export has been imported, each position's deepest Stockfish evaluation is converted to an expected score for you with the Lichess win-chance curve,
+Engine evaluations are a separate view for the main probability model, never altering repertoire scores or move choices. When the Lichess evaluation export or index has been imported, each position's deepest Stockfish evaluation is converted to an expected score for you with the Lichess win-chance curve,
 
 $$
 E = \frac{1}{1 + e^{-0.00368208\,c}},
 $$
 
-where $c$ is the evaluation in centipawns from your side, and mate counts as 1 or 0. The reports compare $E$ with database scores where preparation ends and use its changes to judge single moves. A position without an evaluation stays missing. After an unprepared reply without one, the evaluation of the position before the reply, which assumes the opponent's best reply, is a lower bound, and is reported apart from evaluations.
+where $c$ is the evaluation in centipawns from your side, and mate counts as 1 or 0. The reports compare $E$ with database scores where preparation ends, use its changes to judge single moves, and audit full repertoires for unprepared opponent top moves (`pv0`), only-move tactics (via multi-PV or 1-ply child evaluations), and engine-above-database traps. A position without an evaluation stays missing. After an unprepared reply without one, the evaluation of the position before the reply, which assumes the opponent's best reply, is a lower bound, and is reported apart from evaluations.
 
 ## Coverage goals
 
-A coverage goal of 1 in N games trims the repertoire to the positions games reach often enough to be worth learning. Positions are decided from the roots forward: a position where you are to move is kept when the probability arriving at it through kept positions is at least $1/N$, and cut otherwise, and no probability flows past a cut. Inside a repetition loop a position is kept or cut as a whole. Roots and finished games are never cut, and positions reached only through a missing reply table are kept.
+A coverage goal of 1 in N games trims the repertoire to the positions games reach often enough to be worth learning (plus optional criticality-protected lines from engine evaluations and explicit `keep` pins, together with their routes). Positions are decided from the roots forward: a position where you are to move is kept when the probability arriving at it through kept positions is at least $1/N$ (or it is protected/pinned), and cut otherwise, and no probability flows past a cut. Inside a repetition loop a position is kept or cut as a whole. Roots and finished games are never cut, and positions reached only through a missing reply table are kept.
 
 A cut position leaves the graph, so the opponent's move into it becomes a deviation, scored with its row in the parent table. The trimmed repertoire is then scored by the same model. Writing $f_e$ for the probability on an arrival $e$ into a cut position $c_e$ and $S(e)$ for that arrival's row score,
 

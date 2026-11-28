@@ -278,19 +278,25 @@ def own_turn(node: ModelNode) -> bool:
 
 
 def coverage(
-    model: Model, order: list[Position], sampled: Sampled, roots: Weights, threshold: float
+    model: Model,
+    order: list[Position],
+    sampled: Sampled,
+    roots: Weights,
+    threshold: float,
+    keep: Collection[Position] = (),
 ) -> tuple[dict[Position, float], set[Position], set[Position]]:
     """Reach under a coverage goal: games continue only through positions that come up often enough.
 
     Every node where you are to move, prepared or a theory leaf, is kept when the probability arriving at it through
-    kept nodes is at least `threshold`, and cut otherwise; flow stops at cut nodes. Deciding parents first means
-    every kept node is reached that often in the trimmed repertoire itself, so nothing kept relies on a cut route.
-    Roots and finished games are never cut. Nodes reachable only through a missing reply table have unknown reach
-    and are kept. Inside a repetition loop a position is kept or cut as a whole: kept if any occurrence is.
+    kept nodes is at least `threshold` (or its position is in `keep`), and cut otherwise; flow stops at cut nodes.
+    Deciding parents first means every kept node is reached that often in the trimmed repertoire itself, so nothing
+    kept relies on a cut route. Roots and finished games are never cut. Nodes reachable only through a missing reply
+    table have unknown reach and are kept. Inside a repetition loop a position is kept or cut as a whole: kept if
+    any occurrence is.
 
     Returns the probability arriving at each node, the cut nodes and the nodes of unknown reach.
     """
-    forced: set[Position] = set()
+    forced: set[Position] = {position_of(k) for k in keep}
     while True:
         mass = dict.fromkeys(order, 0.0)
         for k, weight in roots.items():

@@ -306,7 +306,9 @@ def _capture_color(score_path: Path, pgn_path: Path, config_path: Path | None) -
 
     coverage_summary: JsonObject | None = None
     if coverage_data:
-        row = next((r for r in coverage_data.get('levels', []) if r.get('goal') == coverage_data['goal']), None)
+        row = (coverage_data.get('at_goal', {}).get('protected') or {}).get('row') or next(
+            (r for r in coverage_data.get('levels', []) if r.get('goal') == coverage_data['goal']), None
+        )
         full = coverage_data.get('levels', [None])[-1]
         if row is not None and full is not None:
             coverage_summary = dict(
@@ -857,6 +859,12 @@ def _diff_config(
         )
     if old_cfg.get('coverage_goal') != new_cfg.get('coverage_goal'):
         items.append(dict(key='coverage_goal', old=old_cfg.get('coverage_goal'), new=new_cfg.get('coverage_goal')))
+    if old_cfg.get('critical_coverage') != new_cfg.get('critical_coverage'):
+        items.append(
+            dict(key='critical_coverage', old=old_cfg.get('critical_coverage'), new=new_cfg.get('critical_coverage'))
+        )
+    if old_cfg.get('keep') != new_cfg.get('keep'):
+        items.append(dict(key='keep', old=old_cfg.get('keep'), new=new_cfg.get('keep')))
 
     old_policy, new_policy = old_cfg.get('policy', {}), new_cfg.get('policy', {})
     policy_changes: list[JsonObject] = []

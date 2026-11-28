@@ -341,6 +341,10 @@ def _config_and_evidence_section(item: JsonObject) -> list[str]:
                 )
                 detail = f' (kept moves: {moves}; trimmed score: {score})'
             bullets.append(f'**Coverage goal:** 1 in {old_g:,} games → 1 in {new_g:,} games{detail}.')
+        elif key == 'critical_coverage':
+            bullets.append('**Critical coverage:** protection settings updated.')
+        elif key == 'keep':
+            bullets.append('**Pinned lines (`keep`):** updated.')
         elif key == 'policy':
             parts = []
             for p in change['changes']:

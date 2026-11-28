@@ -109,7 +109,7 @@ class Scores(TypedDict):
     prior_sensitivity: list[Sensitivity]
 
 
-def entry_positions(value: Iterable[str | JsonObject], graph: Graph) -> list[Position]:
+def entry_positions(value: Iterable[str | JsonObject], graph: Graph, label: str = "Chapter entry") -> list[Position]:
     positions = []
     for item in value:
         if isinstance(item, str):
@@ -123,7 +123,7 @@ def entry_positions(value: Iterable[str | JsonObject], graph: Graph) -> list[Pos
                     board.push_san(move)
             position = key(board)
         if position not in graph.nodes:
-            raise ValueError(f"Chapter entry not in repertoire: {position}")
+            raise ValueError(f"{label} not in repertoire: {position}")
         positions.append(position)
     return sorted(set(positions))
 
@@ -153,10 +153,13 @@ class Plan:
 
 
 CONFIG = "configs/{}.json"
-# The coverage goal and chapter order never change a score or upstream analysis (coverage.py, chapter_order.py).
+# The coverage goal, chapter order, critical coverage rules and pinned lines never change a score
+# (coverage.py, chapter_order.py).
 COVERAGE_KEY = "coverage_goal"
 CHAPTER_ORDER_KEY = "chapter_order"
-UNSCORED_KEYS = (COVERAGE_KEY, CHAPTER_ORDER_KEY)
+CRITICAL_COVERAGE_KEY = "critical_coverage"
+KEEP_KEY = "keep"
+UNSCORED_KEYS = (COVERAGE_KEY, CHAPTER_ORDER_KEY, CRITICAL_COVERAGE_KEY, KEEP_KEY)
 
 
 def load_config(path: str | Path | None) -> JsonObject:

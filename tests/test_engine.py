@@ -4,15 +4,23 @@ import pytest
 from helpers import position
 from test_free_transpositions import scored  # noqa: F401
 
-from repertoire.engine import analyze, exits_summary, expected_score, judgement
+from repertoire.engine import (
+    analyze,
+    exits_summary,
+    expected_score,
+    is_trivial_recapture,
+    judgement,
+    normalize_pv_uci,
+    position_sharpness,
+)
 from repertoire.evals import Evaluation, Store
 from repertoire.preparation import analyze as preparation
 from repertoire.vulnerabilities import analyze as vulnerabilities
 
 
-def evaluation(cp=None, mate=None, depth=30):
-    line = {'line': 'e2e4'} | ({'cp': cp} if cp is not None else {'mate': mate})
-    return Evaluation(depth=depth, knodes=1, pvs=[line], source='export', retrieved_at='2026-10-05')
+def evaluation(cp=None, mate=None, depth=30, line='e2e4'):
+    pv = {'line': line} | ({'cp': cp} if cp is not None else {'mate': mate})
+    return Evaluation(depth=depth, knodes=1, pvs=[pv], source='export', retrieved_at='2026-10-05')
 
 
 def test_expected_score_follows_the_lichess_curve_from_your_side():
@@ -125,3 +133,107 @@ def test_missing_evaluations_are_mentioned_once_per_page(complete, tmp_path):
     pages = list((out / 'chapters').glob('*.md'))
     assert pages and all(p.read_text(encoding='utf-8').count(NO_EVALUATIONS) == 1 for p in pages)
     assert 'Engine where prep ends' not in (out / 'report.md').read_text(encoding='utf-8')
+
+
+def test_castling_normalization_sharpness_and_recapture_helpers():
+    castling_pos = position('e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6')
+    assert normalize_pv_uci(castling_pos, 'e1h1') == 'e1g1'
+    assert normalize_pv_uci(position('e4 e5 Ke2'), 'e1h1') == 'e1h1'  # no castling right -> unchanged
+    assert normalize_pv_uci(castling_pos, 'e2e4') == 'e2e4'  # non-castling UCI unchanged
+
+    # Multi-PV preferred over children; 1-ply child eval fallback works when multi-PV is absent.
+    pos = position('e4 e5 Nf3')
+    evals_multi = {
+        pos: Evaluation(
+            depth=30,
+            knodes=10,
+            pvs=[{'cp': -90, 'line': 'b8c6'}, {'cp': 35, 'line': 'g8f6'}],
+            source='export',
+            retrieved_at='now',
+        )
+    }
+    assert position_sharpness(pos, True, evals_multi) is None
+    sh_multi = position_sharpness(pos, False, evals_multi, allow_children=False)
+    assert sh_multi is not None and sh_multi['best_move'] == 'b8c6' and sh_multi['source'] == 'multipv'
+    assert sh_multi['gap_pp'] > 10
+
+    evals_children = {
+        pos: evaluation(cp=-90, line='b8c6'),
+        position('e4 e5 Nf3 Nf6'): evaluation(cp=35, line='d2d4'),
+    }
+    assert position_sharpness(pos, False, evals_children, allow_children=False) is None
+    sh_child = position_sharpness(pos, False, evals_children, allow_children=True)
+    assert sh_child is not None and sh_child['best_move'] == 'b8c6' and sh_child['source'] == 'children'
+    assert sh_child['gap_pp'] > 10
+
+    # Obvious single recapture vs real 2-piece recapture choice.
+    assert is_trivial_recapture(position('e4 d5'), 'e4d5', 'd8d5', 'g8f6')
+    assert not is_trivial_recapture(position('e4 e5 Nf3 Nc6 Bb5 a6 Bxc6'), 'b5c6', 'd7c6', 'b7c6')
+    assert not is_trivial_recapture(position('e4 d5'), 'e4d5', 'g8f6', 'd8d5')
+
+
+def test_engine_audit_finds_tests_sharp_replies_cliffs_and_refutations(scored, evaluation_store):  # noqa: F811
+    from repertoire.report.bundle import load
+    from repertoire.report.generate import generate
+    from repertoire.report.links import bundle_refs
+    from repertoire.report.pages import summary_report
+    from repertoire.report.sections import engine_section, summary_critical_engine_section
+
+    path, cache, _ = scored
+    companions(path, cache)
+    before_nd5 = position('e4 e5 Nc3 Qf6')
+    after_nd5 = position('e4 e5 Nc3 Qf6 Nd5')
+    qd8 = position('e4 e5 Nc3 Qf6 Nd5 Qd8')
+    c6 = position('e4 e5 Nc3 Qf6 Nd5 c6')
+    with Store(evaluation_store) as store:
+        # 1. Own move 3.Nd5 loses > 5pp; pv0 is f6d8 (unprepared refutation).
+        store.put(before_nd5, evaluation(cp=120, line='f1c4'))
+        store.put(after_nd5, evaluation(cp=20, line='f6d8'))
+        # 2. Unprepared opponent reply 3...Qd8 lands on an only-move tactic (4.Nc3 vs 4.d4).
+        store.put(
+            qd8,
+            Evaluation(
+                depth=32,
+                knodes=200,
+                pvs=[{'cp': 90, 'line': 'd5c3'}, {'cp': -40, 'line': 'd2d4'}],
+                source='export',
+                retrieved_at='now',
+            ),
+        )
+        # 3. Unprepared reply 3...c6 has 1-ply child evals loaded via lookahead!
+        store.put(c6, evaluation(cp=80, line='d5c3'))
+        store.put(position('e4 e5 Nc3 Qf6 Nd5 c6 Nc3'), evaluation(cp=80, line='d7d5'))
+        store.put(position('e4 e5 Nc3 Qf6 Nd5 c6 d4'), evaluation(cp=-20, line='c6d5'))
+
+    result = analyze(path, cache)
+    # `positions` keeps only direct engine positions (not 1-ply lookahead children).
+    assert position('e4 e5 Nc3 Qf6 Nd5 c6 Nc3') not in result['positions']
+    nd5_id = next(k for k in result['moves'] if k.startswith(before_nd5))
+    assert result['moves'][nd5_id]['refutation'] == {'move': 'f6d8', 'move_san': 'Qd8', 'prepared': False}
+
+    overall_crit = next(s for s in result['scopes'] if s['id'] == 'overall')['critical']
+    tests = overall_crit['unprepared_engine_tests']
+    assert any(
+        t['move'] == 'f6d8' and t['is_refutation'] and t['reply_sharpness']['best_move_san'] == 'Nc3' for t in tests
+    )
+    sharp = overall_crit['sharp_unprepared_replies']
+    assert {r['move'] for r in sharp} >= {'f6d8', 'c7c6'}
+    c6_row = next(r for r in sharp if r['move'] == 'c7c6')
+    assert c6_row['sharpness']['source'] == 'children' and c6_row['sharpness']['best_move_san'] == 'Nc3'
+
+    path.with_suffix('.engine.json').write_text(json.dumps(result))
+    bundle = load([path], strict=False)[0]
+    refs = bundle_refs(bundle)
+    eng_md = '\n'.join(engine_section(bundle, refs, 10))
+    assert '**Unprepared opponent engine tests**' in eng_md
+    assert '**Sharp unprepared replies and traps**' in eng_md
+    assert 'Refutation' in eng_md and 'Qd8 (unprepared)' in eng_md
+    sum_crit = '\n'.join(summary_critical_engine_section(bundle, refs))
+    assert 'Critical lines to check (engine)' in sum_crit
+    assert '[Full engine view and audit](#white-engine)' in sum_crit
+    summary_text = summary_report([bundle])
+    assert 'Critical lines to check (engine)' in summary_text
+    # Ensure full report generation has no broken links or em dashes.
+    generate([path])
+    full_md = (path.parent / 'report.md').read_text(encoding='utf-8')
+    assert '\u2014' not in full_md and '\u2014' not in summary_text

@@ -105,6 +105,11 @@ TEXT_COLUMNS = (
     'Scope',
     'Notes',
     'Shift',
+    'Why kept',
+    'Refutation',
+    'Best reply',
+    'Critical reply',
+    'Critical move',
 )
 
 # Numeric headers that share a prefix with a text column.

@@ -61,6 +61,7 @@ from .sections import (
     rating_correlations_section,
     snapshot_notes,
     strengths_section,
+    summary_critical_engine_section,
     summary_edge_section,
     vulnerabilities_section,
 )
@@ -636,6 +637,7 @@ def summary_report(
                 '',
             ]
         text += summary_edge_section(b.get('vulnerabilities', {}).get('overall'), refs, color)
+        text += summary_critical_engine_section(b, refs)
         positions = [p for p in visible_positions(char) if not unanswered_position(p, color)]
         if positions:
             text += [

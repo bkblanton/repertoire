@@ -286,17 +286,40 @@ def build(
                     analyze,
                 )
         for color, config, path in zip(('white', 'black'), (white_config, black_config), paths):
-            # The goal and chapter order decide only this step, the trimmed PGN and rendering; the score and other
-            # analyses ignore them.
+            # The goal, chapter order, critical coverage rules and pinned lines decide only this step, the trimmed
+            # PGN and rendering; the score and other analyses ignore them.
             loaded = scoring.load_config(config)
             goal = coverage.goal_from_config(loaded)
             order = chapter_order.order_from_config(loaded)
+            critical_cfg = coverage.critical_config_from_config(loaded)
+            keep_cfg = loaded.get(coverage.KEEP_CONFIG_KEY, [])
 
-            def coverage_inputs(path: Path = path, goal: int = goal, order: str = order) -> JsonObject:
-                return dict(code=analysis_code, files=file_inputs([path]), goal=goal, chapter_order=order, cache=cache)
+            def coverage_inputs(
+                path: Path = path,
+                goal: int = goal,
+                order: str = order,
+                critical_cfg: JsonObject = critical_cfg,
+                keep_cfg: object = keep_cfg,
+            ) -> JsonObject:
+                required = [path, evals.STORE] if critical_cfg['enabled'] else [path]
+                return dict(
+                    code=analysis_code,
+                    files=file_inputs(required),
+                    goal=goal,
+                    chapter_order=order,
+                    critical_coverage=critical_cfg,
+                    keep=keep_cfg,
+                    cache=cache,
+                )
 
-            def trim(path: Path = path, goal: int = goal, order: str = order) -> None:
-                coverage.run(path, cache, goal, order)
+            def trim(
+                path: Path = path,
+                goal: int = goal,
+                order: str = order,
+                critical_cfg: JsonObject = critical_cfg,
+                keep_cfg: Any = keep_cfg,
+            ) -> None:
+                coverage.run(path, cache, goal, order, critical=critical_cfg, keep=keep_cfg)
 
             runner.step(
                 f'{color}.coverage',

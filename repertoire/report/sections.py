@@ -27,6 +27,7 @@ from .format import (
     centipawn_equivalent,
     count,
     elo_equivalent,
+    engine_mean,
     escape,
     evidence_date,
     gap_percentage,
@@ -772,14 +773,39 @@ def coverage_sentence(bundle: Bundle) -> str | None:
         return None
     color = bundle['report']['color']
     goal, path = data['goal'], data['at_goal']['pgn']['path']
-    row = next(r for r in data['levels'] if r['goal'] == goal)
+    protected = data['at_goal'].get('protected') or {}
+    added = protected.get('decisions_added', 0)
+    row = protected['row'] if added and protected.get('row') else next(r for r in data['levels'] if r['goal'] == goal)
     full = data['levels'][-1]
+    detail = f' ({added:,} critical)' if added else ''
     return (
         f'At your coverage goal of **1 in {goal:,} games**, you keep {row["decisions"]:,} of '
-        f'{full["decisions"]:,} moves and score {bounded_score(row["score"])} instead of '
+        f'{full["decisions"]:,} moves{detail} and score {bounded_score(row["score"])} instead of '
         f'{bounded_score(full["score"])}; {percentage(row["leaving_earlier"])} of games leave preparation earlier. '
         f'[Coverage goal](#{color}-coverage) · [Trimmed PGN](@{path}).'
     )
+
+
+def _format_protection_reason(reason: JsonObject) -> str:
+    kind = reason['kind']
+    if kind == 'only_move':
+        return (
+            f"Only-move cliff (+{reason['gap_pp']:.1f} pp: "
+            f"{escape(reason['best_move_san'])} vs {escape(reason['second_move_san'])})"
+        )
+    if kind == 'engine_vs_db':
+        return (
+            f"Engine {percentage(reason['engine_score'])} vs DB {percentage(reason['database_score'])} "
+            f"(+{reason['engine_minus_db_pp']:.1f} pp)"
+        )
+    if kind == 'refutation':
+        return (
+            f"Refutation {escape(reason['refutation_san'])} after "
+            f"{escape(reason['own_move_san'])} (-{reason['own_loss_pp']:.1f} pp)"
+        )
+    if kind == 'pinned':
+        return 'Pinned in config'
+    return escape(kind)
 
 
 def coverage_section(
@@ -794,31 +820,82 @@ def coverage_section(
     name = pgn['path'].rsplit('/', 1)[-1]
     levels = data['levels']
     total = levels[-1]['decisions']
+    protected = details.get('protected') or {}
+    added = protected.get('decisions_added', 0)
+    prow = protected.get('row') if added else None
+
+    goal_rows: list[list[Cell]] = []
+    for r in levels:
+        if r['goal'] == goal and not prow:
+            label = f'**{coverage_goal_label(r["goal"])}** (your goal)'
+        else:
+            label = coverage_goal_label(r['goal'])
+        goal_rows.append(
+            [
+                label,
+                f'{r["decisions"]:,}' if r['goal'] is None else f'{r["decisions"]:,} of {total:,}',
+                percentage(r['leaving_earlier']),
+                bounded_score(r['score']),
+                '' if r['goal'] is None else coverage_change(r),
+            ]
+        )
+        if r['goal'] == goal and prow:
+            goal_rows.append(
+                [
+                    f'**1 in {goal:,} + critical** (your trimmed PGN)',
+                    f'{prow["decisions"]:,} of {total:,}',
+                    percentage(prow['leaving_earlier']),
+                    bounded_score(prow['score']),
+                    coverage_change(prow),
+                ]
+            )
+
+    protection_note = (
+        ' Engine-critical lines (only-move cliffs, high engine-vs-database gaps, and prepared refutations of '
+        'inaccurate moves) and pinned positions are kept alongside positions meeting the goal.'
+        if protected.get('enabled') or protected.get('pinned')
+        else ''
+    )
     text = [
         *section(f'{level} Coverage goal', anchor),
         f'Your coverage goal is **1 in {goal:,} games**. The trimmed repertoire keeps your moves at the positions '
         'games reach at least that often, counting only routes that stay in the trimmed repertoire, and leaves rarer '
-        'positions to the database: the reply into one becomes an unprepared reply. The trimmed PGN, '
-        f'[{name}](@{pgn["path"]}), is ready to import into a trainer such as ChessTempo. Your studies and every '
-        'other section keep the full repertoire. Set the goal with `coverage_goal` in your configuration. '
-        f'{about("coverage")}.',
+        'positions to the database: the reply into one becomes an unprepared reply.'
+        + protection_note
+        + f' The trimmed PGN, [{name}](@{pgn["path"]}), is ready to import into a trainer such as ChessTempo. '
+        'Your studies and every other section keep the full repertoire. Set the goal with `coverage_goal` in your '
+        f'configuration. {about("coverage")}.',
         '',
-        *table(
-            ['Coverage goal', 'Your moves', 'Games leaving prep earlier', 'Score', 'Change'],
-            [
-                [
-                    f'**{coverage_goal_label(r["goal"])}** (your goal)'
-                    if r['goal'] == goal
-                    else coverage_goal_label(r['goal']),
-                    f'{r["decisions"]:,}' if r['goal'] is None else f'{r["decisions"]:,} of {total:,}',
-                    percentage(r['leaving_earlier']),
-                    bounded_score(r['score']),
-                    '' if r['goal'] is None else coverage_change(r),
-                ]
-                for r in levels
-            ],
-        ),
+        *table(['Coverage goal', 'Your moves', 'Games leaving prep earlier', 'Score', 'Change'], goal_rows),
     ]
+    protected_positions = protected.get('positions') or []
+    if protected_positions:
+        ancestors = protected.get('ancestors_added', 0)
+        anc_note = (
+            f' (plus {ancestors:,} earlier route move{"s" if ancestors != 1 else ""} to reach them)'
+            if ancestors
+            else ''
+        )
+        text += [
+            f'**Critical moves kept below 1 in {goal:,} games**',
+            '',
+            f'{added:,} extra move{"s" if added != 1 else ""} kept beyond the reach cutoff: '
+            f'{len(protected_positions):,} triggered below{anc_note}.',
+            '',
+            *table(
+                ['Line', 'Chapter source', 'Reach', 'Your move', 'Why kept'],
+                [
+                    [
+                        refs.position_cell(item),
+                        refs.sources(item),
+                        reach_cell(item['reach']),
+                        escape(item['own_move_san']),
+                        '; '.join(_format_protection_reason(reason) for reason in item['reasons']),
+                    ]
+                    for item in protected_positions
+                ],
+            ),
+        ]
     cuts = details['cuts']
     if cuts:
         cost = sum(c['cost_bounds_pp'][0] for c in cuts), sum(c['cost_bounds_pp'][1] for c in cuts)
@@ -1068,6 +1145,29 @@ def engine_section(
         key=lambda r: (-r['branch_reach'] * r['engine']['loss_pp'], r['id']),
     )[:top]
     if own:
+        has_refut = any((r['engine'] or {}).get('refutation') for r in own)
+        own_headers = [
+            'Line',
+            'Chapter source',
+            move_reach_label(scope),
+            'Move gain',
+            'Engine loss',
+            *(['Refutation'] if has_refut else []),
+        ]
+        own_rows = []
+        for r in own:
+            ref = (r['engine'] or {}).get('refutation')
+            ref_cell = f"{escape(ref['move_san'])} ({'prepared' if ref['prepared'] else 'unprepared'})" if ref else '-'
+            own_rows.append(
+                [
+                    refs.move_cell(r),
+                    refs.sources(r),
+                    reach_cell(r['branch_reach']),
+                    score_points(100 * (r['move_database_score'] - r['reference_score']), signed=True),
+                    judged(r['engine']['loss_pp'], r['engine']['judgement'], signed=False),
+                    *([ref_cell] if has_refut else []),
+                ]
+            )
         text += [
             '**Your moves the engine questions**',
             '',
@@ -1075,19 +1175,7 @@ def engine_section(
             'inaccuracy, ranked by move reach × engine loss. The move gain is the database view: a positive one means '
             'the move scores well in practice anyway.',
             '',
-            *table(
-                ['Line', 'Chapter source', move_reach_label(scope), 'Move gain', 'Engine loss'],
-                [
-                    [
-                        refs.move_cell(r),
-                        refs.sources(r),
-                        reach_cell(r['branch_reach']),
-                        score_points(100 * (r['move_database_score'] - r['reference_score']), signed=True),
-                        judged(r['engine']['loss_pp'], r['engine']['judgement'], signed=False),
-                    ]
-                    for r in own
-                ],
-            ),
+            *table(own_headers, own_rows),
         ]
     mistakes = sorted(
         (
@@ -1166,7 +1254,147 @@ def engine_section(
                 ],
             ),
         ]
+    critical = scope_by_id(engine).get(scope_id, {}).get('critical') or {}
+    tests = critical.get('unprepared_engine_tests', [])[:top]
+    if tests:
+        text += _unprepared_tests_table(tests, scope, refs)
+    sharp_replies = critical.get('sharp_unprepared_replies', [])[:top]
+    if sharp_replies:
+        text += _sharp_unprepared_table(sharp_replies, scope, refs)
+    cliffs = critical.get('endpoint_cliffs', [])[:top]
+    if cliffs:
+        text += [
+            '**Preparation ending before a sharp move**',
+            '',
+            'Prepared endpoints where you are to move and have no recorded move, ranked by reach × only-move gap.',
+            '',
+            *table(
+                ['Line', 'Chapter source', position_reach_label(scope), 'Database vs engine', 'Critical move'],
+                [
+                    [
+                        refs.position_cell(c),
+                        refs.sources(c),
+                        reach_cell(c['reach']),
+                        _db_vs_engine_cell(c.get('database_score'), c.get('engine_score')),
+                        f"{escape(c['best_move_san'])} (+{c['gap_pp']:.1f} pp vs {escape(c['second_move_san'])})",
+                    ]
+                    for c in cliffs
+                ],
+            ),
+        ]
     return text
+
+
+def _db_vs_engine_cell(db_score: float | None, eng_score: float | None, diff_pp: float | None = None) -> str:
+    db_part = 'DB ' + (percentage(db_score) if db_score is not None else 'n/a')
+    eng_part = 'Engine ' + (engine_mean(eng_score).replace('<br>', ' ') if eng_score is not None else 'n/a')
+    if diff_pp is not None:
+        eng_part += f' ({score_points(diff_pp, signed=True)})'
+    return f'{db_part}<br>{eng_part}'
+
+
+def _unprepared_tests_table(tests: Sequence[JsonObject], scope: JsonObject, refs: Chapters) -> list[str]:
+    rows: list[list[Cell]] = []
+    for r in tests:
+        reply_reach = (
+            '0% (0 games)' if r.get('sample_count', 0) == 0 and r['move_reach'] == 0 else reach_cell(r['move_reach'])
+        )
+        reach_str = f"Parent {reach_cell(r['parent_reach'])}<br>Reply {reply_reach}"
+        score_str = f"Rep {percentage(r.get('repertoire_score'))}<br>" + _db_vs_engine_cell(
+            r.get('database_score'), r.get('engine_score')
+        )
+        rs = r.get('reply_sharpness')
+        notes = []
+        if rs:
+            notes.append(f"{escape(rs['best_move_san'])} (+{rs['gap_pp']:.1f} pp vs {escape(rs['second_move_san'])})")
+        if r.get('is_refutation'):
+            notes.append('Refutes your move')
+        if r.get('at_chapter_end'):
+            notes.append('Ends prep')
+        rows.append(
+            [
+                refs.move_cell(r),
+                refs.sources(r),
+                reach_str,
+                score_str,
+                rating_cell(r.get('opponent_rating')),
+                '<br>'.join(notes) if notes else '-',
+            ]
+        )
+    return [
+        '**Unprepared opponent engine tests**',
+        '',
+        "Positions where the engine's top move for the opponent has no prepared reply, ranked by parent reach × "
+        'objective/database drop and reply sharpness.',
+        '',
+        *table(
+            ['Line', 'Chapter source', 'Parent / reply reach', 'Repertoire vs reply', 'Opponent rating', 'Best reply'],
+            rows,
+        ),
+    ]
+
+
+def _sharp_unprepared_table(replies: Sequence[JsonObject], scope: JsonObject, refs: Chapters) -> list[str]:
+    rows: list[list[Cell]] = []
+    for r in replies:
+        sh = r.get('sharpness')
+        reply_note = (
+            f"{escape(sh['best_move_san'])} (+{sh['gap_pp']:.1f} pp vs {escape(sh['second_move_san'])})"
+            if sh
+            else 'High engine advantage vs DB'
+        )
+        rows.append(
+            [
+                refs.move_cell(r),
+                refs.sources(r),
+                reach_cell(r['move_reach']),
+                _db_vs_engine_cell(r.get('database_score'), r.get('engine_score'), r.get('engine_minus_db_pp')),
+                reply_note,
+            ]
+        )
+    return [
+        '**Sharp unprepared replies and traps**',
+        '',
+        'Well-sampled unprepared opponent replies that land on an only-move tactic or where the engine scores much '
+        'higher than database results.',
+        '',
+        *table(
+            ['Line', 'Chapter source', move_reach_label(scope), 'Database vs engine', 'Critical reply'],
+            rows,
+        ),
+    ]
+
+
+def summary_critical_engine_section(bundle: Bundle, refs: Chapters, top: int = 5) -> list[str]:
+    """Collapsible summary of the top missing engine-critical lines for the full repertoire."""
+    if not engine_resolved(bundle):
+        return []
+    engine = bundle.get('engine') or {}
+    overall_crit = scope_by_id(engine).get('overall', {}).get('critical') or {}
+    tests = overall_crit.get('unprepared_engine_tests', [])[:top]
+    sharp = overall_crit.get('sharp_unprepared_replies', [])[:top]
+    if not tests and not sharp:
+        return []
+    color = bundle['report']['color']
+    scope = (bundle.get('vulnerabilities') or {}).get('overall', {'id': 'overall'})
+    body: list[str] = []
+    if sharp:
+        body += _sharp_unprepared_table(sharp, scope, refs)
+    if tests:
+        body += _unprepared_tests_table(tests, scope, refs)
+    return [
+        '<details>',
+        '<summary>Critical lines to check (engine)</summary>',
+        '',
+        'Top engine-critical gaps in your full repertoire: sharp unprepared replies and unprepared opponent engine '
+        f'tests. {about("engine")}.',
+        '',
+        *body,
+        f'[Full engine view and audit](#{color}-engine).',
+        '',
+        '</details>',
+        '',
+    ]
 
 
 def stop_cell(stop: JsonObject, refs: Chapters) -> str:

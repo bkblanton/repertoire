@@ -14,16 +14,18 @@ comments and annotations. Your studies, the export and every other analysis keep
 import argparse
 import io
 import json
+import math
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import chess
 import chess.pgn
 import numpy as np
 
-from .board_cache import canonical, fen_number, position_of, route_line, turn
+from . import evals as evals_store
+from .board_cache import canonical, children, fen_number, position_of, route_line, san, turn
 from .chapter_order import (
     DEFAULT_ORDER,
     apply_order,
@@ -35,6 +37,13 @@ from .chapter_order import (
     MODES as ORDER_MODES,
 )
 from .context import DEFAULT_CACHE, AnalysisContext, write_companion
+from .engine import (
+    expected_score,
+    is_trivial_recapture,
+    position_sharpness,
+    pv_first_move,
+)
+from .evals import Evaluation, Store
 from .evaluate import (
     COMPLETED,
     KNOWN,
@@ -47,15 +56,27 @@ from .evaluate import (
     stopping_vector,
     summarize,
 )
-from .graph import Transitions, chapter_ids, parse_games, read_games, resolve, topology
+from .graph import Graph, Transitions, chapter_ids, parse_games, read_games, resolve, topology
 from .layout import report_directory
 from .model import Model, Sampled, empirical, prepare
 from .schema import JsonObject, Position
-from .score import CONFIG, COVERAGE_KEY, load_config
+from .score import CONFIG, COVERAGE_KEY, CRITICAL_COVERAGE_KEY, KEEP_KEY, entry_positions, load_config
 from .uncertainty import Posterior, difference_interval, paired_variance
 
 CONFIG_KEY = COVERAGE_KEY
+CRITICAL_KEY = CRITICAL_COVERAGE_KEY
+KEEP_CONFIG_KEY = KEEP_KEY
 DEFAULT_GOAL = 300
+DEFAULT_CRITICAL: dict[str, Any] = {
+    'enabled': True,
+    'min_reach_goal': 2000,
+    'only_move_gap_pp': 8.0,
+    'only_move_risk_pp': 0.008,
+    'engine_vs_db_pp': 8.0,
+    'own_move_loss_pp': 5.0,
+    'max_own_loss_pp': 3.0,
+    'refutation_min_reach_goal': 5000,
+}
 # The levels every report compares, as N in "1 in N games"; your own goal is added when it is not one of them.
 GOALS = (100, 150, 200, 300, 400, 600, 800, 1000)
 TRIMMED_DIRECTORY = 'trimmed'
@@ -67,6 +88,52 @@ def goal_from_config(config: Mapping[str, object]) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 2:
         raise ValueError(f'{CONFIG_KEY} must be a whole number of games, at least 2 (1 in N games): {value!r}')
     return value
+
+
+def critical_config_from_config(config: Mapping[str, object]) -> JsonObject:
+    """Validate and normalize the optional `critical_coverage` block in a color configuration."""
+    raw = config.get(CRITICAL_KEY)
+    result = dict(DEFAULT_CRITICAL)
+    if raw is None:
+        return result
+    if isinstance(raw, bool):
+        result['enabled'] = raw
+        return result
+    if not isinstance(raw, Mapping):
+        raise ValueError(f'{CRITICAL_KEY} must be a boolean or an object: {raw!r}')
+    unknown = sorted(set(raw) - set(DEFAULT_CRITICAL))
+    if unknown:
+        raise ValueError(f'{CRITICAL_KEY} contains unknown options: {", ".join(unknown)}')
+    for key, value in raw.items():
+        if key == 'enabled':
+            if not isinstance(value, bool):
+                raise ValueError(f'{CRITICAL_KEY}.enabled must be a boolean: {value!r}')
+            result[key] = value
+        elif key in ('min_reach_goal', 'refutation_min_reach_goal'):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+                raise ValueError(f'{CRITICAL_KEY}.{key} must be an integer >= 2: {value!r}')
+            result[key] = value
+        else:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f'{CRITICAL_KEY}.{key} must be a non-negative number: {value!r}')
+            result[key] = float(value)
+    return result
+
+
+def keep_from_config(config: Mapping[str, object], graph: Graph) -> list[Position]:
+    """Pinned positions from `keep` in configuration, each a canonical FEN or a `{'path': ...}` object."""
+    raw = config.get(KEEP_CONFIG_KEY, [])
+    if not isinstance(raw, list):
+        raise ValueError(f'{KEEP_CONFIG_KEY} must be a list of FEN strings or path objects: {raw!r}')
+    for item in raw:
+        valid = isinstance(item, str) or (
+            isinstance(item, Mapping)
+            and isinstance(item.get('path'), list)
+            and all(isinstance(m, str) for m in item['path'])
+        )
+        if not valid:
+            raise ValueError(f'Invalid {KEEP_CONFIG_KEY} entry: {item!r}')
+    return entry_positions(raw, graph, label='Kept position')
 
 
 def pgn_name(color: str, goal: int) -> str:
@@ -155,9 +222,14 @@ class Coverage:
     def root_vector(self, repertoire: Repertoire) -> np.ndarray:
         return cast(np.ndarray, sum(w * repertoire.values[k] for k, w in self.roots.items()))
 
-    def level(self, goal: int | None) -> Level:
+    def level(self, goal: int | None, keep: Collection[Position] = ()) -> Level:
         reach, cut, unknown = coverage(
-            self.full.model, self.full.order, self.full.raw, self.roots, 1 / goal if goal else 0.0
+            self.full.model,
+            self.full.order,
+            self.full.raw,
+            self.roots,
+            1 / goal if goal else 0.0,
+            keep=keep,
         )
         trimmed = self.repertoire(trim(self.full.transitions, cut)) if cut else self.full
         costs: dict[Position, np.ndarray] = {}
@@ -181,6 +253,252 @@ class Coverage:
         if not np.allclose(self.root_vector(self.full) - root, total, atol=1e-9):
             raise AssertionError('Coverage cut costs do not reproduce the score change')
         return Level(goal, reach, cut, unknown, trimmed, root, costs, lost, added)
+
+    def critical_protection(
+        self,
+        base: Level,
+        critical_cfg: Mapping[str, Any],
+        pinned: Collection[Position] = (),
+        store: str | Path | None = None,
+        order: Sequence[str] | None = None,
+    ) -> tuple[Level, JsonObject]:
+        """Rescue engine-critical and manually pinned lines below the coverage goal, keeping their routes intact."""
+        pinned_list = sorted(set(pinned))
+        base_kept = self.kept(base)
+        dropped = self.decisions - base_kept
+        empty_summary: JsonObject = dict(
+            enabled=bool(critical_cfg['enabled']),
+            config=dict(critical_cfg),
+            pinned=pinned_list,
+            decisions_added=0,
+            ancestors_added=0,
+            positions=[],
+            row=None,
+        )
+        if not dropped or (not critical_cfg['enabled'] and not pinned_list):
+            return base, empty_summary
+
+        routes = self.lines()
+        node_for_pos: dict[Position, Position] = {}
+        for k in self.full.order:
+            p = position_of(k)
+            if p not in node_for_pos or self.reach[k] > self.reach[node_for_pos[p]]:
+                node_for_pos[p] = k
+        full_reach = by_position(self.reach)
+
+        parent_info: dict[Position, tuple[Position, str]] = {}
+        for p in self.decisions:
+            _, (root, *moves) = routes[node_for_pos[p]]
+            if not moves:
+                continue
+            cur = root
+            for move in moves[:-1]:
+                cur = next(cast(Position, b.target) for b in self.full.model[cur].branches if b.move == move)
+            parent_info[p] = (position_of(cur), moves[-1])
+
+        evaluations: dict[Position, Evaluation] = {}
+        store_path = Path(evals_store.STORE if store is None else store)
+        if critical_cfg['enabled'] and store_path.is_file():
+            min_reach = 1 / critical_cfg['min_reach_goal']
+            eval_wanted: set[Position] = set(base_kept)
+            for k in base_kept:
+                for move in self.full.transitions[node_for_pos[k]]:
+                    if child := children(k).get(move):
+                        eval_wanted.add(child)
+            for k in dropped:
+                eval_wanted.add(k)
+                if full_reach[k] >= min_reach:
+                    for move in children(k).values():
+                        eval_wanted.add(move)
+            with Store(store_path, read_only=True) as evals:
+                evaluations = evals.read(sorted(eval_wanted))
+
+        triggers: dict[Position, list[JsonObject]] = {}
+        if critical_cfg['enabled'] and evaluations:
+            min_reach = 1 / critical_cfg['min_reach_goal']
+            gap_min = critical_cfg['only_move_gap_pp']
+            risk_min = critical_cfg['only_move_risk_pp']
+            eng_db_min = critical_cfg['engine_vs_db_pp']
+            own_loss_min = critical_cfg['own_move_loss_pp']
+            max_own_loss = critical_cfg['max_own_loss_pp']
+            refut_min_reach = 1 / critical_cfg['refutation_min_reach_goal']
+
+            def own_move_acceptable(pos: Position, target_score: float) -> bool:
+                played = list(self.full.transitions[node_for_pos[pos]])
+                child_map = children(pos)
+                for move in played:
+                    child_pos = child_map.get(move)
+                    sc = expected_score(evaluations.get(child_pos), self.color) if child_pos else None
+                    if sc is None or 100 * (target_score - sc) <= max_own_loss:
+                        return True
+                return False
+
+            # 1. Only-move cliffs: sharp gap and material expected loss per game, excluding single-piece recaptures.
+            for p in sorted(dropped):
+                reach_p = full_reach[p]
+                if reach_p < min_reach:
+                    continue
+                sh = position_sharpness(p, self.color, evaluations, allow_children=True)
+                if not sh or sh['gap_pp'] < gap_min or reach_p * sh['gap_pp'] < risk_min:
+                    continue
+                played = self.full.transitions[node_for_pos[p]]
+                if sh['best_move'] not in played:
+                    child_map = children(p)
+                    if not any(
+                        (sc := expected_score(evaluations.get(child_map.get(m, '')), self.color)) is not None
+                        and 100 * (sh['best_score'] - sc) <= max_own_loss
+                        for m in played
+                    ):
+                        continue
+                pi = parent_info.get(p)
+                if pi and is_trivial_recapture(pi[0], pi[1], sh['best_move'], sh['second_move']):
+                    continue
+                triggers.setdefault(p, []).append(
+                    dict(
+                        kind='only_move',
+                        gap_pp=sh['gap_pp'],
+                        best_move_san=san(p, sh['best_move']),
+                        second_move_san=san(p, sh['second_move']),
+                        source=sh['source'],
+                    )
+                )
+
+            # 2. Engine >> database collapses: pool non-sparse arrivals by transposed target position.
+            arr_reach: dict[Position, float] = {}
+            arr_db_sum: dict[Position, float] = {}
+            for pk in self.full.order:
+                if self.full.model[pk].mode != 'opponent' or self.reach[pk] <= 0:
+                    continue
+                for b, (prob, sc) in zip(self.full.model[pk].branches, self.full.raw[pk]):
+                    if b.target is None or b.move is None or not prob or sc is None:
+                        continue
+                    if sum(b.counts) < self.sparse:
+                        continue
+                    tp = position_of(b.target)
+                    if tp not in dropped:
+                        continue
+                    flow = self.reach[pk] * prob
+                    arr_reach[tp] = arr_reach.get(tp, 0.0) + flow
+                    arr_db_sum[tp] = arr_db_sum.get(tp, 0.0) + flow * sc
+            for tp in sorted(arr_reach):
+                r_arr = arr_reach[tp]
+                if r_arr < min_reach:
+                    continue
+                db_sc = arr_db_sum[tp] / r_arr
+                tsc = expected_score(evaluations.get(tp), self.color)
+                if tsc is None:
+                    continue
+                eng_minus_db = 100 * (tsc - db_sc)
+                if eng_minus_db < eng_db_min:
+                    continue
+                if float(self.full.values[node_for_pos[tp]][KNOWN]) - db_sc < 0.03:
+                    continue
+                if not own_move_acceptable(tp, tsc):
+                    continue
+                triggers.setdefault(tp, []).append(
+                    dict(
+                        kind='engine_vs_db',
+                        engine_minus_db_pp=eng_minus_db,
+                        engine_score=tsc,
+                        database_score=db_sc,
+                    )
+                )
+
+            # 3. Prepared refutations of kept own moves that the engine flags as inaccuracies or worse.
+            for q in sorted(base_kept):
+                s_before = expected_score(evaluations.get(q), self.color)
+                if s_before is None:
+                    continue
+                child_map = children(q)
+                for own_uci in self.full.transitions[node_for_pos[q]]:
+                    after_q = child_map.get(own_uci)
+                    if not after_q:
+                        continue
+                    s_after = expected_score(evaluations.get(after_q), self.color)
+                    if s_after is None:
+                        continue
+                    loss_pp = 100 * (s_before - s_after)
+                    if loss_pp < own_loss_min:
+                        continue
+                    refut = pv_first_move(after_q, evaluations.get(after_q))
+                    ak = node_for_pos.get(after_q)
+                    if not (refut and ak and refut in self.full.transitions.get(ak, {})):
+                        continue
+                    target = self.full.transitions[ak][refut][0]
+                    if target is None:
+                        continue
+                    tp = position_of(target)
+                    if tp in dropped and full_reach[tp] >= refut_min_reach:
+                        triggers.setdefault(tp, []).append(
+                            dict(
+                                kind='refutation',
+                                own_position=q,
+                                own_move_san=san(q, own_uci),
+                                own_loss_pp=loss_pp,
+                                refutation_san=san(after_q, refut),
+                            )
+                        )
+
+        # 4. Manual pinning from `keep`.
+        def route_own_positions(pos: Position) -> list[Position]:
+            _, (root, *moves) = routes[node_for_pos[pos]]
+            result: list[Position] = []
+            cur = root
+            if self.full.model[cur].mode == 'own':
+                result.append(position_of(cur))
+            for move in moves:
+                cur = next(cast(Position, b.target) for b in self.full.model[cur].branches if b.move == move)
+                if self.full.model[cur].mode == 'own':
+                    result.append(position_of(cur))
+            return result
+
+        for p in pinned_list:
+            if p in dropped:
+                triggers.setdefault(p, []).append(dict(kind='pinned'))
+            elif p not in self.decisions and p in node_for_pos and self.reach[node_for_pos[p]] > 0:
+                dropped_on_route = [anc for anc in route_own_positions(p) if anc in dropped]
+                if dropped_on_route:
+                    triggers.setdefault(dropped_on_route[-1], []).append(dict(kind='pinned'))
+
+        if not triggers:
+            return base, empty_summary
+
+        keep_set: set[Position] = set(triggers)
+        for p in triggers:
+            keep_set.update(route_own_positions(p))
+
+        protected_level = self.level(base.goal, keep=keep_set)
+        protected_kept = self.kept(protected_level)
+        added = protected_kept - base_kept
+        if not added:
+            return base, empty_summary
+
+        protected_reach = by_position(protected_level.reach)
+        rows = []
+        for p in sorted(triggers, key=lambda pos: (-protected_reach.get(pos, 0.0), pos)):
+            k = node_for_pos[p]
+            own_sans = [san(p, m) for m in sorted(self.full.transitions[k])]
+            rows.append(
+                dict(
+                    position=p,
+                    line=routes[k][0],
+                    reach=protected_reach.get(p, 0.0),
+                    full_reach=full_reach[p],
+                    own_move_san=' / '.join(own_sans),
+                    reasons=triggers[p],
+                    chapter_attribution=dict(source_ids=self.chapters_of(p, order)),
+                )
+            )
+        summary: JsonObject = dict(
+            enabled=bool(critical_cfg['enabled']),
+            config=dict(critical_cfg),
+            pinned=pinned_list,
+            decisions_added=len(added),
+            ancestors_added=len(added - set(triggers)),
+            positions=rows,
+            row=self.row(protected_level),
+        )
+        return protected_level, summary
 
     def kept(self, level: Level) -> set[Position]:
         """Your moves the level keeps, among those games reach."""
@@ -511,27 +829,35 @@ def analyze(
     cache: str | Path = DEFAULT_CACHE,
     goal: int = DEFAULT_GOAL,
     order: str = DEFAULT_ORDER,
+    critical: Mapping[str, object] | bool | None = None,
+    keep: Sequence[str | JsonObject] = (),
+    store: str | Path | None = None,
 ) -> tuple[JsonObject, str]:
     """The coverage comparison and the trimmed PGN text at `goal`."""
     order = order_from_config({'chapter_order': order})
     analysis = AnalysisContext(path)
     result = Coverage(analysis, cache)
+    critical_cfg = critical_config_from_config({CRITICAL_KEY: critical} if critical is not None else {})
+    pinned = keep_from_config({KEEP_CONFIG_KEY: list(keep)}, result.graph) if keep else []
     ordering = order_chapters(
         analysis,
         result.evidence,
         order,
         (result.full.transitions, result.full.order, result.full.model, result.full.raw),
     )
-    rows, chosen = [], None
+    rows, base_chosen = [], None
     for level_goal in goals(goal):
         level = result.level(level_goal)
         rows.append(result.row(level))
         if level_goal == goal:
-            chosen = level
-    assert chosen is not None
+            base_chosen = level
+    assert base_chosen is not None
     full = rows[-1]
     if full['dropped'] or full['leaving_earlier']:
         raise AssertionError('Every line must keep the whole repertoire')
+    chosen, protected = result.critical_protection(
+        base_chosen, critical_cfg, pinned, store=store, order=ordering['ids']
+    )
     writer = Writer(result, chosen)
     exclusions = analysis.manifest['configuration'].get('exclude', [])
     text, pgn = writer.write(analysis.source, exclusions, ordering['ids'])
@@ -539,14 +865,15 @@ def analyze(
         raise AssertionError('The trimmed PGN does not reproduce the trimmed repertoire')
     analysis.require_source('coverage analysis')
     color = analysis.saved['color']
+    details = result.details(chosen, ordering['ids'])
+    details['protected'] = protected
+    details['pgn'] = dict(pgn, path=f'{TRIMMED_DIRECTORY}/{pgn_name(color, goal)}')
     value: JsonObject = dict(
         color=color,
         goal=goal,
         chapter_order=ordering,
         levels=rows,
-        at_goal=dict(
-            result.details(chosen, ordering['ids']), pgn=dict(pgn, path=f'{TRIMMED_DIRECTORY}/{pgn_name(color, goal)}')
-        ),
+        at_goal=details,
         validation=dict(
             costs_reproduce_change=True,
             every_line_reproduces_score=True,
@@ -556,8 +883,11 @@ def analyze(
             coverage=dict(
                 goal=goal,
                 chapter_order=order,
+                critical_coverage=critical_cfg,
+                keep=pinned,
                 rule='keep positions where you are to move that games reach at least once in N games through kept '
-                'positions; cut positions are scored as unprepared replies with their parent table rows',
+                'positions, plus criticality-protected and pinned positions with their routes; cut positions are '
+                'scored as unprepared replies with their parent table rows',
             )
         ),
     )
@@ -569,9 +899,12 @@ def run(
     cache: str | Path = DEFAULT_CACHE,
     goal: int = DEFAULT_GOAL,
     order: str = DEFAULT_ORDER,
+    critical: Mapping[str, object] | bool | None = None,
+    keep: Sequence[str | JsonObject] = (),
+    store: str | Path | None = None,
 ) -> JsonObject:
     """Save the coverage analysis and the trimmed PGN, removing a trimmed PGN left from an earlier goal."""
-    value, text = analyze(path, cache, goal, order)
+    value, text = analyze(path, cache, goal, order, critical=critical, keep=keep, store=store)
     target = pgn_path(path, value['color'], goal)
     target.parent.mkdir(parents=True, exist_ok=True)
     for old in target.parent.glob(f'{value["color"]}-1-in-*.pgn'):
@@ -590,6 +923,21 @@ def configured_goal(color: str, config: str | Path | None = None) -> int:
     return goal_from_config(load_config(path) if path.is_file() else {})
 
 
+def configured_critical(color: str, config: str | Path | None = None) -> JsonObject:
+    """Critical-line protection settings from configs/<color>.json, or defaults without one."""
+    path = Path(config) if config else Path(CONFIG.format(color))
+    return critical_config_from_config(load_config(path) if path.is_file() else {})
+
+
+def configured_keep(color: str, config: str | Path | None = None) -> list[Any]:
+    """Raw pinned `keep` entries from configs/<color>.json, or empty without one."""
+    path = Path(config) if config else Path(CONFIG.format(color))
+    raw = load_config(path).get(KEEP_CONFIG_KEY, []) if path.is_file() else []
+    if not isinstance(raw, list):
+        raise ValueError(f'{KEEP_CONFIG_KEY} must be a list of FEN strings or path objects: {raw!r}')
+    return raw
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('reports', nargs='+', type=Path, help='Saved score JSON files, with unchanged source PGNs')
@@ -604,14 +952,26 @@ def main() -> None:
         choices=ORDER_MODES,
         help='Chapter order: study or opening (default: chapter_order in configs/<color>.json, or study)',
     )
+    parser.add_argument(
+        '--no-critical',
+        action='store_true',
+        help='Disable engine criticality protection (keep only positions meeting the reach goal and explicit pins)',
+    )
+    parser.add_argument('--store', type=Path, default=None, help=f'Evaluation store (default: {evals_store.STORE})')
     args = parser.parse_args()
     try:
         for path in args.reports:
             color = json.loads(path.read_text(encoding='utf-8'))['color']
             goal = goal_from_config({CONFIG_KEY: args.goal}) if args.goal is not None else configured_goal(color)
             order = args.chapter_order if args.chapter_order is not None else configured_order(color)
-            value = run(path, args.cache, goal, order)
-            row = next(r for r in value['levels'] if r['goal'] == goal)
+            critical_cfg = configured_critical(color)
+            if args.no_critical:
+                critical_cfg['enabled'] = False
+            keep_cfg = configured_keep(color)
+            value = run(path, args.cache, goal, order, critical=critical_cfg, keep=keep_cfg, store=args.store)
+            row = (value['at_goal'].get('protected') or {}).get('row') or next(
+                r for r in value['levels'] if r['goal'] == goal
+            )
             print(
                 f'{color}: 1 in {goal} games keeps {row["decisions"]:,} of {row["decisions"] + row["dropped"]:,} '
                 f'moves; trimmed PGN saved to {pgn_path(path, color, goal)}',
