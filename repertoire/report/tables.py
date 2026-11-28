@@ -5,6 +5,7 @@ from collections.abc import Iterable, Mapping
 from ..schema import JsonObject
 from .format import (
     bounded,
+    bounded_delta_per_depth,
     bounded_delta_points,
     bounded_score,
     count,
@@ -59,7 +60,11 @@ def chapter_table(
                 percentage(base.get('raw_score')),
                 bounded_score(s),
                 *([engine_cell(engine.get(c['id'], {}).get('exits', {}))] if engine is not None else []),
-                bounded_delta_points(s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s)),
+                bounded_delta_points(s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s))
+                + '<br>Per depth '
+                + bounded_delta_per_depth(
+                    s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s), s.get('prepared_depth')
+                ),
                 number(s.get('prepared_depth', {}).get('expected_answers'), 1),
                 spread_display(s.get('branch_score_spread'), False),
                 gaps,
@@ -73,7 +78,7 @@ def chapter_table(
             'Entry baseline',
             'Repertoire score',
             *(['Engine where prep ends'] if engine is not None else []),
-            'Delta',
+            'Delta<br>Per depth',
             'Prepared depth',
             'Score spread',
             'Equivalent gap reach' + ('<br>Weighted contribution' if detailed else ''),

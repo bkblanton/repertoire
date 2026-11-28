@@ -8,6 +8,7 @@ from .bundle import Bundle, scope_by_id
 from .definitions import methods
 from .derive import combined_overall, non_sparse_rows, own_priorities, unanswered_position, visible_positions
 from .format import (
+    bounded_delta_per_depth,
     bounded_score,
     count,
     delta_points,
@@ -260,7 +261,7 @@ def chapter_page(
             'Entry baseline',
             'Repertoire score',
             *(['Engine where prep ends'] if engine is not None else []),
-            'Delta',
+            'Delta<br>Per depth',
             'Prepared depth (opponent moves answered)',
             'Score spread',
             'Equivalent gap reach<br>Weighted contribution',
@@ -272,7 +273,11 @@ def chapter_page(
                 percentage(base.get('raw_score')),
                 bounded_score(s),
                 *([engine_cell(engine.get(cid, {}).get('exits', {}))] if engine is not None else []),
-                headline_delta(s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s)),
+                headline_delta(s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s))
+                + '<br>Per depth '
+                + bounded_delta_per_depth(
+                    s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s), s.get('prepared_depth')
+                ),
                 number(depth, 1),
                 spread_display(s.get('branch_score_spread'), False),
                 gap_percentage(chapter.get('gap_coverage'))

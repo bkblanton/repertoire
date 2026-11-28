@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 from ..explorer import DEFAULT_FILTERS
 from ..layout import report_directory
@@ -251,6 +251,73 @@ def bounded_delta_points(after: float | None, before: float | None, bounds: Sequ
     if after is None and bounds and before is not None:
         return bounded(None, [100 * (b - before) for b in bounds], lambda v: score_points(v, signed=True))
     return delta_points(after, before)
+
+
+def depth_bounds(depth: Mapping[str, Any] | None) -> list[float] | None:
+    """A prepared depth's answer bounds when expected depth is partly unresolved; None once resolved."""
+    depth = depth or {}
+    if depth.get('expected_answers') is not None:
+        return None
+    bounds = depth.get('answer_bounds')
+    return list(bounds) if bounds else None
+
+
+def bounded_depth(depth: Mapping[str, Any] | None, digits: int = 1) -> str:
+    depth = depth or {}
+    return bounded(depth.get('expected_answers'), depth_bounds(depth), lambda v: number(v, digits))
+
+
+def delta_per_depth_bounds(
+    after: float | None,
+    before: float | None,
+    after_bounds: Sequence[float] | None,
+    depth: Mapping[str, Any] | None,
+) -> tuple[float | None, list[float] | None, bool]:
+    """Delta in percentage points divided by expected prepared answers, or its corner bounds.
+
+    Returns `(value, bounds, zero_depth)` where `zero_depth` means the line answers zero opponent moves
+    and the ratio is `n/a` rather than `unresolved`."""
+    if before is None or (after is None and not after_bounds):
+        return None, None, False
+    depth = depth or {}
+    answers = depth.get('expected_answers')
+    ans_bounds = depth_bounds(depth)
+    if answers is not None:
+        if answers <= 0:
+            return None, None, True
+        z_range = (float(answers), float(answers))
+    elif ans_bounds is not None:
+        if ans_bounds[1] <= 0:
+            return None, None, True
+        if ans_bounds[0] <= 0:
+            return None, None, False
+        z_range = (float(ans_bounds[0]), float(ans_bounds[1]))
+    else:
+        return None, None, False
+    if after is not None:
+        delta = 100 * (after - before)
+        if answers is not None:
+            return delta / z_range[0], None, False
+        d_range = (delta, delta)
+    else:
+        assert after_bounds is not None
+        d_range = (100 * (after_bounds[0] - before), 100 * (after_bounds[1] - before))
+    corners = [d / z for d in d_range for z in z_range]
+    return None, [min(corners), max(corners)], False
+
+
+def bounded_delta_per_depth(
+    after: float | None,
+    before: float | None,
+    after_bounds: Sequence[float] | None,
+    depth: Mapping[str, Any] | None,
+    *,
+    digits: int | None = None,
+) -> str:
+    value, bounds, zero_depth = delta_per_depth_bounds(after, before, after_bounds, depth)
+    if zero_depth:
+        return 'n/a'
+    return bounded(value, bounds, lambda v: score_points(v, digits, signed=True))
 
 
 def interval_cell(bounds: Sequence[float | None] | None) -> str:

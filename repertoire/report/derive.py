@@ -46,6 +46,13 @@ def combined_overall(bundles: Iterable[Bundle]) -> JsonObject | None:
         if all(s and 'within_stop_outcome_variance' in s for s in spreads)
         else None
     )
+    depth_value = average([r['overall'].get('prepared_depth', {}).get('expected_answers') for r in (white, black)])
+    color_depth_bounds = [r['overall'].get('prepared_depth', {}).get('answer_bounds') for r in (white, black)]
+    depth_bounds_value = (
+        [cast(float, average([b[i] for b in cast('list[list[float]]', color_depth_bounds)])) for i in (0, 1)]
+        if depth_value is None and all(color_depth_bounds)
+        else None
+    )
     return {
         'weights': {'white': 0.5, 'black': 0.5},
         'repertoire_score': score,
@@ -56,9 +63,8 @@ def combined_overall(bundles: Iterable[Bundle]) -> JsonObject | None:
         'centipawn_equivalent': centipawn_equivalent(score),
         'baseline_centipawn_equivalent': centipawn_equivalent(baseline),
         'centipawn_delta': centipawn_delta(score, baseline),
-        'expected_prepared_depth': average(
-            [r['overall'].get('prepared_depth', {}).get('expected_answers') for r in (white, black)]
-        ),
+        'expected_prepared_depth': depth_value,
+        'expected_prepared_depth_bounds': depth_bounds_value,
         'outcomes': combined_outcomes,
         'branch_score_spread': combined_spread,
         'chapters': sum(len(r['chapters']) for r in (white, black)),

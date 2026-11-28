@@ -10,6 +10,7 @@ from repertoire.character import analyze as character
 from repertoire.report.bundle import load
 from repertoire.report.derive import combined_overall, exit_points, non_sparse_rows, position_contributions
 from repertoire.report.format import (
+    bounded_delta_per_depth,
     centipawn_delta,
     centipawn_equivalent,
     cp,
@@ -69,9 +70,11 @@ def test_full_and_summary_preserve_metrics_sources_and_separate_reply_tables(com
     full = (path.parent / 'report.md').read_text(encoding='utf-8')
     summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
     chapters = chapter_pages(path.parent, report)
-    prefix = f'| White | 50.0% | 40.0% | {headline_delta(0.4, 0.5)} |'
+    per_depth = bounded_delta_per_depth(0.4, 0.5, None, report['overall']['prepared_depth'])
+    assert per_depth == '-3.3%'
+    prefix = f'| White | 50.0% | 40.0% | {headline_delta(0.4, 0.5)}<br>Per depth {per_depth} |'
     assert prefix in full and headline_delta(0.4, 0.5) == f'-10.0% ({centipawn_delta(0.4, 0.5):+.0f} cp)'
-    assert '| White | 50.0% | 40.0% | -10.0% (-110 cp) | -70 |' in summary
+    assert f'| White | 50.0% | 40.0% | -10.0% (-110 cp)<br>Per depth {per_depth} | -70 |' in summary
     assert not re.search(r'^\| Black \|', full, flags=re.M) and '[Black repertoire](#black)' not in full
     assert prefix + ' -70 |' in full
     assert '[Combined repertoire](#combined)' not in full
@@ -546,7 +549,7 @@ def test_cp_appears_only_beside_headline_deltas(complete):
     for page in chapter_pages(path.parent, report):
         assert check_score_tables(page) == 1
         rows = [row for row in page.splitlines() if ' cp)' in row]
-        assert len(rows) == 1 and re.search(r'\| [+-][\d.]+% \([+-]\d+ cp\) \|', rows[0])
+        assert len(rows) == 1 and re.search(r'\| [+-][\d.]+% \([+-]\d+ cp\)<br>Per depth [^|]+ \|', rows[0])
         lines = page.splitlines()
         header = lines[lines.index(rows[0]) - 2]
         assert header.startswith('| Chapter reach')
@@ -894,7 +897,11 @@ def test_reports_bound_a_partly_unresolved_repertoire_score(complete):
     low, high = chapter['raw_empirical_score'] - 0.01, chapter['raw_empirical_score'] + 0.01
     chapter.update(raw_empirical_score=None, conditional_bounds=[low, high])
     elo = [f'{elo_equivalent(v, 0.5):+.0f}' for v in (0.39, 0.41)]
-    row = f'| White | 50.0% | 39.0% to 41.0% (bounds) | -11.0% to -9.0% (bounds) | {elo[0]} to {elo[1]} (bounds) |'
+    per_depth = bounded_delta_per_depth(None, 0.5, [0.39, 0.41], report['overall']['prepared_depth'])
+    row = (
+        f'| White | 50.0% | 39.0% to 41.0% (bounds) | -11.0% to -9.0% (bounds)<br>Per depth {per_depth} | '
+        f'{elo[0]} to {elo[1]} (bounds) |'
+    )
     assert row in '\n'.join(overview(bundles))
     pages = summary_report(bundles)
     assert row in pages and '| White | 50.0% | unresolved |' not in pages
@@ -955,9 +962,16 @@ def test_combined_row_and_elo_are_rendered_in_both_documents(complete, monkeypat
     result = combined_overall(bundles)
     delta = headline_delta(result['repertoire_score'], result['starting_baseline'])
     assert delta == f"{result['difference_pp']:+.1f}% ({result['centipawn_delta']:+.0f} cp)"
+    combined_depth = {
+        'expected_answers': result['expected_prepared_depth'],
+        'answer_bounds': result.get('expected_prepared_depth_bounds'),
+    }
+    per_depth = bounded_delta_per_depth(
+        result['repertoire_score'], result['starting_baseline'], result['repertoire_score_bounds'], combined_depth
+    )
     prefix = (
         f"| **Combined** | {100 * result['starting_baseline']:.1f}% | {100 * result['repertoire_score']:.1f}% | "
-        f"{delta} | {result['elo_equivalent']:+.0f} |"
+        f"{delta}<br>Per depth {per_depth} | {result['elo_equivalent']:+.0f} |"
     )
     for filename in ['report.md', 'summary.md']:
         text = (path.parent / filename).read_text(encoding='utf-8')
@@ -1310,3 +1324,91 @@ def test_weighted_percentages_keep_two_significant_digits_below_one_percent():
     assert {v: weighted(v) for v in cases} == cases
     assert weighted(0.00004, signed=True) == '+<0.0001%' and weighted(-0.00004) == '-<0.0001%'
     assert weighted(0.0317, signed=True) == '+0.032%' and weighted(None) == 'unresolved'
+
+
+def test_delta_per_depth_bounds_and_formatting():
+    from repertoire.report.format import bounded_depth, delta_per_depth_bounds
+
+    assert delta_per_depth_bounds(0.6, 0.5, None, {'expected_answers': 2.5}) == (pytest.approx(4.0), None, False)
+    assert bounded_delta_per_depth(0.6, 0.5, None, {'expected_answers': 2.5}) == '+4.0%'
+    assert bounded_delta_per_depth(0.45, 0.5, None, {'expected_answers': 2.0}) == '-2.5%'
+    assert delta_per_depth_bounds(0.6, 0.5, None, {'expected_answers': 0.0}) == (None, None, True)
+    assert bounded_delta_per_depth(0.6, 0.5, None, {'expected_answers': 0.0}) == 'n/a'
+    assert bounded_delta_per_depth(0.6, 0.5, None, {'expected_answers': None, 'answer_bounds': [0.0, 0.0]}) == 'n/a'
+    assert bounded_delta_per_depth(0.6, None, None, {'expected_answers': 2.0}) == 'unresolved'
+    assert bounded_delta_per_depth(None, 0.5, None, {'expected_answers': 2.0}) == 'unresolved'
+    # Bounds that collapse at 1 decimal stay distinct at 2 decimals.
+    assert bounded_delta_per_depth(None, 0.5, [0.5202, 0.5204], {'expected_answers': 2.0}) == '+1.0%'
+    assert (
+        bounded_delta_per_depth(None, 0.5, [0.5202, 0.5204], {'expected_answers': 2.0}, digits=2)
+        == '+1.01% to +1.02% (bounds)'
+    )
+    # Resolved negative delta with bounded depth keeps correct ordering [min, max].
+    value, bounds, zero = delta_per_depth_bounds(
+        0.4, 0.5, None, {'expected_answers': None, 'answer_bounds': [2.0, 4.0]}
+    )
+    assert value is None and not zero and bounds == pytest.approx([-5.0, -2.5])
+    assert (
+        bounded_delta_per_depth(0.4, 0.5, None, {'expected_answers': None, 'answer_bounds': [2.0, 4.0]})
+        == '-5.0% to -2.5% (bounds)'
+    )
+    # Sign-straddling delta bounds with bounded depth span all four corners.
+    value, bounds, zero = delta_per_depth_bounds(
+        None, 0.5, [0.4, 0.6], {'expected_answers': None, 'answer_bounds': [2.0, 4.0]}
+    )
+    assert value is None and not zero and bounds == pytest.approx([-5.0, 5.0])
+    assert (
+        bounded_delta_per_depth(None, 0.5, [0.4, 0.6], {'expected_answers': None, 'answer_bounds': [2.0, 4.0]})
+        == '-5.0% to +5.0% (bounds)'
+    )
+    # Lower depth bound of zero leaves the ratio unresolved.
+    assert delta_per_depth_bounds(None, 0.5, [0.39, 0.41], {'expected_answers': None, 'answer_bounds': [0.0, 2.0]}) == (
+        None,
+        None,
+        False,
+    )
+    assert (
+        bounded_delta_per_depth(None, 0.5, [0.39, 0.41], {'expected_answers': None, 'answer_bounds': [0.0, 2.0]})
+        == 'unresolved'
+    )
+    assert bounded_depth({'expected_answers': None, 'answer_bounds': [1.2, 2.4]}) == '1.2 to 2.4 (bounds)'
+
+
+def test_delta_per_depth_in_chapter_tables_and_effort_section(complete):
+    from repertoire.report.links import bundle_refs
+    from repertoire.report.sections import effort_section
+
+    path, report = complete
+    bundles = generate([path])
+    full = (path.parent / 'report.md').read_text(encoding='utf-8')
+    summary = (path.parent / 'summary.md').read_text(encoding='utf-8')
+    pages = chapter_pages(path.parent, report)
+    assert full.count('| Delta<br>Per depth |') >= 2  # overview and chapter table
+    assert summary.count('| Delta<br>Per depth |') >= 2
+    assert all('| Delta<br>Per depth |' in page for page in pages)
+    effort_block = full.split('### Effort and value', 1)[1].split('### Coverage goal', 1)[0]
+    assert '**Chapters by edge per move**' in effort_block
+    assert '**Chapters by delta per prepared depth**' in effort_block
+    assert effort_block.index('**Chapters by edge per move**') < effort_block.index(
+        '**Chapters by delta per prepared depth**'
+    )
+    ranked_block = effort_block.split('**Chapters by delta per prepared depth**', 1)[1].split(
+        '**Lines to consider pruning**', 1
+    )[0]
+    assert '| Chapter | Chapter reach | Delta | Prepared depth | Per depth |' in ranked_block
+    rows = [row for row in ranked_block.splitlines() if row.startswith('| [')]
+    assert len(rows) == len(report['chapters'])
+    per_depths = [float(row.strip('|').split('|')[-1].strip().rstrip('%')) for row in rows]
+    assert per_depths == sorted(per_depths, reverse=True)
+    # A chapter omitted from edge per move due to unresolved edge still appears here with bounds.
+    bundle = bundles[0]
+    chapter = bundle['report']['chapters'][0]
+    chapter['score'].update(raw_empirical_score=None, conditional_bounds=[0.6, 0.7])
+    for entry in bundle['vulnerabilities']['overall']['effort']['chapters']:
+        if entry['id'] == chapter['id']:
+            entry['edge_pp'] = None
+            entry['edge_per_decision_pp'] = None
+    rendered = '\n'.join(effort_section(bundle, bundle_refs(bundle), top=10))
+    edge_part, depth_part = rendered.split('**Chapters by delta per prepared depth**', 1)
+    assert chapter['name'] not in edge_part
+    assert chapter['name'] in depth_part and '(bounds)' in depth_part

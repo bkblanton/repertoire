@@ -233,8 +233,8 @@ def test_cli_fixture_end_to_end(tmp_path, monkeypatch):
     from repertoire import score as cli
     from repertoire.report.format import headline_delta
 
-    white_row = f'| White | 80.0% | 70.0% | {headline_delta(0.7, 0.8)} |'
-    black_row = f'| Black | 20.0% | 30.0% | {headline_delta(0.3, 0.2)} |'
+    white_row = f'| White | 80.0% | 70.0% | {headline_delta(0.7, 0.8)}<br>Per depth n/a |'
+    black_row = f'| Black | 20.0% | 30.0% | {headline_delta(0.3, 0.2)}<br>Per depth +10.0% |'
     graph(tmp_path, '1. e4 e5 *')  # writes the fixture PGN
     evidence = {
         position(''): data(7, 2, 1, [('e2e4', 7, 2, 1)]),

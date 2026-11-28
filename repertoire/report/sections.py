@@ -23,9 +23,13 @@ from .derive import (
 from .format import (
     _display,
     bounded,
+    bounded_delta_per_depth,
+    bounded_delta_points,
+    bounded_depth,
     bounded_score,
     centipawn_equivalent,
     count,
+    delta_per_depth_bounds,
     elo_equivalent,
     engine_mean,
     escape,
@@ -116,7 +120,9 @@ def overview(bundles: Sequence[Bundle], headline_only: bool = False) -> list[str
                 r['color'].title(),
                 percentage(base),
                 bounded(score, bounds),
-                headline_delta(score, base, bounds),
+                headline_delta(score, base, bounds)
+                + '<br>Per depth '
+                + bounded_delta_per_depth(score, base, bounds, o.get('prepared_depth')),
                 elo_cell(score, base, bounds),
                 number(o.get('prepared_depth', {}).get('expected_answers'), 1),
                 spread_display(o.get('branch_score_spread'), False),
@@ -128,12 +134,18 @@ def overview(bundles: Sequence[Bundle], headline_only: bool = False) -> list[str
         score, base, bounds = (
             combined[field] for field in ('repertoire_score', 'starting_baseline', 'repertoire_score_bounds')
         )
+        combined_depth: JsonObject = {
+            'expected_answers': combined['expected_prepared_depth'],
+            'answer_bounds': combined.get('expected_prepared_depth_bounds'),
+        }
         rows.append(
             [
                 '**Combined**',
                 percentage(base),
                 bounded(score, bounds),
-                headline_delta(score, base, bounds),
+                headline_delta(score, base, bounds)
+                + '<br>Per depth '
+                + bounded_delta_per_depth(score, base, bounds, combined_depth),
                 elo_cell(score, base, bounds),
                 number(combined['expected_prepared_depth'], 1),
                 spread_display(combined.get('branch_score_spread'), False),
@@ -144,7 +156,7 @@ def overview(bundles: Sequence[Bundle], headline_only: bool = False) -> list[str
         'Repertoire',
         'Starting baseline',
         'Repertoire score',
-        'Delta',
+        'Delta<br>Per depth',
         'Elo equivalent',
         'Prepared depth (opponent moves answered)',
         'Score spread',
@@ -702,6 +714,46 @@ def effort_section(
                     ]
                     for c in sorted(chapters, key=lambda c: (-c['edge_per_decision_pp'], c['id']))
                 ],
+            ),
+        ]
+    per_depth_rows: list[tuple[float, str, list[Cell]]] = []
+    for c in bundle['report']['chapters']:
+        s, base = c['score'], c.get('entry_baseline', {})
+        after, before, after_bounds = s.get('raw_empirical_score'), base.get('raw_score'), score_bounds(s)
+        pd = s.get('prepared_depth')
+        value, per_bounds, _ = delta_per_depth_bounds(after, before, after_bounds, pd)
+        if value is None and per_bounds is None:
+            continue
+        if value is not None:
+            sort_value = value
+        else:
+            assert per_bounds is not None
+            sort_value = (per_bounds[0] + per_bounds[1]) / 2
+        per_depth_rows.append(
+            (
+                sort_value,
+                c['id'],
+                [
+                    refs.label(c['id'], True),
+                    percentage(s.get('entry_probability')),
+                    bounded_delta_points(after, before, after_bounds),
+                    bounded_depth(pd),
+                    bounded_delta_per_depth(after, before, after_bounds, pd),
+                ],
+            )
+        )
+    if per_depth_rows:
+        per_depth_rows.sort(key=lambda item: (-item[0], item[1]))
+        text += [
+            '**Chapters by delta per prepared depth**',
+            '',
+            "A chapter's delta divided by its expected prepared depth (opponent moves answered), among games that "
+            'enter the chapter. Unlike edge per move, this ignores how often the chapter comes up and how wide its '
+            'tree is; shallow chapters can rank high from a single move.',
+            '',
+            *table(
+                ['Chapter', 'Chapter reach', 'Delta', 'Prepared depth', 'Per depth'],
+                [row for _, _, row in per_depth_rows],
             ),
         ]
     pruning = [rows[i] for i in effort.get('pruning', []) if i in rows][:top]
