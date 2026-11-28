@@ -3,6 +3,7 @@ import httpx
 import pytest
 
 from repertoire.explorer import (
+    DEFAULT_DELAY,
     DEFAULT_FILTERS,
     USER_AGENT,
     Explorer,
@@ -11,6 +12,7 @@ from repertoire.explorer import (
     duration,
     fetch_missing,
     lichess_headers,
+    survey,
 )
 from repertoire.graph import key
 
@@ -234,3 +236,31 @@ def test_online_explorer_removes_partial_writes(tmp_path, monkeypatch):
     assert (tmp_path / 'partial.tmp').exists()
     Explorer(tmp_path).close()
     assert not list(tmp_path.glob('*.tmp'))
+
+
+def test_default_delay_paces_requests_and_estimates_floor(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('LICHESS_TOKEN', 'test-token')
+    now = [100.0]
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    def respond(_):
+        now[0] += 0.2
+        return httpx.Response(200, json=EMPTY)
+
+    monkeypatch.setattr('repertoire.explorer.time.monotonic', lambda: now[0])
+    monkeypatch.setattr('repertoire.explorer.time.sleep', sleep)
+    client = Explorer(tmp_path)
+    client.client.close()
+    client.client = httpx.Client(transport=httpx.MockTransport(respond))
+    assert client.delay == DEFAULT_DELAY == 2.5
+    boards = positions(4)
+    survey(client, boards, 'white')
+    assert '4 to fetch (at least 10s)' in capsys.readouterr().out
+    client.get(boards[0])
+    client.get(boards[1])
+    assert sleeps == [0, pytest.approx(2.3)]
+    client.close()

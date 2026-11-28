@@ -47,6 +47,9 @@ class CacheMiss(ValueError):
     """An offline read found no cached table; distinct from a table with zero games."""
 
 
+# Explorer enforces ~25 req/min sustained (2.4s/req, burst 25); pacing at 2.5s (~24 req/min) stays
+# just under that ceiling with a small margin for jitter and avoids repeated 60s HTTP 429 waits.
+DEFAULT_DELAY = 2.5
 # Lichess asks clients to wait a full minute after HTTP 429.
 RATE_LIMIT_WAIT = 60
 # How long one request keeps retrying through server errors and dropped connections, long enough
@@ -244,7 +247,7 @@ class Explorer:
         filters: Mapping[str, str] | None = None,
         offline: bool = False,
         refresh: bool = False,
-        delay: float = 1.0,
+        delay: float = DEFAULT_DELAY,
         patience: int = OUTAGE_PATIENCE,
     ) -> None:
         self.cache = Path(cache)

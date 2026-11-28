@@ -92,7 +92,7 @@ Useful options:
 
 ## Long runs
 
-Every position where the opponent is to move needs its own Opening Explorer table, as do the starting position, chapter entries and positions where your preparation ends; your own prepared moves need none. The build fetches them all before it analyzes anything. Requests go out one at a time, about one per second. Lichess answers sustained use with HTTP 429, which pauses the run for a minute at a time, so a first run on a large repertoire takes hours: some 60 chapters across both colors need about 1,300 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
+Every position where the opponent is to move needs its own Opening Explorer table, as do the starting position, chapter entries and positions where your preparation ends; your own prepared moves need none. The build fetches them all before it analyzes anything. Requests go out one at a time, spaced 2.5 seconds apart (about 24 per minute) to stay under Lichess's sustained Explorer limit. If Lichess still answers with HTTP 429, the run pauses for a minute at a time; a first run on a large repertoire takes an hour or more: some 60 chapters across both colors need about 1,300 tables. Later runs request only tables that are not cached, so editing a few lines costs a few requests.
 
 Check the size of a run before you start it:
 
@@ -101,10 +101,10 @@ uv run repertoire build --dry-run --token-file path/to/lichess_token.txt
 ```
 
 ```text
-white and black: 1270 Explorer tables: 260 cached, 1010 to fetch (at least 17m)
+white and black: 1270 Explorer tables: 260 cached, 1010 to fetch (at least 42m)
 ```
 
-"At least" assumes one request per second and no rate limiting, so real runs are slower. `fetch --dry-run` gives the same count for the last export without needing a token.
+"At least" assumes the 2.5-second request spacing and no rate limiting, so real runs can be slower. `fetch --dry-run` gives the same count for the last export without needing a token.
 
 While fetching, a progress line is printed about every 15 seconds. Its estimate uses the recent rate, including rate-limit pauses, so it settles after the first few minutes:
 
