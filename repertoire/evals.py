@@ -31,6 +31,7 @@ import zstandard
 from .board_cache import canonical, children
 from .board_cache import position_of as node_position
 from .context import DEFAULT_CACHE, AnalysisContext
+from .eval_index import DEFAULT_BUCKETS, EvalIndex, build_index, index_path_for
 from .evaluate import by_position, reaches
 from .explorer import CacheMiss, Progress, duration
 from .graph import parse, resolve, topology
@@ -41,6 +42,7 @@ from .score import load_config, scored_configuration
 DIRECTORY = Path('.cache/evals')
 STORE = DIRECTORY / 'evals.sqlite'
 EXPORT = DIRECTORY / 'lichess_db_eval.jsonl.zst'
+INDEX = DIRECTORY / 'lichess_db_eval.idx'
 EXPORT_URL = 'https://database.lichess.org/lichess_db_eval.jsonl.zst'
 REPORTS = ('reports/data/white.json', 'reports/data/black.json')
 DEFAULT_PLIES = 1
@@ -144,18 +146,17 @@ class Store:
         return True
 
     def find_export(self, path: Path) -> int | None:
-        """The id of an export file if it has been recorded, without modifying the store."""
-        stat = path.stat()
-        identity = (path.name, stat.st_size, modified(path))
+        """The id of an export (or its indexed archive) if it has been recorded, without modifying the store."""
+        identity = source_identity(path)
         row = self.db.execute(
             'select id from exports where name = ? and size = ? and modified = ?', identity
         ).fetchone()
         return None if row is None else int(row[0])
 
     def export(self, path: Path) -> int:
-        """The id of an export file, identified by name, size and modification time, so a moved copy matches."""
-        stat = path.stat()
-        identity = (path.name, stat.st_size, modified(path))
+        """The id of an export file, identified by name, size and modification time, so a moved copy or
+        derived index matches."""
+        identity = source_identity(path)
         self.db.execute('insert or ignore into exports (name, size, modified) values (?, ?, ?)', identity)
         row = self.db.execute('select id from exports where name = ? and size = ? and modified = ?', identity)
         return int(row.fetchone()[0])
@@ -174,6 +175,60 @@ def now() -> str:
 
 def modified(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
+
+
+def source_identity(path: Path) -> tuple[str, int, str]:
+    """`(name, size, modified)` identifying the Lichess export behind `path`, whether raw `.jsonl.zst` or `.idx`."""
+    if path.suffix == '.idx':
+        return EvalIndex(path).source_identity
+    stat = path.stat()
+    return (path.name, stat.st_size, modified(path))
+
+
+def resolve_source(
+    export_path: str | Path | None = None,
+    *,
+    rebuild_stale_index: bool = False,
+) -> Path | None:
+    """Choose the best available evaluation source (preferring an up-to-date `.idx` over raw `.jsonl.zst`).
+
+    When `export_path` is omitted, looks at `INDEX` and `EXPORT` (looked up at call time for test isolation).
+    When `export_path` is explicitly given, it must exist; a matching sibling `.idx` is preferred automatically.
+    """
+    if export_path is not None:
+        explicit = Path(export_path)
+        if not explicit.is_file():
+            raise FileNotFoundError(f'No evaluation export at {explicit}')
+        if explicit.suffix == '.idx':
+            return explicit
+        sibling = index_path_for(explicit)
+        if sibling.is_file():
+            if EvalIndex(sibling).matches_export(explicit):
+                return sibling
+            if rebuild_stale_index:
+                print(
+                    f'Evaluation index {sibling.name} is older than {explicit.name}; rebuilding',
+                    flush=True,
+                )
+                build_index(explicit, sibling)
+                return sibling
+        return explicit
+
+    default_export, default_index = Path(EXPORT), Path(INDEX)
+    if default_index.is_file():
+        if not default_export.is_file():
+            return default_index
+        if EvalIndex(default_index).matches_export(default_export):
+            return default_index
+        if rebuild_stale_index:
+            print(
+                f'Evaluation index {default_index.name} is older than {default_export.name}; rebuilding',
+                flush=True,
+            )
+            build_index(default_export, default_index)
+            return default_index
+        return default_export
+    return default_export if default_export.is_file() else None
 
 
 def from_export(line: Mapping[str, Any], retrieved_at: str) -> Evaluation:
@@ -289,16 +344,28 @@ def scan(
 
 
 def import_export(store: Store, path: Path, wanted: Collection[Position], size: int = CHUNK) -> int:
-    """Search the export for the wanted positions it has not been searched for; returns how many were added."""
+    """Search the export (or its hash-bucketed `.idx` archive) for the wanted positions it has not been searched
+    for; returns how many were added."""
     export = store.export(path)
     pending = set(wanted) - store.searched(export)
+    is_index = path.suffix == '.idx'
+    label = 'Evaluation index' if is_index else 'Evaluation export'
     if not pending:
-        print(f'Evaluation export: all {len(wanted):,} positions were already searched in {path.name}', flush=True)
+        print(f'{label}: all {len(wanted):,} positions were already searched in {path.name}', flush=True)
         return 0
-    print(f'Evaluation export: searching {path.name} for {len(pending):,} positions', flush=True)
+    if is_index:
+        print(f'Evaluation index: looking up {len(pending):,} positions in {path.name}', flush=True)
+        entries: Iterator[tuple[Position, Evaluation]] = EvalIndex(path).lookup(pending)
+    else:
+        print(f'Evaluation export: searching {path.name} for {len(pending):,} positions', flush=True)
+        print(
+            "Tip: run 'uv run repertoire evals index' once to build a local index for fast incremental imports.",
+            flush=True,
+        )
+        entries = scan(path, pending, size)
     added: set[Position] = set()
     written = 0
-    for k, evaluation in scan(path, pending, size):
+    for k, evaluation in entries:
         if store.put(k, evaluation):
             added.add(k)
             written += 1
@@ -405,29 +472,31 @@ def sync_reports(
     plies: int = DEFAULT_PLIES,
     exit_goal: int | None = DEFAULT_EXIT_GOAL,
     size: int = CHUNK,
+    rebuild_stale_index: bool = True,
 ) -> JsonObject:
-    """Import any unsearched evaluations for saved score `paths` when an export file is available.
+    """Import any unsearched evaluations for saved score `paths` when an index or export file is available.
 
-    Avoids opening the store for writing when every wanted position has already been searched in `export_path`,
+    Avoids opening the store for writing when every wanted position has already been searched in the source,
     so unchanged builds leave the store file hash untouched.
     """
-    export_file = Path(EXPORT if export_path is None else export_path)
+    source_file = resolve_source(export_path, rebuild_stale_index=rebuild_stale_index)
     store_file = Path(STORE if store_path is None else store_path)
-    if not export_file.is_file():
+    if source_file is None:
         return dict(status='missing_export', wanted=0, pending=0, added=0)
     analyses = [AnalysisContext(path) for path in paths]
     counts = [frequencies(analysis, cache) for analysis in analyses]
     wanted = wanted_positions(analyses, counts, plies=plies, exit_goal=exit_goal)
-    pending = pending_in_store(store_file, export_file, wanted)
+    pending = pending_in_store(store_file, source_file, wanted)
+    label = 'Evaluation index' if source_file.suffix == '.idx' else 'Evaluation export'
     if not pending:
         print(
-            f'Evaluation export: all {len(wanted):,} positions were already searched in {export_file.name}',
+            f'{label}: all {len(wanted):,} positions were already searched in {source_file.name}',
             flush=True,
         )
         return dict(status='reused', wanted=len(wanted), pending=0, added=0)
     with Store(store_file) as store:
-        added = import_export(store, export_file, wanted, size=size)
-        print(f'Evaluation export: {added:,} evaluations added or deepened', flush=True)
+        added = import_export(store, source_file, wanted, size=size)
+        print(f'{label}: {added:,} evaluations added or deepened', flush=True)
         for analysis, (reach, exits) in zip(analyses, counts):
             coverage(store, analysis.saved['color'], reach, exits)
     return dict(status='built', wanted=len(wanted), pending=len(pending), added=added)
@@ -444,10 +513,11 @@ def survey_export(
     plies: int = DEFAULT_PLIES,
     exit_goal: int | None = DEFAULT_EXIT_GOAL,
 ) -> JsonObject | None:
-    """Report how many positions a build would search in the local evaluation export, without modifying any file."""
-    export_file = Path(EXPORT if export_path is None else export_path)
+    """Report how many positions a build would search in the local evaluation index or export, without modifying
+    any file."""
+    source_file = resolve_source(export_path, rebuild_stale_index=False)
     store_file = Path(STORE if store_path is None else store_path)
-    if not export_file.is_file():
+    if source_file is None:
         return None
     nodes: set[Position] = set()
     for color, pgn in pgns.items():
@@ -477,31 +547,33 @@ def survey_export(
             exact = False
     wanted |= set(exits)
     wanted |= exit_lookahead(exits, exit_goal)
-    pending = pending_in_store(store_file, export_file, wanted)
+    pending = pending_in_store(store_file, source_file, wanted)
+    is_index = source_file.suffix == '.idx'
+    label = 'Evaluation index' if is_index else 'Evaluation export'
+    cost_note = 'indexed lookup' if is_index else '1 full pass'
     if not pending:
         if exact:
             print(
-                f'Evaluation export: all {len(wanted):,} positions already searched in {export_file.name}',
+                f'{label}: all {len(wanted):,} positions already searched in {source_file.name}',
                 flush=True,
             )
         else:
             print(
-                f'Evaluation export: all {len(wanted):,} repertoire-neighborhood positions already searched in '
-                f'{export_file.name} (new exits will be checked after scoring)',
+                f'{label}: all {len(wanted):,} repertoire-neighborhood positions already searched in '
+                f'{source_file.name} (new exits will be checked after scoring)',
                 flush=True,
             )
     elif exact:
         print(
-            f'Evaluation export: {len(pending):,} of {len(wanted):,} positions to search in '
-            f'{export_file.name} (1 full pass)',
+            f'{label}: {len(pending):,} of {len(wanted):,} positions to search in {source_file.name} ({cost_note})',
             flush=True,
         )
     else:
         print(
-            f'Evaluation export: at least {len(pending):,} positions to search in {export_file.name} (1 full pass)',
+            f'{label}: at least {len(pending):,} positions to search in {source_file.name} ({cost_note})',
             flush=True,
         )
-    return dict(wanted=len(wanted), pending=len(pending), exact=exact, export=str(export_file))
+    return dict(wanted=len(wanted), pending=len(pending), exact=exact, export=str(source_file), indexed=is_index)
 
 
 def coverage(store: Store, label: str, reach: Mapping[Position, float], exits: Mapping[Position, float]) -> None:
@@ -525,9 +597,14 @@ def main() -> None:
     common.add_argument('--store', type=Path, default=STORE, help=f'Evaluation store (default: {STORE})')
     common.add_argument('--cache', default=DEFAULT_CACHE, help='Explorer cache the scores used')
     importing = commands.add_parser(
-        'import', parents=[common], help='Search the Lichess evaluation export for the positions the reports use'
+        'import', parents=[common], help='Search the Lichess evaluation index or export for the positions reports use'
     )
-    importing.add_argument('--export', type=Path, default=EXPORT, help=f'The export file (default: {EXPORT})')
+    importing.add_argument(
+        '--export',
+        type=Path,
+        default=None,
+        help=f'Export or index file (default: {INDEX} if present, else {EXPORT})',
+    )
     importing.add_argument(
         '--plies',
         type=int,
@@ -541,22 +618,65 @@ def main() -> None:
         help='Also keep positions one move beyond unprepared exits reached at least once in N games (0 disables; '
         f'default: {DEFAULT_EXIT_GOAL})',
     )
+    indexing = commands.add_parser(
+        'index',
+        help='Build a single-file hash-bucketed index from the Lichess evaluation export for fast incremental imports',
+    )
+    indexing.add_argument('--export', type=Path, default=EXPORT, help=f'The export file (default: {EXPORT})')
+    indexing.add_argument(
+        '--output',
+        type=Path,
+        default=None,
+        help=f'Where to write the index archive (default: sibling .idx, e.g. {INDEX})',
+    )
+    indexing.add_argument(
+        '--buckets',
+        type=int,
+        default=DEFAULT_BUCKETS,
+        help=f'Number of hash buckets (default: {DEFAULT_BUCKETS})',
+    )
+    indexing.add_argument('--workers', type=int, default=None, help='Worker processes to use (default: automatic)')
+    indexing.add_argument('--force', action='store_true', help='Rebuild even if the index already matches the export')
     commands.add_parser('status', parents=[common], help='Show how many of the positions have evaluations')
     args = parser.parse_args()
+    if args.command == 'index':
+        if not args.export.is_file():
+            parser.exit(
+                1,
+                f'No evaluation export at {args.export}. '
+                f'Download {EXPORT_URL} (about 21 GB) there, or pass --export.\n',
+            )
+        target = index_path_for(args.export) if args.output is None else args.output
+        try:
+            if not args.force and target.is_file() and EvalIndex(target).matches_export(args.export):
+                print(f'Evaluation index: {target.name} is already up to date for {args.export.name}', flush=True)
+                return
+            build_index(args.export, target, num_buckets=args.buckets, workers=args.workers)
+        except (ValueError, FileNotFoundError, EOFError, zstandard.ZstdError) as exc:
+            parser.exit(1, f'Indexing failed: {exc}\n')
+        return
     paths = args.reports or [Path(p) for p in REPORTS]
-    if args.command == 'import' and not args.export.exists():
-        parser.exit(
-            1,
-            f'No evaluation export at {args.export}. Download {EXPORT_URL} (about 21 GB) there, or pass --export.\n',
-        )
+    source_file: Path | None = None
+    if args.command == 'import':
+        try:
+            source_file = resolve_source(args.export, rebuild_stale_index=True)
+        except (ValueError, FileNotFoundError, EOFError, zstandard.ZstdError) as exc:
+            parser.exit(1, f'Evaluations failed: {exc}\n')
+        if source_file is None:
+            parser.exit(
+                1,
+                f'No evaluation export at {EXPORT}. Download {EXPORT_URL} (about 21 GB) there, or pass --export.\n',
+            )
     try:
         analyses = [AnalysisContext(path) for path in paths]
         counts = [frequencies(analysis, args.cache) for analysis in analyses]
         with Store(args.store) as store:
             if args.command == 'import':
+                assert source_file is not None
                 wanted = wanted_positions(analyses, counts, plies=args.plies, exit_goal=args.exit_goal)
-                added = import_export(store, args.export, wanted)
-                print(f'Evaluation export: {added:,} evaluations added or deepened', flush=True)
+                added = import_export(store, source_file, wanted)
+                label = 'Evaluation index' if source_file.suffix == '.idx' else 'Evaluation export'
+                print(f'{label}: {added:,} evaluations added or deepened', flush=True)
             for analysis, (reach, exits) in zip(analyses, counts):
                 coverage(store, analysis.saved['color'], reach, exits)
     except (ValueError, FileNotFoundError, EOFError, zstandard.ZstdError) as exc:

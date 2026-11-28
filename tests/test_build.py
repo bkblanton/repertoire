@@ -324,3 +324,36 @@ def test_build_explicit_missing_evals_export_fails(batch):
     run, white, _, _ = batch
     with pytest.raises(FileNotFoundError, match='No evaluation export'):
         run(evals_export=white.parent / 'missing.jsonl.zst')
+
+
+def test_build_uses_eval_index_standalone_and_caches_unchanged_check(batch, monkeypatch):
+    from repertoire.eval_index import build_index
+
+    run, white, black, _ = batch
+    zst = evals.EXPORT
+    _write_eval_export(
+        zst,
+        [
+            json.dumps(
+                {
+                    'fen': 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -',
+                    'evals': [{'depth': 35, 'knodes': 500, 'pvs': [{'cp': 25, 'line': 'e7e5'}]}],
+                },
+                separators=(',', ':'),
+            ),
+        ],
+    )
+    build_index(zst, evals.INDEX, num_buckets=16, workers=1)
+    # Remove the raw export to confirm builds work with the standalone .idx archive.
+    zst.unlink()
+
+    first = run()
+    assert {s['step']: s['status'] for s in first['steps']}['evals.import'] == 'built'
+    data_dir = white.parent / 'data'
+    assert json.loads((data_dir / 'white.engine.json').read_text(encoding='utf-8'))['status'] == 'resolved'
+
+    # Unchanged build must reuse evals.import from the build checkpoint without recomputing sync_reports.
+    monkeypatch.setattr(evals, 'sync_reports', lambda *a, **k: pytest.fail('unchanged build must reuse checkpoint'))
+    second = run()
+    assert {s['step']: s['status'] for s in second['steps']}['evals.import'] == 'reused'
+    assert second['built'] == 0

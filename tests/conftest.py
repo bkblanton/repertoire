@@ -15,10 +15,11 @@ from repertoire.vulnerabilities import analyze as vulnerabilities
 
 @pytest.fixture(autouse=True)
 def evaluation_store(tmp_path, monkeypatch):
-    """Every test gets its own empty evaluation store and export path, never the local ones."""
+    """Every test gets its own empty evaluation store, export and index path, never the local ones."""
     path = tmp_path / 'evals.sqlite'
     monkeypatch.setattr('repertoire.evals.STORE', path)
     monkeypatch.setattr('repertoire.evals.EXPORT', tmp_path / 'lichess_db_eval.jsonl.zst')
+    monkeypatch.setattr('repertoire.evals.INDEX', tmp_path / 'lichess_db_eval.idx')
     return path
 
 

@@ -172,17 +172,6 @@ class Builder:
         print(f'{name}: {status} in {self.timings[-1]["seconds"]:.2f}s', flush=True)
 
 
-def resolve_evals_export(export_path: str | Path | None) -> Path | None:
-    """The evaluation export to import from, or None when the default export is not present."""
-    if export_path is not None:
-        resolved = Path(export_path)
-        if not resolved.is_file():
-            raise FileNotFoundError(f'No evaluation export at {resolved}')
-        return resolved
-    default = Path(evals.EXPORT)
-    return default if default.is_file() else None
-
-
 def build(
     white_pgn: str | Path,
     black_pgn: str | Path,
@@ -253,14 +242,29 @@ def build(
                 [path, path.with_suffix('.inspection.json')],
                 cast(Callable[[], object], lambda args=args: scoring.analyze(args)),
             )
-        if import_evals and (export_file := resolve_evals_export(evals_export)) is not None:
+        if import_evals and (source_file := evals.resolve_source(evals_export, rebuild_stale_index=True)) is not None:
             evals_started = time.perf_counter()
-            sync = evals.sync_reports(paths, cache, export_path=export_file)
-            if sync['status'] in ('built', 'reused'):
-                forget([evals.STORE])
+            evals_inputs = dict(
+                code=file_inputs([package / 'evals.py', package / 'eval_index.py']),
+                files=file_inputs([*paths, evals.STORE]),
+                source=list(evals.source_identity(source_file)),
+                source_path=str(source_file.resolve()),
+            )
+            old_evals = runner.state['steps'].get('evals.import', {})
+            if old_evals.get('inputs') == evals_inputs and evals.STORE.is_file():
                 seconds = time.perf_counter() - evals_started
-                runner.timings.append(dict(step='evals.import', status=sync['status'], seconds=seconds))
-                print(f'evals.import: {sync["status"]} in {seconds:.2f}s', flush=True)
+                runner.timings.append(dict(step='evals.import', status='reused', seconds=seconds))
+                print(f'Reusing evals.import\nevals.import: reused in {seconds:.2f}s', flush=True)
+            else:
+                sync = evals.sync_reports(paths, cache, export_path=source_file, rebuild_stale_index=False)
+                if sync['status'] in ('built', 'reused'):
+                    forget([evals.STORE])
+                    seconds = time.perf_counter() - evals_started
+                    updated_inputs = dict(evals_inputs, files=file_inputs([*paths, evals.STORE]))
+                    runner.state['steps']['evals.import'] = dict(inputs=updated_inputs, outputs={}, cache={})
+                    write_json(runner.path, runner.state)
+                    runner.timings.append(dict(step='evals.import', status=sync['status'], seconds=seconds))
+                    print(f'evals.import: {sync["status"]} in {seconds:.2f}s', flush=True)
         for family in FAMILIES:
             for path in paths:
                 required = [path] + [path.with_suffix(f'.{name}.json') for name in DEPENDENCIES.get(family, ())]
@@ -491,8 +495,10 @@ def main() -> None:
             saved = compare.load_registry(options['comparisons'])
             extra = compare.registry_tables(saved, pgns, configs)
             fetch.fetch(pgns, configs, options['cache'], dry_run=True, extra=extra)
-            if options['import_evals'] and (export_file := resolve_evals_export(options['evals_export'])) is not None:
-                evals.survey_export(pgns, configs, options['directory'], options['cache'], export_path=export_file)
+            if options['import_evals']:
+                evals.survey_export(
+                    pgns, configs, options['directory'], options['cache'], export_path=options['evals_export']
+                )
             return
         build(**options)
     except (EOFError, zstandard.ZstdError) as exc:

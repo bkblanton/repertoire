@@ -294,14 +294,19 @@ uv run repertoire compare https://lichess.org/study/<candidate-study-id> --color
 
 The evaluations come only from the export Lichess publishes, a single file of several hundred million positions (about 21 GB compressed). Download [lichess_db_eval.jsonl.zst](https://database.lichess.org/lichess_db_eval.jsonl.zst) to `.cache/evals/`; the download can take hours, since Lichess limits its speed.
 
-Once the export is in `.cache/evals/lichess_db_eval.jsonl.zst`, `repertoire build` automatically imports any unsearched positions right after scoring and before the engine stage runs. When nothing new needs searching, the check finishes immediately and skips the scan; pass `--no-evals-import` to skip scanning on a build, or `--evals-export` for a file elsewhere. You can also run the import or check coverage on its own:
+Once the export is in `.cache/evals/lichess_db_eval.jsonl.zst`, `repertoire build` automatically imports any unsearched positions right after scoring and before the engine stage runs. When nothing new needs searching, the build reuses its checkpoint immediately and skips scanning; pass `--no-evals-import` to skip importing on a build, or `--evals-export` for a file elsewhere.
+
+Because the raw `.jsonl.zst` export is unsorted, searching it for even a few new positions scans the whole 21 GB file. Run `evals index` once to build a single-file hash-bucketed archive (`.cache/evals/lichess_db_eval.idx`, 65,536 compressed buckets):
 
 ```sh
+uv run repertoire evals index
 uv run repertoire evals import
 uv run repertoire evals status
 ```
 
-**`import`** (and automatic build import) searches the export for every position in your studies, every position one move beyond them (`--plies` changes how far), every position where preparation ends, and every position one move beyond unprepared exits reached at least once in 2,000 games (`--exit-goal`, set `0` to disable). The file lists positions in no particular order, so it cannot be searched for one position: each scan reads it from start to end, taking a few minutes, and keeps only the positions it is looking for. The store remembers which positions it has looked for in that file, so running `build` or `import` again reads the file again only if there are new positions, and looks only for those. Pass `--export` to `evals import` for a file elsewhere. A newer export is a different file, and importing it looks for every position again, keeping the deeper evaluation of each.
+Once `.cache/evals/lichess_db_eval.idx` exists, both `repertoire build` and `repertoire evals import` use it automatically, looking up new study lines in seconds instead of scanning the full export. You can delete `lichess_db_eval.jsonl.zst` afterward to save space if you want, or keep it and drop a newer monthly download in its place (when the export is newer than the index, `build` and `evals import` rebuild the index automatically).
+
+**`import`** (and automatic build import) looks up every position in your studies, every position one move beyond them (`--plies` changes how far), every position where preparation ends, and every position one move beyond unprepared exits reached at least once in 2,000 games (`--exit-goal`, set `0` to disable). The store remembers which positions it has looked for in each export (sharing the same identity across an export and its index), so running `build` or `import` again looks up only new positions. Pass `--export` to `evals import` for a file elsewhere. A newer export is a different file, and importing it looks up every position again, keeping the deeper evaluation of each.
 
 Both commands end with the coverage for each color, which **`status`** prints on its own: how many of the positions where preparation ends have an evaluation, weighted by how often games end there, and how many of the positions games reach. Positions nobody has analyzed on Lichess, usually rare replies deep in a line, have no evaluation. Nothing is requested or estimated in their place.
 
