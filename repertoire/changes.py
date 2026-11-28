@@ -366,6 +366,9 @@ def _capture_color(score_path: Path, pgn_path: Path, config_path: Path | None) -
         config=dict(
             chapter_order=order_mode,
             coverage_goal=coverage_goal,
+            critical_coverage=loaded_config.get('critical_coverage'),
+            keep=loaded_config.get('keep'),
+            trimmed_pgn_notations=bool(loaded_config.get('trimmed_pgn_notations', False)),
             policy=manifest['configuration'].get('policy', {}),
             exclude=exclusions,
             entries=manifest['configuration'].get('entries', {}),
@@ -865,6 +868,14 @@ def _diff_config(
         )
     if old_cfg.get('keep') != new_cfg.get('keep'):
         items.append(dict(key='keep', old=old_cfg.get('keep'), new=new_cfg.get('keep')))
+    if old_cfg.get('trimmed_pgn_notations', False) != new_cfg.get('trimmed_pgn_notations', False):
+        items.append(
+            dict(
+                key='trimmed_pgn_notations',
+                old=bool(old_cfg.get('trimmed_pgn_notations', False)),
+                new=bool(new_cfg.get('trimmed_pgn_notations', False)),
+            )
+        )
 
     old_policy, new_policy = old_cfg.get('policy', {}), new_cfg.get('policy', {})
     policy_changes: list[JsonObject] = []

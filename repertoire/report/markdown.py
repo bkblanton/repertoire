@@ -110,6 +110,8 @@ TEXT_COLUMNS = (
     'Best reply',
     'Critical reply',
     'Critical move',
+    'Current → Suggested',
+    'Engine basis',
 )
 
 # Numeric headers that share a prefix with a text column.

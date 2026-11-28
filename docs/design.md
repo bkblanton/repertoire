@@ -163,7 +163,7 @@ $$
 V_{\text{full}} - V_{\text{trimmed}} = \sum_{e} f_e \bigl(V(c_e) - S(e)\bigr),
 $$
 
-since every other stopping event keeps its probability and score. The interval on the change is paired: both scores are functions of the same posterior tables. The trimmed PGN is written from the original chapters and read back to check that it gives exactly the trimmed repertoire.
+since every other stopping event keeps its probability and score. The interval on the change is paired: both scores are functions of the same posterior tables. The trimmed PGN is written from the original chapters and read back to check that it gives exactly the trimmed repertoire. When `trimmed_pgn_notations` is enabled, managed move-evaluation NAGs (`$1`, `$6`, `$2`, `$4`) are updated on kept moves directly from imported Stockfish evaluations without changing any moves, transitions, or scores.
 
 ## Outputs
 

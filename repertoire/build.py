@@ -293,6 +293,7 @@ def build(
             order = chapter_order.order_from_config(loaded)
             critical_cfg = coverage.critical_config_from_config(loaded)
             keep_cfg = loaded.get(coverage.KEEP_CONFIG_KEY, [])
+            notations = coverage.notations_from_config(loaded)
 
             def coverage_inputs(
                 path: Path = path,
@@ -300,8 +301,9 @@ def build(
                 order: str = order,
                 critical_cfg: JsonObject = critical_cfg,
                 keep_cfg: object = keep_cfg,
+                notations: bool = notations,
             ) -> JsonObject:
-                required = [path, evals.STORE] if critical_cfg['enabled'] else [path]
+                required = [path, evals.STORE] if (critical_cfg['enabled'] or notations) else [path]
                 return dict(
                     code=analysis_code,
                     files=file_inputs(required),
@@ -309,6 +311,7 @@ def build(
                     chapter_order=order,
                     critical_coverage=critical_cfg,
                     keep=keep_cfg,
+                    trimmed_pgn_notations=notations,
                     cache=cache,
                 )
 
@@ -318,8 +321,9 @@ def build(
                 order: str = order,
                 critical_cfg: JsonObject = critical_cfg,
                 keep_cfg: Any = keep_cfg,
+                notations: bool = notations,
             ) -> None:
-                coverage.run(path, cache, goal, order, critical=critical_cfg, keep=keep_cfg)
+                coverage.run(path, cache, goal, order, critical=critical_cfg, keep=keep_cfg, notations=notations)
 
             runner.step(
                 f'{color}.coverage',

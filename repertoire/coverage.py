@@ -38,8 +38,11 @@ from .chapter_order import (
 )
 from .context import DEFAULT_CACHE, AnalysisContext, write_companion
 from .engine import (
+    MOVE_EVAL_NAGS,
     expected_score,
     is_trivial_recapture,
+    move_evaluation_nag,
+    needs_child_evals,
     position_sharpness,
     pv_first_move,
 )
@@ -60,12 +63,21 @@ from .graph import Graph, Transitions, chapter_ids, parse_games, read_games, res
 from .layout import report_directory
 from .model import Model, Sampled, empirical, prepare
 from .schema import JsonObject, Position
-from .score import CONFIG, COVERAGE_KEY, CRITICAL_COVERAGE_KEY, KEEP_KEY, entry_positions, load_config
+from .score import (
+    CONFIG,
+    COVERAGE_KEY,
+    CRITICAL_COVERAGE_KEY,
+    KEEP_KEY,
+    TRIMMED_PGN_NOTATIONS_KEY,
+    entry_positions,
+    load_config,
+)
 from .uncertainty import Posterior, difference_interval, paired_variance
 
 CONFIG_KEY = COVERAGE_KEY
 CRITICAL_KEY = CRITICAL_COVERAGE_KEY
 KEEP_CONFIG_KEY = KEEP_KEY
+NOTATIONS_KEY = TRIMMED_PGN_NOTATIONS_KEY
 DEFAULT_GOAL = 300
 DEFAULT_CRITICAL: dict[str, Any] = {
     'enabled': True,
@@ -134,6 +146,14 @@ def keep_from_config(config: Mapping[str, object], graph: Graph) -> list[Positio
         if not valid:
             raise ValueError(f'Invalid {KEEP_CONFIG_KEY} entry: {item!r}')
     return entry_positions(raw, graph, label='Kept position')
+
+
+def notations_from_config(config: Mapping[str, object]) -> bool:
+    """Whether trimmed PGN output automatically applies engine move-evaluation NAGs (!, ?!, ?, ??)."""
+    value = config.get(NOTATIONS_KEY, False)
+    if not isinstance(value, bool):
+        raise ValueError(f'{NOTATIONS_KEY} must be a boolean: {value!r}')
+    return value
 
 
 def pgn_name(color: str, goal: int) -> str:
@@ -713,9 +733,9 @@ class Writer:
                 if self.keeps(k, v, canonical(following)):
                     stack.append((child, after, v, variation))
 
-    def write(
+    def build_games(
         self, source: str | Path, exclusions: Collection[str], order: Sequence[str] | None = None
-    ) -> tuple[str, JsonObject]:
+    ) -> tuple[list[chess.pgn.Game], JsonObject]:
         games, originals = read_games(source), read_games(source)
         ids = chapter_ids(games, exclusions)
         included = [(game, original, cid) for game, original, cid in zip(games, originals, ids) if cid is not None]
@@ -767,12 +787,39 @@ class Writer:
             written.append(game)
         kept_ids = {c for _, c in chapters}
         left_out += [cid for _, _, cid in included if cid not in kept_ids]
+        return written, dict(chapters_written=len(written), chapters_left_out=left_out, moved=self.moved)
+
+    def write(
+        self,
+        source: str | Path,
+        exclusions: Collection[str],
+        order: Sequence[str] | None = None,
+        *,
+        notations: bool = False,
+        store: str | Path | None = None,
+    ) -> tuple[str, JsonObject]:
+        written, pgn_meta = self.build_games(source, exclusions, order)
+        if notations:
+            store_path = Path(evals_store.STORE if store is None else store)
+            evals = _load_pgn_notation_evals(written, store_path)
+            pgn_meta['notations'] = apply_move_notations(written, evals)
+        else:
+            pgn_meta['notations'] = dict(
+                enabled=False,
+                applied=False,
+                added=0,
+                updated=0,
+                removed=0,
+                unchanged=0,
+                preserved_unverified=0,
+                nodes_changed=0,
+            )
         # A StringExporter keeps adding to its output, so each game gets its own.
         exported = [
             game.accept(chess.pgn.StringExporter(headers=True, variations=True, comments=True)) for game in written
         ]
         text = '\n\n'.join(exported) + '\n'
-        return text, dict(chapters_written=len(written), chapters_left_out=left_out, moved=self.moved)
+        return text, pgn_meta
 
     def reproduces(self, text: str, coverage: Coverage, level: Level) -> bool:
         """Whether the PGN, read back as a repertoire, plays exactly the trimmed repertoire and scores the same.
@@ -819,6 +866,118 @@ def recorded_moves(game: chess.pgn.Game) -> set[tuple[Position, str]]:
     return result
 
 
+def _load_pgn_notation_evals(games: Sequence[chess.pgn.Game], store_path: Path) -> dict[Position, Evaluation]:
+    """Read direct edge evaluations and 1-ply children for single-PV positions in `games`."""
+    if not store_path.is_file():
+        return {}
+    parent_positions: set[Position] = set()
+    wanted: set[Position] = set()
+    for game in games:
+        stack: list[tuple[chess.pgn.GameNode, chess.Board]] = [(game, game.board())]
+        while stack:
+            node, board = stack.pop()
+            pos = canonical(board)
+            if node.variations:
+                parent_positions.add(pos)
+                wanted.add(pos)
+            for child in node.variations:
+                after = board.copy(stack=False)
+                after.push(child.move)
+                wanted.add(canonical(after))
+                stack.append((child, after))
+    if not wanted:
+        return {}
+    with Store(store_path, read_only=True) as evals:
+        loaded = evals.read(sorted(wanted))
+        extra: set[Position] = set()
+        for pos in parent_positions:
+            if pos in loaded and needs_child_evals(pos, loaded):
+                extra.update(children(pos).values())
+        if extra - set(loaded):
+            loaded.update(evals.read(sorted(extra - set(loaded))))
+    return loaded
+
+
+def apply_move_notations(games: Sequence[chess.pgn.Game], evaluations: Mapping[Position, Evaluation]) -> JsonObject:
+    """Apply engine move-evaluation NAGs (!, ?!, ?, ??) across `games`, preserving all other NAGs."""
+    if not evaluations:
+        return dict(
+            enabled=True,
+            applied=False,
+            added=0,
+            updated=0,
+            removed=0,
+            unchanged=0,
+            preserved_unverified=0,
+            nodes_changed=0,
+        )
+    incoming_map: dict[tuple[Position, str], list[tuple[Position, str]]] = {}
+    for game in games:
+        stack: list[tuple[chess.pgn.GameNode, chess.Board, tuple[Position, str] | None]] = [(game, game.board(), None)]
+        while stack:
+            node, board, incoming = stack.pop()
+            pos = canonical(board)
+            pending = []
+            for child in node.variations:
+                uci = child.move.uci()
+                if incoming is not None:
+                    incoming_map.setdefault((pos, uci), []).append(incoming)
+                after = board.copy(stack=False)
+                after.push(child.move)
+                pending.append((child, after, (pos, uci)))
+            stack.extend(reversed(pending))
+
+    edge_status: dict[tuple[Position, str], str] = {}
+    nodes_changed = 0
+    managed = set(MOVE_EVAL_NAGS)
+    for game in games:
+        stack_nodes: list[tuple[chess.pgn.GameNode, chess.Board]] = [(game, game.board())]
+        while stack_nodes:
+            node, board = stack_nodes.pop()
+            pos = canonical(board)
+            pending_nodes = []
+            for child in node.variations:
+                uci = child.move.uci()
+                key = (pos, uci)
+                verdict = move_evaluation_nag(pos, uci, evaluations, incoming_moves=incoming_map.get(key, ()))
+                if verdict['evaluated']:
+                    old_eval = set(child.nags) & managed
+                    other = set(child.nags) - managed
+                    expected_nag: int | None = verdict['expected_nag']
+                    if expected_nag is not None:
+                        new_eval = {expected_nag}
+                    elif verdict['sharpness_verified']:
+                        new_eval = set()
+                    else:
+                        new_eval = old_eval & {chess.pgn.NAG_GOOD_MOVE}
+                    if new_eval != old_eval:
+                        child.nags = other | new_eval
+                        nodes_changed += 1
+                    if new_eval == old_eval:
+                        status = (
+                            'preserved_unverified'
+                            if not verdict['sharpness_verified'] and old_eval == {chess.pgn.NAG_GOOD_MOVE}
+                            else 'unchanged'
+                        )
+                    elif not old_eval and new_eval:
+                        status = 'added'
+                    elif old_eval and not new_eval:
+                        status = 'removed'
+                    else:
+                        status = 'updated'
+                    prev = edge_status.get(key)
+                    if prev is None or (prev == 'unchanged' and status != 'unchanged'):
+                        edge_status[key] = status
+                after = board.copy(stack=False)
+                after.push(child.move)
+                pending_nodes.append((child, after))
+            stack_nodes.extend(reversed(pending_nodes))
+    counts = {k: 0 for k in ('added', 'updated', 'removed', 'unchanged', 'preserved_unverified')}
+    for st in edge_status.values():
+        counts[st] += 1
+    return dict(enabled=True, applied=True, nodes_changed=nodes_changed, **counts)
+
+
 def goals(goal: int) -> list[int | None]:
     """Every level compared, rarest last, then every line."""
     return [*sorted({*GOALS, goal}), None]
@@ -832,6 +991,7 @@ def analyze(
     critical: Mapping[str, object] | bool | None = None,
     keep: Sequence[str | JsonObject] = (),
     store: str | Path | None = None,
+    notations: bool = False,
 ) -> tuple[JsonObject, str]:
     """The coverage comparison and the trimmed PGN text at `goal`."""
     order = order_from_config({'chapter_order': order})
@@ -860,7 +1020,7 @@ def analyze(
     )
     writer = Writer(result, chosen)
     exclusions = analysis.manifest['configuration'].get('exclude', [])
-    text, pgn = writer.write(analysis.source, exclusions, ordering['ids'])
+    text, pgn = writer.write(analysis.source, exclusions, ordering['ids'], notations=notations, store=store)
     if not writer.reproduces(text, result, chosen):
         raise AssertionError('The trimmed PGN does not reproduce the trimmed repertoire')
     analysis.require_source('coverage analysis')
@@ -885,6 +1045,7 @@ def analyze(
                 chapter_order=order,
                 critical_coverage=critical_cfg,
                 keep=pinned,
+                trimmed_pgn_notations=notations,
                 rule='keep positions where you are to move that games reach at least once in N games through kept '
                 'positions, plus criticality-protected and pinned positions with their routes; cut positions are '
                 'scored as unprepared replies with their parent table rows',
@@ -902,9 +1063,10 @@ def run(
     critical: Mapping[str, object] | bool | None = None,
     keep: Sequence[str | JsonObject] = (),
     store: str | Path | None = None,
+    notations: bool = False,
 ) -> JsonObject:
     """Save the coverage analysis and the trimmed PGN, removing a trimmed PGN left from an earlier goal."""
-    value, text = analyze(path, cache, goal, order, critical=critical, keep=keep, store=store)
+    value, text = analyze(path, cache, goal, order, critical=critical, keep=keep, store=store, notations=notations)
     target = pgn_path(path, value['color'], goal)
     target.parent.mkdir(parents=True, exist_ok=True)
     for old in target.parent.glob(f'{value["color"]}-1-in-*.pgn'):
@@ -938,6 +1100,12 @@ def configured_keep(color: str, config: str | Path | None = None) -> list[Any]:
     return raw
 
 
+def configured_notations(color: str, config: str | Path | None = None) -> bool:
+    """Whether trimmed PGN notations are enabled in configs/<color>.json, defaulting to False."""
+    path = Path(config) if config else Path(CONFIG.format(color))
+    return notations_from_config(load_config(path) if path.is_file() else {})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('reports', nargs='+', type=Path, help='Saved score JSON files, with unchanged source PGNs')
@@ -957,6 +1125,12 @@ def main() -> None:
         action='store_true',
         help='Disable engine criticality protection (keep only positions meeting the reach goal and explicit pins)',
     )
+    parser.add_argument(
+        '--notations',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='Apply engine move evaluation notations (!, ?!, ?, ??) to the trimmed PGN',
+    )
     parser.add_argument('--store', type=Path, default=None, help=f'Evaluation store (default: {evals_store.STORE})')
     args = parser.parse_args()
     try:
@@ -968,7 +1142,17 @@ def main() -> None:
             if args.no_critical:
                 critical_cfg['enabled'] = False
             keep_cfg = configured_keep(color)
-            value = run(path, args.cache, goal, order, critical=critical_cfg, keep=keep_cfg, store=args.store)
+            notations = args.notations if args.notations is not None else configured_notations(color)
+            value = run(
+                path,
+                args.cache,
+                goal,
+                order,
+                critical=critical_cfg,
+                keep=keep_cfg,
+                store=args.store,
+                notations=notations,
+            )
             row = (value['at_goal'].get('protected') or {}).get('row') or next(
                 r for r in value['levels'] if r['goal'] == goal
             )

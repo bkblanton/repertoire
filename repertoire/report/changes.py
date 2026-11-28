@@ -345,6 +345,10 @@ def _config_and_evidence_section(item: JsonObject) -> list[str]:
             bullets.append('**Critical coverage:** protection settings updated.')
         elif key == 'keep':
             bullets.append('**Pinned lines (`keep`):** updated.')
+        elif key == 'trimmed_pgn_notations':
+            old_state = 'enabled' if change['old'] else 'disabled'
+            new_state = 'enabled' if change['new'] else 'disabled'
+            bullets.append(f'**Trimmed PGN move notations:** {old_state} → {new_state}.')
         elif key == 'policy':
             parts = []
             for p in change['changes']:

@@ -11,18 +11,19 @@ reply can be better for the opponent. These floors are kept apart from evaluated
 """
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
 import chess
+import chess.pgn
 
 from . import evals as store_module
 from .attribution import Attribution
-from .board_cache import children, move_text, san, turn
+from .board_cache import canonical, children, move_text, san, turn
 from .context import DEFAULT_CACHE, AnalysisContext, stage_main
 from .evals import Evaluation, Store
-from .graph import Graph, Transitions, resolve
+from .graph import Graph, Transitions, chapter_ids, read_games, resolve
 from .model import Evidence
 from .ratings import reply_rating, response_rating
 from .schema import JsonObject, Position
@@ -41,6 +42,18 @@ MIN_SHARPNESS_GAP_PP = 5.0
 MIN_TRAP_GAP_PP = 8.0
 MIN_TEST_THREAT_PP = 3.0
 MIN_OWN_LOSS_PP = 5.0
+MIN_GOOD_MOVE_GAP_PP = 5.0
+MOVE_EVAL_NAGS: dict[int, str] = {
+    chess.pgn.NAG_GOOD_MOVE: '!',
+    chess.pgn.NAG_DUBIOUS_MOVE: '?!',
+    chess.pgn.NAG_MISTAKE: '?',
+    chess.pgn.NAG_BLUNDER: '??',
+}
+JUDGEMENT_TO_NAG: dict[str, int] = {
+    'inaccuracy': chess.pgn.NAG_DUBIOUS_MOVE,
+    'mistake': chess.pgn.NAG_MISTAKE,
+    'blunder': chess.pgn.NAG_BLUNDER,
+}
 
 
 def normalize_pv_uci(position: Position, uci: str) -> str:
@@ -170,6 +183,94 @@ def is_trivial_recapture(
     return True
 
 
+def strict_position_sharpness(
+    position: Position,
+    color: bool,
+    evaluations: Mapping[Position, Evaluation],
+) -> JsonObject | None:
+    """Gap in expected score between top two moves when verifiable from multi-PV or complete 1-ply child evals."""
+    sh = position_sharpness(position, color, evaluations, allow_children=False)
+    if sh is not None:
+        return sh
+    legal = children(position)
+    if len(legal) >= 2 and all(child in evaluations for child in legal.values()):
+        return position_sharpness(position, color, evaluations, allow_children=True)
+    return None
+
+
+def move_evaluation_nag(
+    position: Position,
+    uci: str,
+    evaluations: Mapping[Position, Evaluation],
+    *,
+    incoming_moves: Iterable[tuple[Position, str]] = (),
+) -> JsonObject:
+    """Engine verdict and managed move-evaluation NAG (`!`, `?!`, `?`, `??`) for `(position, uci)`."""
+    mover = turn(position)
+    legal = children(position)
+    child = legal.get(uci)
+    before = expected_score(evaluations.get(position), mover)
+    after = expected_score(evaluations.get(child), mover) if child else None
+    if before is None or after is None:
+        return dict(
+            evaluated=False,
+            expected_nag=None,
+            sharpness_verified=False,
+            loss_pp=None,
+            gap_pp=None,
+            best_move=None,
+            best_move_san=None,
+            second_move=None,
+            second_move_san=None,
+            sharpness_source=None,
+            judgement=None,
+            trivial_recapture=False,
+        )
+    loss_pp = 100 * (before - after)
+    judged_as = judgement(loss_pp)
+    ev = evaluations[position]
+    pv0 = pv_first_move(position, ev)
+    sh = strict_position_sharpness(position, mover, evaluations)
+    incoming = list(incoming_moves)
+    triv = bool(
+        sh and incoming and all(is_trivial_recapture(pk, pm, sh['best_move'], sh['second_move']) for pk, pm in incoming)
+    )
+    if judged_as is not None:
+        expected_nag: int | None = JUDGEMENT_TO_NAG[judged_as]
+        sharpness_verified = True
+    elif len(legal) < 2:
+        expected_nag = None
+        sharpness_verified = True
+    elif sh is not None:
+        expected_nag = (
+            chess.pgn.NAG_GOOD_MOVE
+            if sh['best_move'] == uci and sh['gap_pp'] >= MIN_GOOD_MOVE_GAP_PP and not triv
+            else None
+        )
+        sharpness_verified = True
+    else:
+        expected_nag = None
+        sharpness_verified = bool(pv0 is not None and pv0 != uci and loss_pp >= 0.0)
+    best_move = sh['best_move'] if sh else pv0
+    best_move_san = san(position, best_move) if best_move else None
+    second_move = sh['second_move'] if sh else None
+    second_move_san = san(position, second_move) if second_move else None
+    return dict(
+        evaluated=True,
+        expected_nag=expected_nag,
+        sharpness_verified=sharpness_verified,
+        loss_pp=loss_pp,
+        gap_pp=sh['gap_pp'] if sh else None,
+        best_move=best_move,
+        best_move_san=best_move_san,
+        second_move=second_move,
+        second_move_san=second_move_san,
+        sharpness_source=sh['source'] if sh else None,
+        judgement=judged_as,
+        trivial_recapture=triv,
+    )
+
+
 def display(evaluation: Evaluation | None, color: bool) -> JsonObject | None:
     """The first line's evaluation from your side, as published: centipawns or moves to mate, with its depth."""
     if evaluation is None or not evaluation['pvs']:
@@ -264,7 +365,8 @@ def _move_rating_context(evidence: Evidence, parent: Position, move: str) -> Jso
     return result
 
 
-def _needs_child_evals(position: Position, evaluations: Mapping[Position, Evaluation]) -> bool:
+def needs_child_evals(position: Position, evaluations: Mapping[Position, Evaluation]) -> bool:
+    """Whether `position` lacks two distinct legal multi-PV moves, so 1-ply child evals are needed for sharpness."""
     ev = evaluations.get(position)
     if ev is None or len(ev['pvs']) < 2:
         return True
@@ -550,6 +652,158 @@ def _scope_critical_audit(
     )
 
 
+def _recorded_move_nags(
+    source: str | Path, exclusions: Collection[str]
+) -> tuple[
+    dict[tuple[str, Position, str], list[frozenset[int]]],
+    dict[tuple[str, Position, str], list[tuple[Position, str]]],
+    dict[tuple[Position, str], list[tuple[str, frozenset[int]]]],
+    dict[tuple[Position, str], list[tuple[Position, str]]],
+]:
+    """Recorded move-evaluation NAG sets and incoming moves from `source` PGN, overall and per chapter."""
+    games = read_games(source)
+    cids = chapter_ids(games, exclusions)
+    ch_nags: dict[tuple[str, Position, str], list[frozenset[int]]] = {}
+    ch_in: dict[tuple[str, Position, str], list[tuple[Position, str]]] = {}
+    all_nags: dict[tuple[Position, str], list[tuple[str, frozenset[int]]]] = {}
+    all_in: dict[tuple[Position, str], list[tuple[Position, str]]] = {}
+    excluded = set(exclusions)
+    for game, cid in zip(games, cids):
+        if cid is None:
+            continue
+        stack: list[tuple[chess.pgn.GameNode, chess.Board, tuple[Position, str] | None]] = [(game, game.board(), None)]
+        while stack:
+            node, board, incoming = stack.pop()
+            pos = canonical(board)
+            pending = []
+            for child in node.variations:
+                if child.move not in board.legal_moves:
+                    continue
+                uci = child.move.uci()
+                if f'{cid}:{pos}:{uci}' in excluded:
+                    continue
+                nags = frozenset(n for n in child.nags if n in MOVE_EVAL_NAGS)
+                ch_nags.setdefault((cid, pos, uci), []).append(nags)
+                all_nags.setdefault((pos, uci), []).append((cid, nags))
+                if incoming is not None:
+                    ch_in.setdefault((cid, pos, uci), []).append(incoming)
+                    all_in.setdefault((pos, uci), []).append(incoming)
+                after = board.copy(stack=False)
+                after.push(child.move)
+                pending.append((child, after, (pos, uci)))
+            stack.extend(reversed(pending))
+    return ch_nags, ch_in, all_nags, all_in
+
+
+def _format_nag_set(nags: frozenset[int]) -> str:
+    if not nags:
+        return 'none'
+    order = (
+        chess.pgn.NAG_GOOD_MOVE,
+        chess.pgn.NAG_DUBIOUS_MOVE,
+        chess.pgn.NAG_MISTAKE,
+        chess.pgn.NAG_BLUNDER,
+    )
+    return ''.join(MOVE_EVAL_NAGS[n] for n in order if n in nags)
+
+
+def _occurrence_matches(nags: frozenset[int], expected_nag: int | None, sharpness_verified: bool) -> bool:
+    if expected_nag is not None:
+        return nags == frozenset({expected_nag})
+    if not nags:
+        return True
+    return not sharpness_verified and nags == frozenset({chess.pgn.NAG_GOOD_MOVE})
+
+
+def _scope_notations(
+    scope_id: str,
+    vuln_scope: JsonObject,
+    evaluations: Mapping[Position, Evaluation],
+    ch_nags: Mapping[tuple[str, Position, str], list[frozenset[int]]],
+    ch_in: Mapping[tuple[str, Position, str], list[tuple[Position, str]]],
+    all_nags: Mapping[tuple[Position, str], list[tuple[str, frozenset[int]]]],
+    all_in: Mapping[tuple[Position, str], list[tuple[Position, str]]],
+) -> JsonObject:
+    """Missing and inaccurate move-evaluation notations (!, ?!, ?, ??) in one scope, ordered by reach."""
+    by_edge: dict[tuple[Position, str], JsonObject] = {}
+    for row in vuln_scope.get('all_signed_rows', []):
+        if row['kind'] != 'own' and not row.get('prepared'):
+            continue
+        if row['branch_reach'] <= 0:
+            continue
+        key = (row['position'], row['move'])
+        if key not in by_edge or row['branch_reach'] > by_edge[key]['branch_reach']:
+            by_edge[key] = row
+
+    evaluated = confirmed = missing_count = inaccurate_count = 0
+    items: list[JsonObject] = []
+    for (pos, uci), row in sorted(by_edge.items()):
+        if scope_id == 'overall':
+            occ = all_nags.get((pos, uci))
+            incoming = all_in.get((pos, uci), ())
+        else:
+            nags_list = ch_nags.get((scope_id, pos, uci))
+            occ = [(scope_id, n) for n in nags_list] if nags_list is not None else None
+            incoming = ch_in.get((scope_id, pos, uci), ())
+        if not occ:
+            continue
+        verdict = move_evaluation_nag(pos, uci, evaluations, incoming_moves=incoming)
+        if not verdict['evaluated']:
+            continue
+        evaluated += 1
+        expected_nag: int | None = verdict['expected_nag']
+        sharpness_verified: bool = verdict['sharpness_verified']
+        disagree = [(cid, n) for cid, n in occ if not _occurrence_matches(n, expected_nag, sharpness_verified)]
+        if not disagree:
+            confirmed += 1
+            continue
+        if expected_nag is not None and all(not n for _, n in disagree):
+            status = 'missing'
+            missing_count += 1
+        else:
+            status = 'inaccurate'
+            inaccurate_count += 1
+        current_labels = list(dict.fromkeys(_format_nag_set(n) for _, n in disagree))
+        affected_cids = list(dict.fromkeys(cid for cid, _ in disagree))
+        attr = (
+            dict(source_ids=affected_cids)
+            if scope_id == 'overall' and affected_cids
+            else row.get('chapter_attribution')
+        )
+        items.append(
+            dict(
+                position=pos,
+                move=uci,
+                move_san=row['move_san'],
+                target=after_move(row),
+                line=row['line'],
+                kind=row['kind'],
+                reach=row['branch_reach'],
+                status=status,
+                current_nags=[MOVE_EVAL_NAGS[n] for _, ns in disagree for n in sorted(ns)],
+                current_label=' / '.join(current_labels),
+                expected_nag=MOVE_EVAL_NAGS[expected_nag] if expected_nag is not None else None,
+                expected_label=MOVE_EVAL_NAGS[expected_nag] if expected_nag is not None else 'none',
+                loss_pp=verdict['loss_pp'],
+                gap_pp=verdict['gap_pp'],
+                best_move_san=verdict['best_move_san'],
+                second_move_san=verdict['second_move_san'],
+                sharpness_source=verdict['sharpness_source'],
+                trivial_recapture=verdict['trivial_recapture'],
+                judgement=verdict['judgement'],
+                chapter_attribution=attr,
+            )
+        )
+    items.sort(key=lambda item: (-item['reach'], item['position'], item['move']))
+    return dict(
+        evaluated=evaluated,
+        confirmed=confirmed,
+        missing_count=missing_count,
+        inaccurate_count=inaccurate_count,
+        items=items,
+    )
+
+
 def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Path | None = None) -> JsonObject:
     analysis = AnalysisContext(path, companions=('vulnerabilities', 'preparation'))
     color, vulnerabilities, preparation = (
@@ -568,10 +822,19 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Pa
         with Store(store, read_only=True) as evals:
             evaluations = evals.read(sorted(base_wanted))
             lookahead_evals = dict(evaluations)
-            # Load 1-ply lookahead evaluations for common exits and endpoints when multi-PV is absent.
+            # Load 1-ply lookahead evaluations for common exits, endpoints, and reached moves when multi-PV is absent.
             extra_wanted: set[Position] = set()
+            checked_parents: set[Position] = set()
             audit_floor = 1 / DEFAULT_AUDIT_GOAL
+            all_move_rows = move_rows(vulnerabilities)
             overall_rows = vulnerabilities['overall'].get('all_signed_rows', [])
+            for row in all_move_rows:
+                if row['kind'] == 'own' or row.get('prepared'):
+                    pos = row['position']
+                    if pos not in checked_parents:
+                        checked_parents.add(pos)
+                        if pos in evaluations and needs_child_evals(pos, evaluations):
+                            extra_wanted.update(children(pos).values())
             for row in overall_rows:
                 if (
                     row['kind'] == 'opponent'
@@ -580,12 +843,12 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Pa
                     and row['branch_reach'] >= audit_floor
                 ):
                     target = after_move(row)
-                    if target in evaluations and _needs_child_evals(target, evaluations):
+                    if target in evaluations and needs_child_evals(target, evaluations):
                         extra_wanted.update(children(target).values())
             for stop in preparation['scopes'][0].get('stops', []):
                 if stop.get('type') == 'theory_leaf' and not stop.get('sparse') and stop.get('reach'):
                     pos = stop['position']
-                    if pos in evaluations and _needs_child_evals(pos, evaluations):
+                    if pos in evaluations and needs_child_evals(pos, evaluations):
                         extra_wanted.update(children(pos).values())
             for row in overall_rows:
                 if row['kind'] == 'opponent' and row['position'] in evaluations and row['parent_reach'] >= audit_floor:
@@ -610,7 +873,7 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Pa
                             if (
                                 child_target
                                 and child_target in lookahead_evals
-                                and _needs_child_evals(child_target, lookahead_evals)
+                                and needs_child_evals(child_target, lookahead_evals)
                             ):
                                 extra_children.update(children(child_target).values())
                 if extra_children - set(lookahead_evals):
@@ -660,6 +923,8 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Pa
 
     vuln_scopes = {'overall': vulnerabilities['overall'], **{c['id']: c for c in vulnerabilities.get('chapters', [])}}
     attribution = Attribution(analysis.graph)
+    exclusions = analysis.manifest['configuration'].get('exclude', [])
+    ch_nags, ch_in, all_nags, all_in = _recorded_move_nags(analysis.source, exclusions)
     result['scopes'] = [
         dict(
             id=scope['id'],
@@ -675,6 +940,15 @@ def analyze(path: str | Path, cache: str | Path = DEFAULT_CACHE, store: str | Pa
                 evidence,
                 attribution,
                 color,
+            ),
+            notations=_scope_notations(
+                scope['id'],
+                vuln_scopes.get(scope['id'], {}),
+                lookahead_evals,
+                ch_nags,
+                ch_in,
+                all_nags,
+                all_in,
             ),
         )
         for scope in preparation['scopes']

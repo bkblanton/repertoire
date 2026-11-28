@@ -352,3 +352,170 @@ def test_build_reruns_coverage_only_when_critical_coverage_or_keep_changes(tmp_p
     changed = run()
     assert {s['step'] for s in changed['steps'] if s['status'] == 'built'} == {'white.coverage', 'render'}
     assert (tmp_path / 'data' / 'white.json').read_bytes() == score_bytes
+
+    wcfg.write_text(
+        json.dumps(
+            {
+                'policy': {},
+                'critical_coverage': False,
+                'keep': [{'path': ['d4', 'd5']}],
+                'trimmed_pgn_notations': True,
+            }
+        )
+    )
+    notated = run()
+    assert {s['step'] for s in notated['steps'] if s['status'] == 'built'} == {'white.coverage', 'render'}
+    assert (tmp_path / 'data' / 'white.json').read_bytes() == score_bytes
+
+
+def test_trimmed_pgn_notations_applies_managed_nags_and_preserves_other_nags(tmp_path, monkeypatch, evaluation_store):
+    from repertoire.evals import Store
+    from repertoire.report.bundle import load
+    from repertoire.report.links import bundle_refs
+    from repertoire.report.sections import coverage_section
+
+    monkeypatch.setattr(httpx.Client, 'request', lambda *a, **k: pytest.fail('Must stay offline'))
+    pgn_text = (
+        '[ChapterURL "https://lichess.org/study/test/main"]\n[ChapterName "Main"]\n\n'
+        '1. e4 $14 e5 $6 2. Nc3 $1 Nf6 3. Bc4 $1 Nxe4 *\n'
+    )
+    g = graph(tmp_path, pgn_text)
+    cache = tmp_path / 'cache'
+    cache.mkdir()
+    for k, _n in g.nodes.items():
+        if k == position('e4'):
+            cache_row(cache, k, data(50, 0, 50, [('e7e5', 50, 0, 50)]))
+        elif k == position('e4 e5 Nc3'):
+            cache_row(cache, k, data(50, 0, 50, [('g8f6', 50, 0, 50)]))
+        elif k == position('e4 e5 Nc3 Nf6 Bc4'):
+            cache_row(cache, k, data(50, 0, 50, [('f6e4', 50, 0, 50)]))
+        else:
+            cache_row(cache, k, data(50, 0, 50))
+
+    with Store(evaluation_store) as store:
+        # 1.e4 gets ! while preserving $14 (multi-PV gap > 5pp).
+        store.put(
+            position(''),
+            {
+                'depth': 30,
+                'knodes': 10,
+                'pvs': [{'cp': 70, 'line': 'e2e4'}, {'cp': -30, 'line': 'd2d4'}],
+                'source': 'export',
+                'retrieved_at': 'now',
+            },
+        )
+        store.put(
+            position('e4'),
+            {'depth': 30, 'knodes': 10, 'pvs': [{'cp': 70, 'line': 'c7c5'}], 'source': 'export', 'retrieved_at': 'now'},
+        )
+        # 1...e5 $6 becomes $4 (??, huge drop for Black: cp 70 -> 260).
+        store.put(
+            position('e4 e5'),
+            {
+                'depth': 30,
+                'knodes': 10,
+                'pvs': [{'cp': 260, 'line': 'g1f3'}],
+                'source': 'export',
+                'retrieved_at': 'now',
+            },
+        )
+        # 2.Nc3 $1 has pv0=g1f3 (loss 3pp) -> inaccurate $1 removed.
+        store.put(
+            position('e4 e5 Nc3'),
+            {
+                'depth': 30,
+                'knodes': 10,
+                'pvs': [{'cp': 225, 'line': 'g8f6'}],
+                'source': 'export',
+                'retrieved_at': 'now',
+            },
+        )
+        # 2...Nf6 stays unannotated (loss 0pp).
+        store.put(
+            position('e4 e5 Nc3 Nf6'),
+            {
+                'depth': 30,
+                'knodes': 10,
+                'pvs': [{'cp': 225, 'line': 'f1c4'}],
+                'source': 'export',
+                'retrieved_at': 'now',
+            },
+        )
+        # 3.Bc4 $1 is unverified single-PV matching pv0=f1c4 -> preserved!
+        store.put(
+            position('e4 e5 Nc3 Nf6 Bc4'),
+            {
+                'depth': 30,
+                'knodes': 10,
+                'pvs': [{'cp': 225, 'line': 'b8c6'}],
+                'source': 'export',
+                'retrieved_at': 'now',
+            },
+        )
+        # 3...Nxe4 loses > 10pp (mistake -> $2 added).
+        store.put(
+            position('e4 e5 Nc3 Nf6 Bc4 Nxe4'),
+            {
+                'depth': 30,
+                'knodes': 10,
+                'pvs': [{'cp': 370, 'line': 'd1e2'}],
+                'source': 'export',
+                'retrieved_at': 'now',
+            },
+        )
+
+    cfg = tmp_path / 'config.json'
+    cfg.write_text('{}')
+    cli.analyze(
+        SimpleNamespace(
+            config=str(cfg),
+            pgn=str(tmp_path / 'fixture.pgn'),
+            color='white',
+            output=str(tmp_path / 'white'),
+            command='run',
+            cache=str(cache),
+            offline=True,
+            refresh=False,
+            prior=[0.5] * 3,
+            sparse_threshold=30,
+            tolerance=1.0,
+        )
+    )
+    path = tmp_path / 'white.json'
+
+    off_value, off_text = coverage.analyze(path, cache, goal=100, notations=False)
+    assert off_value['at_goal']['pgn']['notations']['enabled'] is False
+    assert '$4' not in off_text and '$14' in off_text
+
+    on_value, on_text = coverage.analyze(path, cache, goal=100, notations=True)
+    assert on_value['validation']['trimmed_pgn_reproduces_repertoire'] is True
+    nstats = on_value['at_goal']['pgn']['notations']
+    assert nstats == {
+        'enabled': True,
+        'applied': True,
+        'added': 2,
+        'updated': 1,
+        'removed': 1,
+        'unchanged': 1,
+        'preserved_unverified': 1,
+        'nodes_changed': 4,
+    }
+    parsed = chess.pgn.read_game(io.StringIO(on_text))
+    assert parsed is not None
+    nodes = []
+    cur = parsed
+    while cur.variations:
+        cur = cur.variations[0]
+        nodes.append((cur.move.uci(), set(cur.nags)))
+    assert nodes == [
+        ('e2e4', {1, 14}),
+        ('e7e5', {4}),
+        ('b1c3', set()),
+        ('g8f6', set()),
+        ('f1c4', {1}),
+        ('f6e4', {2}),
+    ]
+    path.with_suffix('.coverage.json').write_text(json.dumps(on_value))
+    bundle = load([path], strict=False)[0]
+    cov_md = '\n'.join(coverage_section(bundle, bundle_refs(bundle), 10))
+    assert 'Engine move evaluation notations (!, ?!, ?, ??) were applied to the trimmed PGN' in cov_md

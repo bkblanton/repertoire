@@ -943,6 +943,17 @@ def coverage_section(
             f'{details["never_reached"]:,} recorded moves are never reached with the moves you play, such as '
             'alternatives that lost and answers to replies with no games; they are left out at every goal.'
         )
+    notations = pgn.get('notations') or {}
+    if notations.get('enabled'):
+        if notations.get('applied'):
+            notes.append(
+                'Engine move evaluation notations (!, ?!, ?, ??) were applied to the trimmed PGN '
+                f'({notations["added"]:,} added, {notations["updated"]:,} updated, {notations["removed"]:,} removed).'
+            )
+        else:
+            notes.append(
+                'Automatic move notations (`trimmed_pgn_notations`) are enabled, waiting for imported evaluations.'
+            )
     if notes:
         text += [' '.join(notes), '']
     chapters = [c for c in details['chapters'] if c['decisions']]
@@ -1281,6 +1292,98 @@ def engine_section(
                     for c in cliffs
                 ],
             ),
+        ]
+    notations = scope_by_id(engine).get(scope_id, {}).get('notations') or {}
+    if notations.get('items'):
+        text += _move_notations_section(notations, scope, refs, top)
+    return text
+
+
+def _format_nag_cell(item: JsonObject) -> str:
+    cur = ' / '.join('none' if part == 'none' else f'`{part}`' for part in item['current_label'].split(' / '))
+    exp = 'none' if item['expected_label'] == 'none' else f'`{item["expected_label"]}`'
+    return f'{cur} → {exp}'
+
+
+def _notation_basis(item: JsonObject) -> str:
+    expected = item.get('expected_nag')
+    loss = item.get('loss_pp')
+    gap = item.get('gap_pp')
+    best = item.get('best_move_san')
+    second = item.get('second_move_san')
+    if expected in ('?!', '?', '??'):
+        j = item.get('judgement') or 'drop'
+        parts = [f'{j} (-{loss:.1f} pp)' if loss is not None else str(j)]
+        if best:
+            parts.append(f'best {escape(best)}')
+        return '; '.join(parts)
+    if expected == '!':
+        src = '1-ply evals' if item.get('sharpness_source') == 'children' else 'multi-PV'
+        if gap is not None and second:
+            return f'only move (+{gap:.1f} pp vs {escape(second)}; {src})'
+        if gap is not None:
+            return f'only move (+{gap:.1f} pp; {src})'
+        return 'only move'
+    current_nags = item.get('current_nags') or ()
+    has_bang = '!' in current_nags
+    has_neg = any(g in ('?!', '?', '??') for g in current_nags)
+    loss_note = (
+        f'engine loss {loss:.1f} pp (< 5.0 pp)'
+        if loss is not None and loss >= 0.0
+        else f'engine loss {loss:+.1f} pp (< 5.0 pp)'
+        if loss is not None
+        else 'not flagged by engine'
+    )
+    if has_neg and not has_bang:
+        return loss_note
+    if has_bang:
+        if item.get('trivial_recapture'):
+            return 'obvious single recapture'
+        if best and best != item.get('move_san') and (loss is None or loss >= 0.0):
+            return f'not best move (best {escape(best)})'
+        if gap is not None and gap < 5.0:
+            vs = f' vs {escape(second)}' if second else ''
+            return f'gap +{gap:.1f} pp{vs} (< 5.0 pp)'
+    if loss is not None and loss < 5.0:
+        return loss_note
+    return 'not flagged by engine'
+
+
+def _move_notations_section(notations: JsonObject, scope: JsonObject, refs: Chapters, top: int) -> list[str]:
+    items = notations.get('items') or []
+    if not items:
+        return []
+    headers = ['Line', 'Chapter source', move_reach_label(scope), 'Current → Suggested', 'Engine basis']
+
+    def row_cells(item: JsonObject) -> list[Cell]:
+        return [
+            refs.move_cell(item),
+            refs.sources(item),
+            reach_cell(item['reach']),
+            _format_nag_cell(item),
+            _notation_basis(item),
+        ]
+
+    text = [
+        '**Move evaluation notations to update**',
+        '',
+        f'Evaluated {notations["evaluated"]:,} prepared and opponent moves with before/after Stockfish evaluations: '
+        f'{notations["confirmed"]:,} match, {notations["missing_count"]:,} are missing a notation '
+        '(`!`, `?!`, `?`, `??`), and '
+        f'{notations["inaccurate_count"]:,} have an inaccurate notation, ordered by reach. '
+        'Engine glyphs use Lichess thresholds (`?!` at 5 pp, `?` at 10 pp, `??` at 15 pp) and `!` when a '
+        'non-recapture best move beats the second choice by at least 5 pp.',
+        '',
+        *table(headers, [row_cells(item) for item in items[:top]]),
+    ]
+    if len(items) > top:
+        text += [
+            '<details>',
+            f'<summary>All {len(items):,} missing and inaccurate move notations</summary>',
+            '',
+            *table(headers, [row_cells(item) for item in items]),
+            '</details>',
+            '',
         ]
     return text
 
