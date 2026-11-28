@@ -79,10 +79,12 @@ The reports are:
 
 Useful options:
 
-- `--dry-run` exports the studies, prints the number of tables to fetch and a minimum time, then stops.
-- `--offline` builds from the last export and the cache, with no token and no network access. A table missing from the cache stops the build with a message; it is never treated as a position with no games.
+- `--dry-run` exports the studies, prints the number of tables to fetch (and any pending evaluation export scan) with a minimum time, then stops.
+- `--offline` builds from the last export and the cache, with no token and no network access. A table missing from the cache stops the build with a message; it is never treated as a position with no games. If a local evaluation export is present in `.cache/evals/`, it still imports any unsearched positions unless `--no-evals-import` is passed.
 - `--no-export` builds from the last export but still fetches missing tables.
-- `--force` reruns every stage. It uses the cached tables and does not refresh Lichess statistics.
+- `--no-evals-import` skips the automatic scan of `.cache/evals/lichess_db_eval.jsonl.zst` (useful for quick iteration after small study edits).
+- `--evals-export` chooses a Lichess evaluation export file in another location.
+- `--force` reruns every stage. It uses the cached tables and stored evaluations without refreshing Lichess statistics or rescanning already-searched positions in the same evaluation export.
 - `--sources` and `--studies` choose a different study list and export folder.
 - `--white-config` and `--black-config` choose different [configuration](#configuration) files.
 
@@ -290,14 +292,16 @@ uv run repertoire compare https://lichess.org/study/<candidate-study-id> --color
 
 `repertoire evals` keeps a local store of [Lichess cloud evaluations](https://database.lichess.org/#evals): Stockfish evaluations that Lichess users' browsers have shared, in centipawns or moves to mate from White's side. They describe positions objectively and are kept separate from the database score, which they never change. Build your repertoire first; the commands read the saved scores (`reports/data/white.json` and `black.json` by default) to find your positions.
 
-The evaluations come only from the export Lichess publishes, a single file of several hundred million positions (about 21 GB compressed). Download [lichess_db_eval.jsonl.zst](https://database.lichess.org/lichess_db_eval.jsonl.zst) to `.cache/evals/`; the download can take hours, since Lichess limits its speed. Then run:
+The evaluations come only from the export Lichess publishes, a single file of several hundred million positions (about 21 GB compressed). Download [lichess_db_eval.jsonl.zst](https://database.lichess.org/lichess_db_eval.jsonl.zst) to `.cache/evals/`; the download can take hours, since Lichess limits its speed.
+
+Once the export is in `.cache/evals/lichess_db_eval.jsonl.zst`, `repertoire build` automatically imports any unsearched positions right after scoring and before the engine stage runs. When nothing new needs searching, the check finishes immediately and skips the scan; pass `--no-evals-import` to skip scanning on a build, or `--evals-export` for a file elsewhere. You can also run the import or check coverage on its own:
 
 ```sh
 uv run repertoire evals import
 uv run repertoire evals status
 ```
 
-**`import`** searches the export for every position in your studies, every position one move beyond them (`--plies` changes how far) and every position where preparation ends. The file lists positions in no particular order, so it cannot be searched for one position: each import reads it from start to end, which takes about ten minutes, and keeps only the positions it is looking for. The store remembers which positions it has looked for in that file, so running `import` again after editing your studies reads the file again only if there are new positions, and looks only for those. Pass `--export` for a file elsewhere. A newer export is a different file, and importing it looks for every position again, keeping the deeper evaluation of each.
+**`import`** (and automatic build import) searches the export for every position in your studies, every position one move beyond them (`--plies` changes how far), every position where preparation ends, and every position one move beyond unprepared exits reached at least once in 2,000 games (`--exit-goal`, set `0` to disable). The file lists positions in no particular order, so it cannot be searched for one position: each scan reads it from start to end, taking a few minutes, and keeps only the positions it is looking for. The store remembers which positions it has looked for in that file, so running `build` or `import` again reads the file again only if there are new positions, and looks only for those. Pass `--export` to `evals import` for a file elsewhere. A newer export is a different file, and importing it looks for every position again, keeping the deeper evaluation of each.
 
 Both commands end with the coverage for each color, which **`status`** prints on its own: how many of the positions where preparation ends have an evaluation, weighted by how often games end there, and how many of the positions games reach. Positions nobody has analyzed on Lichess, usually rare replies deep in a line, have no evaluation. Nothing is requested or estimated in their place.
 

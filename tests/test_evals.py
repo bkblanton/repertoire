@@ -8,7 +8,19 @@ from helpers import cache_row, data, position
 
 from repertoire import evals, score
 from repertoire.context import AnalysisContext
-from repertoire.evals import Evaluation, Store, frequencies, import_export, neighborhood, scan
+from repertoire.evals import (
+    Evaluation,
+    Store,
+    exit_lookahead,
+    frequencies,
+    import_export,
+    neighborhood,
+    pending_in_store,
+    scan,
+    survey_export,
+    sync_reports,
+    wanted_positions,
+)
 
 E4 = position('e4')
 E4_E5 = position('e4 e5')
@@ -134,3 +146,86 @@ def test_frequencies_cover_every_place_preparation_ends(tmp_path, monkeypatch):
 def test_neighborhood_adds_every_position_one_move_away():
     assert neighborhood([position('')], 0) == {position('')}
     assert len(neighborhood([position('')], 1)) == 21
+
+
+def test_exit_lookahead_and_wanted_positions_expand_common_exits_only(tmp_path, monkeypatch):
+    path, cache = scored(tmp_path, monkeypatch)
+    analysis = AnalysisContext(path)
+    reach, exits = frequencies(analysis, cache)
+    # Exits are c5 (0.3), d5 (0.1), Nc6 (0.375), Nf6 (0.225). With exit_goal=5 (threshold 0.2), d5 is excluded.
+    lookahead = exit_lookahead(exits, exit_goal=5)
+    assert position('e4 c5 Nf3') in lookahead
+    assert position('e4 d5 exd5') not in lookahead
+    assert exit_lookahead(exits, exit_goal=0) == set()
+    wanted_with = wanted_positions([analysis], [(reach, exits)], plies=1, exit_goal=5)
+    wanted_without = wanted_positions([analysis], [(reach, exits)], plies=1, exit_goal=0)
+    assert wanted_without < wanted_with
+    assert position('e4 e5 Nf3 Nc6 Bb5') in wanted_with
+    assert position('e4 e5 Nf3 Nc6 Bb5') not in wanted_without
+    assert position('e4 d5 exd5') not in wanted_with
+
+
+def test_wanted_lines_matches_both_sparse_and_dense_blocks():
+    # More than 4 distinct hits exercises the bulk split path; <=4 exercises the direct-find path.
+    lines = [
+        line('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -', (20, 10, [{'cp': 20, 'line': 'e7e5'}])),
+        line('rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq -', (20, 10, [{'cp': 20, 'line': 'd7d5'}])),
+        line('rnbqkbnr/pppppppp/8/8/2P5/8/PP1PPPPP/RNBQKBNR b KQkq -', (20, 10, [{'cp': 20, 'line': 'e7e5'}])),
+        line('rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq -', (20, 10, [{'cp': 20, 'line': 'd7d5'}])),
+        line('rnbqkbnr/pppppppp/8/8/8/6P1/PPPPPP1P/RNBQKBNR b KQkq -', (20, 10, [{'cp': 20, 'line': 'd7d5'}])),
+        line('rnbqkbnr/pppppppp/8/8/8/1P6/P1PPPPPP/RNBQKBNR b KQkq -', (20, 10, [{'cp': 20, 'line': 'e7e5'}])),
+    ]
+    raw = ('\n'.join(lines) + '\n').encode()
+    all_keys = {
+        k.rsplit(' ', 1)[0].encode()
+        for k in (position('e4'), position('d4'), position('c4'), position('Nf3'), position('g3'), position('b3'))
+    }
+    sparse_keys = {position('e4').rsplit(' ', 1)[0].encode(), position('b3').rsplit(' ', 1)[0].encode()}
+    assert list(evals.wanted_lines(raw, len(raw), sparse_keys)) == [lines[0].encode(), lines[5].encode()]
+    assert list(evals.wanted_lines(raw, len(raw), all_keys)) == [item.encode() for item in lines]
+
+
+def test_import_commits_periodically_and_pending_check_is_read_only(tmp_path, monkeypatch):
+    export_file = export(tmp_path, EXPORT_LINES)
+    store_file = tmp_path / 'evals.sqlite'
+    # Checking pending positions before a store exists must not create the file.
+    assert pending_in_store(store_file, export_file, {E4, E4_E5}) == {E4, E4_E5}
+    assert not store_file.exists()
+
+    commits = []
+    monkeypatch.setattr(evals, 'COMMIT_INTERVAL', 1)
+    with Store(store_file) as store:
+        real_commit = store.commit
+        monkeypatch.setattr(store, 'commit', lambda: commits.append(1) or real_commit())
+        assert import_export(store, export_file, {E4, E4_E5, D4}) == 2
+    # 2 periodic commits (one per written evaluation) + 1 final commit after mark_searched.
+    assert len(commits) >= 3
+    assert pending_in_store(store_file, export_file, {E4, E4_E5, D4}) == set()
+    assert pending_in_store(store_file, export_file, {E4, position('c4')}) == {position('c4')}
+
+
+def test_sync_reports_and_survey_export_skip_writing_when_up_to_date(tmp_path, monkeypatch, capsys):
+    path, cache = scored(tmp_path, monkeypatch)
+    export_file = export(tmp_path, EXPORT_LINES)
+    store_file = tmp_path / 'evals.sqlite'
+    pgn = path.parent / 'white.pgn'
+    # Survey before import is read-only and reports exact pending count.
+    survey = survey_export(
+        {'white': pgn}, {'white': None}, path.parent, cache, export_path=export_file, store_path=store_file
+    )
+    assert survey is not None and survey['exact'] and survey['pending'] == survey['wanted'] > 0
+    assert not store_file.exists()
+
+    first = sync_reports([path], cache, export_path=export_file, store_path=store_file, size=64)
+    assert first['status'] == 'built' and first['added'] == 2
+    mtime_before = store_file.stat().st_mtime_ns
+    # Second sync finds nothing pending and does not touch the store file.
+    second = sync_reports([path], cache, export_path=export_file, store_path=store_file, size=64)
+    assert second['status'] == 'reused' and second['pending'] == 0 and second['added'] == 0
+    assert store_file.stat().st_mtime_ns == mtime_before
+
+    survey_after = survey_export(
+        {'white': pgn}, {'white': None}, path.parent, cache, export_path=export_file, store_path=store_file
+    )
+    assert survey_after is not None and survey_after['exact'] and survey_after['pending'] == 0
+    assert 'already searched' in capsys.readouterr().out

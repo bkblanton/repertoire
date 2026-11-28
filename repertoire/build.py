@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import zstandard
+
 from . import (
     changes,
     chapter_order,
@@ -170,6 +172,17 @@ class Builder:
         print(f'{name}: {status} in {self.timings[-1]["seconds"]:.2f}s', flush=True)
 
 
+def resolve_evals_export(export_path: str | Path | None) -> Path | None:
+    """The evaluation export to import from, or None when the default export is not present."""
+    if export_path is not None:
+        resolved = Path(export_path)
+        if not resolved.is_file():
+            raise FileNotFoundError(f'No evaluation export at {resolved}')
+        return resolved
+    default = Path(evals.EXPORT)
+    return default if default.is_file() else None
+
+
 def build(
     white_pgn: str | Path,
     black_pgn: str | Path,
@@ -181,6 +194,8 @@ def build(
     offline: bool = False,
     force: bool = False,
     comparisons: str | Path | None = None,
+    import_evals: bool = True,
+    evals_export: str | Path | None = None,
 ) -> JsonObject:
     started = time.perf_counter()
     pgns, configs = dict(white=white_pgn, black=black_pgn), dict(white=white_config, black=black_config)
@@ -238,6 +253,14 @@ def build(
                 [path, path.with_suffix('.inspection.json')],
                 cast(Callable[[], object], lambda args=args: scoring.analyze(args)),
             )
+        if import_evals and (export_file := resolve_evals_export(evals_export)) is not None:
+            evals_started = time.perf_counter()
+            sync = evals.sync_reports(paths, cache, export_path=export_file)
+            if sync['status'] in ('built', 'reused'):
+                forget([evals.STORE])
+                seconds = time.perf_counter() - evals_started
+                runner.timings.append(dict(step='evals.import', status=sync['status'], seconds=seconds))
+                print(f'evals.import: {sync["status"]} in {seconds:.2f}s', flush=True)
         for family in FAMILIES:
             for path in paths:
                 required = [path] + [path.with_suffix(f'.{name}.json') for name in DEPENDENCIES.get(family, ())]
@@ -425,6 +448,17 @@ def main() -> None:
     parser.add_argument('--force', action='store_true', help='Rebuild all analyses using existing cached evidence')
     parser.add_argument('--comparisons', default=compare.REGISTRY, help='Saved comparisons to rerun')
     parser.add_argument(
+        '--no-evals-import',
+        action='store_true',
+        help='Skip automatic import from the local Lichess evaluation export',
+    )
+    parser.add_argument(
+        '--evals-export',
+        type=Path,
+        default=None,
+        help=f'Lichess evaluation export file to import from (default: {evals.EXPORT} when present)',
+    )
+    parser.add_argument(
         '--dry-run', action='store_true', help='Export the studies, then count the tables to fetch and stop'
     )
     add_token_option(parser)
@@ -435,6 +469,7 @@ def main() -> None:
     options = vars(args)
     sources, folder, no_export = options.pop('sources'), options.pop('studies'), options.pop('no_export')
     dry_run = options.pop('dry_run')
+    options['import_evals'] = not options.pop('no_evals_import')
     options.pop('token_file')
     for color in ('white', 'black'):
         options[f'{color}_config'] = scoring.config_path(color, options[f'{color}_config'])
@@ -456,8 +491,16 @@ def main() -> None:
             saved = compare.load_registry(options['comparisons'])
             extra = compare.registry_tables(saved, pgns, configs)
             fetch.fetch(pgns, configs, options['cache'], dry_run=True, extra=extra)
+            if options['import_evals'] and (export_file := resolve_evals_export(options['evals_export'])) is not None:
+                evals.survey_export(pgns, configs, options['directory'], options['cache'], export_path=export_file)
             return
         build(**options)
+    except (EOFError, zstandard.ZstdError) as exc:
+        parser.exit(
+            1,
+            f'Build failed while reading the evaluation export: {exc}\n'
+            'Evaluations found so far are kept; rerun with --no-evals-import to skip the export scan.\n',
+        )
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         parser.exit(
             1,

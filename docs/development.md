@@ -38,9 +38,9 @@ All code is in the `repertoire` package.
 
 A full build runs these stages in order:
 
-`export → fetch → scores → vulnerabilities → preparation → character → ratings → openings → insights → engine → coverage → correlations → rating correlations → saved comparisons → render`
+`export → fetch → scores → evals (if export present) → vulnerabilities → preparation → character → ratings → openings → insights → engine → coverage → correlations → rating correlations → saved comparisons → render`
 
-Only `export` and `fetch` use the network. Every later stage reads the cache and saved JSON, so it can be rerun offline. Ratings depend on vulnerabilities, preparation and character; insights also depend on openings; the engine view depends on vulnerabilities, preparation and the evaluation store; coverage depends on the score and the `coverage_goal` and `chapter_order` settings, which the score itself ignores; the correlations depend on vulnerabilities and ratings.
+Only `export` and `fetch` use the network. Every later stage reads the cache and saved JSON, so it can be rerun offline. When `.cache/evals/lichess_db_eval.jsonl.zst` is present (and `--no-evals-import` is not passed), `build` imports any unsearched positions right after scoring so the engine view sees fresh evaluations in the same build. Ratings depend on vulnerabilities, preparation and character; insights also depend on openings; the engine view depends on vulnerabilities, preparation and the evaluation store; coverage depends on the score and the `coverage_goal` and `chapter_order` settings, which the score itself ignores; the correlations depend on vulnerabilities and ratings.
 
 Each stage saves a manifest with the hashes of its inputs: the source PGN, the score it builds on, the analyses it depends on and the cache entries it read. `build` reruns a stage only when one of these, the code or the settings changed, and checkpoints progress in `reports/data/.build-state.json`. The renderer refuses to combine analyses whose hashes do not match. Never edit hashes or numerical JSON by hand to get past a mismatch.
 

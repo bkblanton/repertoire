@@ -4,9 +4,10 @@ from pathlib import Path
 import chess
 import httpx
 import pytest
+import zstandard
 from helpers import cache_row, data, position
 
-from repertoire import build, render
+from repertoire import build, evals, render
 from repertoire.board_cache import geometry, owner_outcome
 from repertoire.character import board_fingerprint
 from repertoire.explorer import Explorer
@@ -250,3 +251,76 @@ def test_rendering_code_invalidates_only_the_render_step():
     assert not report_files & set(analysis)
     assert any(p.endswith('render.py') for p in presentation) and not any(p.endswith('render.py') for p in analysis)
     assert any(p.endswith('uncertainty.py') for p in analysis)
+
+
+def _write_eval_export(path: Path, lines: list[str]) -> Path:
+    path.write_bytes(zstandard.ZstdCompressor().compress(('\n'.join(lines) + '\n').encode()))
+    return path
+
+
+def test_build_auto_imports_evals_reuses_and_honors_opt_out(batch, monkeypatch):
+    run, white, black, renders = batch
+    e4_line = json.dumps(
+        {
+            'fen': 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -',
+            'evals': [{'depth': 35, 'knodes': 500, 'pvs': [{'cp': 25, 'line': 'e7e5'}]}],
+        },
+        separators=(',', ':'),
+    )
+    e4_e5_line = json.dumps(
+        {
+            'fen': 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -',
+            'evals': [{'depth': 35, 'knodes': 500, 'pvs': [{'cp': 28, 'line': 'g1f3'}]}],
+        },
+        separators=(',', ':'),
+    )
+    _write_eval_export(evals.EXPORT, [e4_line, e4_e5_line])
+
+    # Opting out skips the export scan and leaves the engine view unresolved.
+    skipped = run(import_evals=False)
+    assert skipped['built'] == 21
+    data_dir = white.parent / 'data'
+    assert json.loads((data_dir / 'white.engine.json').read_text(encoding='utf-8'))['status'] == 'unresolved_evidence'
+    assert not evals.STORE.exists()
+
+    # Normal build imports automatically before engine runs, resolving the engine view in the same build.
+    imported = run()
+    steps = {s['step']: s['status'] for s in imported['steps']}
+    assert steps['evals.import'] == 'built'
+    assert steps['white.engine'] == 'built' and steps['black.engine'] == 'built'
+    assert json.loads((data_dir / 'white.engine.json').read_text(encoding='utf-8'))['status'] == 'resolved'
+
+    # Second build (and even --force) must not rescan the same export when no new positions exist.
+    scans = []
+    real_scan = evals.scan
+    monkeypatch.setattr(evals, 'scan', lambda *a, **k: scans.append(1) or real_scan(*a, **k))
+    reused = run()
+    assert {s['step']: s['status'] for s in reused['steps']}['evals.import'] == 'reused'
+    assert reused['built'] == 0 and scans == []
+
+    forced = run(force=True)
+    assert {s['step']: s['status'] for s in forced['steps']}['evals.import'] == 'reused'
+    assert scans == []
+
+    # Replacing the export with a deeper evaluation triggers a rescan and refreshes engine analyses.
+    deeper_e4 = json.dumps(
+        {
+            'fen': 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -',
+            'evals': [{'depth': 45, 'knodes': 900, 'pvs': [{'cp': 35, 'line': 'c7c5'}]}],
+        },
+        separators=(',', ':'),
+    )
+    _write_eval_export(evals.EXPORT, [deeper_e4, e4_e5_line])
+    refreshed = run()
+    assert {s['step']: s['status'] for s in refreshed['steps']}['evals.import'] == 'built'
+    assert len(scans) == 1
+    assert (
+        json.loads((data_dir / 'white.engine.json').read_text(encoding='utf-8'))['positions'][position('e4')]['cp']
+        == 35
+    )
+
+
+def test_build_explicit_missing_evals_export_fails(batch):
+    run, white, _, _ = batch
+    with pytest.raises(FileNotFoundError, match='No evaluation export'):
+        run(evals_export=white.parent / 'missing.jsonl.zst')

@@ -2,9 +2,11 @@
 
 The store is filled only from the downloaded database export (https://database.lichess.org/#evals): hundreds of
 millions of positions, one JSON line each, in no useful order. It cannot be searched for one position, so `import`
-reads the whole file once and keeps every position the reports use and every position one move beyond them. The
-store remembers which positions it looked for in each export file, so a rerun scans again only for new positions.
-Positions the export does not have stay without an evaluation; nothing is requested or estimated in their place.
+(and `build` automatically when the export file is present) reads the whole file once and keeps every position the
+reports use, every position one move beyond the repertoire, and one move beyond unprepared exits reached at least
+once in 2,000 games. The store remembers which positions it looked for in each export file, so a rerun scans again
+only for new positions. Positions the export does not have stay without an evaluation; nothing is requested or
+estimated in their place.
 
 Evaluations are stored as published: from White's side, in centipawns or moves to mate, keeping the deepest
 search for each position. Nothing here changes a score.
@@ -17,7 +19,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from itertools import compress
 from pathlib import Path
@@ -30,16 +32,22 @@ from .board_cache import canonical, children
 from .board_cache import position_of as node_position
 from .context import DEFAULT_CACHE, AnalysisContext
 from .evaluate import by_position, reaches
-from .explorer import Progress, duration
-from .graph import resolve, topology
+from .explorer import CacheMiss, Progress, duration
+from .graph import parse, resolve, topology
 from .model import empirical, prepare
-from .schema import Position
+from .schema import JsonObject, Position
+from .score import load_config, scored_configuration
 
 DIRECTORY = Path('.cache/evals')
 STORE = DIRECTORY / 'evals.sqlite'
 EXPORT = DIRECTORY / 'lichess_db_eval.jsonl.zst'
 EXPORT_URL = 'https://database.lichess.org/lichess_db_eval.jsonl.zst'
 REPORTS = ('reports/data/white.json', 'reports/data/black.json')
+DEFAULT_PLIES = 1
+# Also import one move beyond unprepared exits reached at least once in this many games, so full-repertoire
+# sharpness checks can compare replies even when Lichess stored only one PV at the exit.
+DEFAULT_EXIT_GOAL = 2000
+COMMIT_INTERVAL = 1000
 # Decompressed bytes handed from the reading thread to the matching loop at a time.
 CHUNK = 1 << 26
 # Pieces, side to move and castling rights of each export line. The en passant field is left out of the match
@@ -135,6 +143,15 @@ class Store:
         )
         return True
 
+    def find_export(self, path: Path) -> int | None:
+        """The id of an export file if it has been recorded, without modifying the store."""
+        stat = path.stat()
+        identity = (path.name, stat.st_size, modified(path))
+        row = self.db.execute(
+            'select id from exports where name = ? and size = ? and modified = ?', identity
+        ).fetchone()
+        return None if row is None else int(row[0])
+
     def export(self, path: Path) -> int:
         """The id of an export file, identified by name, size and modification time, so a moved copy matches."""
         stat = path.stat()
@@ -198,10 +215,26 @@ def wanted_lines(data: bytes, end: int, prefixes: set[bytes]) -> Iterator[bytes]
     """The complete lines in data[:end] whose pieces, side and castling are in `prefixes`.
 
     The keys are extracted by one regular-expression pass and the lines picked out without a Python loop, since
-    popular positions match in nearly every block."""
+    popular positions match in nearly every block. When only a few keys hit in a block, locate them directly
+    instead of splitting every line in the block.
+    """
     keys = LINE_KEY.findall(data, 0, end)
     hits = prefixes.intersection(keys)
     if not hits:
+        return
+    if len(hits) <= 4:
+        matches: list[tuple[int, int]] = []
+        for key in hits:
+            needle = b'{"fen":"' + key + b' '
+            pos = 0
+            while (idx := data.find(needle, pos, end)) != -1:
+                if idx == 0 or data[idx - 1] == 10:
+                    nl = data.find(b'\n', idx, end)
+                    matches.append((idx, end if nl == -1 else nl))
+                pos = idx + len(needle)
+        matches.sort()
+        for start, stop in matches:
+            yield data[start:stop]
         return
     lines = data[:end].split(b'\n')
     if lines and not lines[-1]:
@@ -263,10 +296,14 @@ def import_export(store: Store, path: Path, wanted: Collection[Position], size: 
         print(f'Evaluation export: all {len(wanted):,} positions were already searched in {path.name}', flush=True)
         return 0
     print(f'Evaluation export: searching {path.name} for {len(pending):,} positions', flush=True)
-    added = set()
+    added: set[Position] = set()
+    written = 0
     for k, evaluation in scan(path, pending, size):
         if store.put(k, evaluation):
             added.add(k)
+            written += 1
+            if written % COMMIT_INTERVAL == 0:
+                store.commit()
     store.mark_searched(export, pending)
     store.commit()
     return len(added)
@@ -310,12 +347,161 @@ def successors(position: Position) -> list[Position]:
 
 def neighborhood(positions: Iterable[Position], plies: int) -> set[Position]:
     """`positions` and every position up to `plies` moves beyond them."""
+    if plies < 0:
+        raise ValueError(f'plies must be non-negative: {plies}')
     result = set(positions)
     frontier = set(result)
     for _ in range(plies):
         frontier = {c for k in frontier for c in successors(k)} - result
         result |= frontier
     return result
+
+
+def exit_lookahead(exits: Mapping[Position, float], exit_goal: int | None) -> set[Position]:
+    """Positions one move beyond unprepared exits reached at least once in `exit_goal` games."""
+    if exit_goal is None or exit_goal == 0:
+        return set()
+    if exit_goal < 0:
+        raise ValueError(f'exit_goal must be non-negative: {exit_goal}')
+    threshold = 1 / exit_goal
+    return {c for k, reach in exits.items() if reach >= threshold for c in successors(k)}
+
+
+def wanted_positions(
+    analyses: Sequence[AnalysisContext],
+    counts: Sequence[tuple[Mapping[Position, float], Mapping[Position, float]]],
+    plies: int = DEFAULT_PLIES,
+    exit_goal: int | None = DEFAULT_EXIT_GOAL,
+) -> set[Position]:
+    """Every position to look up in the evaluation export: the repertoire graphs and up to `plies` moves beyond
+    them, every position where preparation ends, and one move beyond exits reached at least once in `exit_goal`
+    games."""
+    wanted = neighborhood((k for analysis in analyses for k in analysis.graph.nodes), plies)
+    exits: dict[Position, float] = {}
+    for _, color_exits in counts:
+        for k, reach in color_exits.items():
+            exits[k] = max(exits.get(k, 0.0), reach)
+    wanted |= set(exits)
+    wanted |= exit_lookahead(exits, exit_goal)
+    return wanted
+
+
+def pending_in_store(store_path: Path, export_path: Path, wanted: Collection[Position]) -> set[Position]:
+    """The subset of `wanted` not yet searched in `export_path`, without creating or modifying `store_path`."""
+    wanted_set = set(wanted)
+    if not store_path.is_file():
+        return wanted_set
+    with Store(store_path, read_only=True) as store:
+        export_id = store.find_export(export_path)
+        return wanted_set if export_id is None else wanted_set - store.searched(export_id)
+
+
+def sync_reports(
+    paths: Sequence[str | Path],
+    cache: str | Path = DEFAULT_CACHE,
+    *,
+    export_path: str | Path | None = None,
+    store_path: str | Path | None = None,
+    plies: int = DEFAULT_PLIES,
+    exit_goal: int | None = DEFAULT_EXIT_GOAL,
+    size: int = CHUNK,
+) -> JsonObject:
+    """Import any unsearched evaluations for saved score `paths` when an export file is available.
+
+    Avoids opening the store for writing when every wanted position has already been searched in `export_path`,
+    so unchanged builds leave the store file hash untouched.
+    """
+    export_file = Path(EXPORT if export_path is None else export_path)
+    store_file = Path(STORE if store_path is None else store_path)
+    if not export_file.is_file():
+        return dict(status='missing_export', wanted=0, pending=0, added=0)
+    analyses = [AnalysisContext(path) for path in paths]
+    counts = [frequencies(analysis, cache) for analysis in analyses]
+    wanted = wanted_positions(analyses, counts, plies=plies, exit_goal=exit_goal)
+    pending = pending_in_store(store_file, export_file, wanted)
+    if not pending:
+        print(
+            f'Evaluation export: all {len(wanted):,} positions were already searched in {export_file.name}',
+            flush=True,
+        )
+        return dict(status='reused', wanted=len(wanted), pending=0, added=0)
+    with Store(store_file) as store:
+        added = import_export(store, export_file, wanted, size=size)
+        print(f'Evaluation export: {added:,} evaluations added or deepened', flush=True)
+        for analysis, (reach, exits) in zip(analyses, counts):
+            coverage(store, analysis.saved['color'], reach, exits)
+    return dict(status='built', wanted=len(wanted), pending=len(pending), added=added)
+
+
+def survey_export(
+    pgns: Mapping[str, str | Path],
+    configs: Mapping[str, str | Path | None],
+    directory: str | Path,
+    cache: str | Path = DEFAULT_CACHE,
+    *,
+    export_path: str | Path | None = None,
+    store_path: str | Path | None = None,
+    plies: int = DEFAULT_PLIES,
+    exit_goal: int | None = DEFAULT_EXIT_GOAL,
+) -> JsonObject | None:
+    """Report how many positions a build would search in the local evaluation export, without modifying any file."""
+    export_file = Path(EXPORT if export_path is None else export_path)
+    store_file = Path(STORE if store_path is None else store_path)
+    if not export_file.is_file():
+        return None
+    nodes: set[Position] = set()
+    for color, pgn in pgns.items():
+        config = load_config(configs.get(color))
+        nodes |= set(parse(pgn, config.get('exclude', [])).nodes)
+    wanted = neighborhood(nodes, plies)
+    exact = True
+    exits: dict[Position, float] = {}
+    for color, pgn in pgns.items():
+        score_path = Path(directory) / f'{color}.json'
+        if not score_path.is_file():
+            exact = False
+            continue
+        try:
+            analysis = AnalysisContext(score_path)
+            config = scored_configuration(load_config(configs.get(color)))
+            if (
+                Path(pgn).resolve() != Path(analysis.source).resolve()
+                or scored_configuration(analysis.manifest['configuration']) != config
+            ):
+                exact = False
+                continue
+            _, color_exits = frequencies(analysis, cache)
+            for k, reach in color_exits.items():
+                exits[k] = max(exits.get(k, 0.0), reach)
+        except (ValueError, FileNotFoundError, CacheMiss):
+            exact = False
+    wanted |= set(exits)
+    wanted |= exit_lookahead(exits, exit_goal)
+    pending = pending_in_store(store_file, export_file, wanted)
+    if not pending:
+        if exact:
+            print(
+                f'Evaluation export: all {len(wanted):,} positions already searched in {export_file.name}',
+                flush=True,
+            )
+        else:
+            print(
+                f'Evaluation export: all {len(wanted):,} repertoire-neighborhood positions already searched in '
+                f'{export_file.name} (new exits will be checked after scoring)',
+                flush=True,
+            )
+    elif exact:
+        print(
+            f'Evaluation export: {len(pending):,} of {len(wanted):,} positions to search in '
+            f'{export_file.name} (1 full pass)',
+            flush=True,
+        )
+    else:
+        print(
+            f'Evaluation export: at least {len(pending):,} positions to search in {export_file.name} (1 full pass)',
+            flush=True,
+        )
+    return dict(wanted=len(wanted), pending=len(pending), exact=exact, export=str(export_file))
 
 
 def coverage(store: Store, label: str, reach: Mapping[Position, float], exits: Mapping[Position, float]) -> None:
@@ -343,7 +529,17 @@ def main() -> None:
     )
     importing.add_argument('--export', type=Path, default=EXPORT, help=f'The export file (default: {EXPORT})')
     importing.add_argument(
-        '--plies', type=int, default=1, help='Also keep positions up to this many moves beyond the repertoire'
+        '--plies',
+        type=int,
+        default=DEFAULT_PLIES,
+        help='Also keep positions up to this many moves beyond the repertoire',
+    )
+    importing.add_argument(
+        '--exit-goal',
+        type=int,
+        default=DEFAULT_EXIT_GOAL,
+        help='Also keep positions one move beyond unprepared exits reached at least once in N games (0 disables; '
+        f'default: {DEFAULT_EXIT_GOAL})',
     )
     commands.add_parser('status', parents=[common], help='Show how many of the positions have evaluations')
     args = parser.parse_args()
@@ -358,15 +554,12 @@ def main() -> None:
         counts = [frequencies(analysis, args.cache) for analysis in analyses]
         with Store(args.store) as store:
             if args.command == 'import':
-                # Every position where preparation ends is one move from the repertoire, so it is wanted even
-                # with --plies 0.
-                wanted = neighborhood((k for analysis in analyses for k in analysis.graph.nodes), args.plies)
-                wanted |= {k for _, exits in counts for k in exits}
+                wanted = wanted_positions(analyses, counts, plies=args.plies, exit_goal=args.exit_goal)
                 added = import_export(store, args.export, wanted)
                 print(f'Evaluation export: {added:,} evaluations added or deepened', flush=True)
             for analysis, (reach, exits) in zip(analyses, counts):
                 coverage(store, analysis.saved['color'], reach, exits)
-    except (ValueError, FileNotFoundError, zstandard.ZstdError) as exc:
+    except (ValueError, FileNotFoundError, EOFError, zstandard.ZstdError) as exc:
         parser.exit(1, f'Evaluations failed: {exc}\nEvaluations found so far are kept.\n')
 
 
